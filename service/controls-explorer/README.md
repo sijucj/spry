@@ -26,7 +26,7 @@ The content in this folder is authored as a markdown-driven SQLPage page (`index
 
 3. Build the SQLPage notebook page from `index.md` and pipe into the database:
 
-   ../../lib/sqlpage/notebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
+   ../../lib/sqlpage/codebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
 
 4. Start the SQLPage server:
 
