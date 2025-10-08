@@ -2,7 +2,7 @@
 
 This small demo service contains a Compliance Explorer built as a SQLPage site. It catalogs common compliance frameworks and provides SQL-driven pages and cards describing each framework.
 
-The content in this folder is authored as a markdown-driven SQLPage page (`index.md`) and the site is configured to use a local SQLite database (`sqlpage.db`). The README below highlights how to ingest the provided CSVs, build the site, and run the SQLPage server locally.
+The content in this folder is authored as markdown-driven SQLPage pages (`index.md` and `head.md`) and the site is configured to use a local SQLite database (`sqlpage.db`). The README below highlights how to ingest the provided CSVs, build the site, and run the SQLPage server locally.
 
 ## What it is
 
@@ -11,7 +11,8 @@ The content in this folder is authored as a markdown-driven SQLPage page (`index
 
 ## Files
 
-- `index.md` — the page source (markdown + SQL) that defines the site content and cards.
+ - `index.md` — the page source (markdown + SQL) that defines the site content and cards.
+ - `head.md` — an additional page fragment (same format as `index.md`) used for shared head/content.
 - `ingest/` — CSV files and supporting data to import into the local `sqlpage.db` (not all files listed here).
 
 ## Quick start
@@ -34,18 +35,19 @@ The content in this folder is authored as a markdown-driven SQLPage page (`index
    - Linux (from repository root): `./sqlpage.bin`
    - macOS (Homebrew): `sqlpage`
 
-5. Open your browser at the configured port (default in `index.md` example: `http://localhost:9219`).
+5. Open your browser at the configured port (default in the examples: `http://localhost:9219`).
 
-## Example page content (from `index.md`)
 
-The `index.md` file includes SQL blocks that define a page with components, text, and cards. Example SQL snippets shown in `index.md` produce a front page that contains:
+## Example page content (from `index.md` and `head.md`)
+
+The `index.md` and `head.md` files include SQL blocks that define a page with components, text, and cards. Example SQL snippets produce a front page that contains:
 
 - A text component with the site intro describing the purpose of the compliance explorer.
 - A grid of cards listing frameworks: CMMC, AICPA, HiTRUST e1, ISO 27001:2022, HIPAA, Together.Health Security Assessment, with short metadata for each.
 
 ## Configuration
 
-The top of `index.md` contains a YAML front-matter example used by SQLPage:
+The top of `index.md` and `head.md` contains a YAML front-matter example used by SQLPage:
 
 ```yaml
 siteName: Demo
