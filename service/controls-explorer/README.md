@@ -64,6 +64,21 @@ Adjust the `database_url` and `port` as needed.
 - `surveilr` is used to ingest CSV files — ensure it is installed or available in your PATH.
 - Commands above assume a Unix-like shell; Windows paths/commands differ slightly.
 
+## Development: auto rebuild & restart
+
+During active development it's convenient to automatically rebuild the packaged page and restart the `sqlpage.bin` server when markdown changes. The following example uses `watchexec` to watch `.md` files, rebuild the notebook with the repository `codebook` tool, write the output into `sqlpage.db`, and restart the local `sqlpage.bin` server:
+
+```sh
+watchexec -e md -- bash -c 'pkill -f sqlpage.bin || true; deno run -A ../../lib/sqlpage/codebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db; sleep 1; sqlpage.bin &'
+```
+
+Notes:
+
+- This command assumes `watchexec`, `deno`, and `sqlite3` are installed and available in your PATH.
+   - Install `watchexec` from: https://webinstall.dev/watchexec/
+- The `pkill` call attempts to stop any running `sqlpage.bin` process before starting a fresh instance. On systems without `pkill`, stop the server manually.
+- The one-second `sleep` gives SQLite a moment to flush the write before the server restarts.
+
 ## Troubleshooting
 
 - If the server won't start, confirm `sqlpage` binary exists and is executable. On Linux you may need to run `chmod +x sqlpage.bin` from repo root.
