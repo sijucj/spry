@@ -104,7 +104,7 @@ SELECT
 Run the notebook script with markdown input and config, then pipe output into SQLite database 'sqlpage.db'
 
 ```bash
-../../lib/sqlpage/codebook.ts --md index.md  --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
+../../lib/sqlpage/codebook.ts --md README.md  --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
 ```
 
 Windows: start the SQLPage server
@@ -789,7 +789,7 @@ CREATE VIEW soc2_control AS
 During active development it's convenient to automatically rebuild the packaged page and restart the `sqlpage.bin` server when markdown changes. The following example uses `watchexec` to watch `.md` files, rebuild the notebook with the repository `codebook` tool, write the output into `sqlpage.db`, and restart the local `sqlpage.bin` server:
 
 ```sh
-watchexec -e md -- bash -c 'pkill -f sqlpage.bin || true; deno run -A ../../lib/sqlpage/codebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db; sleep 1; sqlpage.bin &'
+watchexec -e md -- bash -c 'pkill -f sqlpage.bin || true; deno run -A ../../lib/sqlpage/codebook.ts --md README.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db; sleep 1; sqlpage.bin &'
 ```
 
 ### Notes:
