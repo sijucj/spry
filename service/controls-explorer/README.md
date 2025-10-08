@@ -414,7 +414,7 @@ SELECT
     tenant_name
 FROM uniform_resource_aicpa_soc2_type2_controls;
 
--- view for complaince explorer prompts 
+-- View for compliance explorer prompts
 
 DROP VIEW IF EXISTS ai_ctxe_complaince_prompt;
 CREATE VIEW ai_ctxe_complaince_prompt AS
@@ -454,8 +454,7 @@ WHERE
   AND json_extract(ur.frontmatter, '$.regimeType') IS NOT NULL;
 
 
-
---view for all controls details complaince explorer
+-- View for all controls details compliance explorer
 
 DROP VIEW IF EXISTS all_control;
 
@@ -585,7 +584,7 @@ SELECT
     FROM uniform_resource_aicpa_soc2_type2_controls cntl;
 
 
---view for cmmc controls details complaince explorer 
+-- View for CMMC controls details compliance explorer
 
 DROP VIEW IF EXISTS cmmc_control;
 
@@ -641,7 +640,7 @@ FROM uniform_resource_scf_2024_2 AS cntl
 WHERE cntl."US CMMC 2.0 Level 3" != '';
 
 
--- view for hipaa controls details complaince explorer 
+-- View for HIPAA controls details compliance explorer
 
 DROP VIEW IF EXISTS hipaa_control;
 
@@ -657,7 +656,7 @@ CREATE VIEW hipaa_control AS
           FROM uniform_resource_hipaa_security_rule_safeguards cntl;
 
 
--- view for hitrust controls details complaince explorer 
+-- View for HITRUST controls details compliance explorer
 
 DROP VIEW IF EXISTS hitrust_control;
 
@@ -673,7 +672,7 @@ SELECT
           FROM uniform_resource_hitrust_e1_assessment cntl;
 
 
--- view for iso27001 controls details complaince explorer 
+-- View for ISO 27001 controls details compliance explorer
 
 DROP VIEW IF EXISTS iso27001_control;
 
@@ -691,7 +690,7 @@ SELECT
         FROM uniform_resource_iso_27001_v3 as cntl;
 
 
--- view for soc2 controls details complaince explorer 
+-- View for SOC2 controls details compliance explorer
 
 DROP VIEW IF EXISTS soc2_control;
 
@@ -741,7 +740,7 @@ CREATE VIEW soc2_control AS
    - Linux (from repository root): `sqlpage.bin`
    - macOS (Homebrew): `sqlpage`
 
-4. Open your browser at the configured port (default in `README.md` example: `http://localhost:9219`).
+4. Open your browser at the configured port (default in `README.md` example: `http://localhost:9221`).
 
 ### Notes
 - This folder assumes you have the SQLPage tooling from the repository (see `lib/sqlpage`).
@@ -750,7 +749,7 @@ CREATE VIEW soc2_control AS
 - The top of this `README.md` contains a YAML front-matter example used by SQLPage:
   - siteName: Sets the site name as Cpation-Explorer.
   - database_url: Points to the SQLite database (sqlpage.db) in read-write-create mode.
-  - web_root: Defines the web root directory for serving files (./) 
+  - web_root: Defines the web root directory for serving files (./)
   - allow_exec: Enables execution of scripts/SQLPage commands.
   - port: Configures the web server to run on port 9221.
   - Adjust the `database_url` and `port` as needed.
