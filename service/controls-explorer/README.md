@@ -7,7 +7,6 @@ sqlpage-conf:
   port: 9221
 ---
 
-## Intro
 The compliance explorer covers a wide range of standards and guidelines across different areas of cybersecurity and data protection. They include industry-specific standards, privacy regulations, and cybersecurity frameworks. Complying with these frameworks supports a strong cybersecurity stance and alignment with data protection laws.
 
 The content in this folder is authored as a markdown-driven SQLPage page (`README.md`) and the site is configured to use a local SQLite database (`sqlpage.db`).
@@ -100,29 +99,6 @@ SELECT
   **Version**: v2019.1 
 
   **Published/Last Reviewed Date/Year**: 2019-10-26 00:00:00+00' AS description_md
-```
-Run the notebook script with markdown input and config, then pipe output into SQLite database 'sqlpage.db'
-
-```bash
-../../lib/sqlpage/codebook.ts --md README.md  --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
-```
-
-Windows: start the SQLPage server
-
-```bash
-sqlpage.exe
-```
-
-Linux: start the SQLPage server from root folder
-
-```bash
-sqlpage.bin
-```
-
-macOS (Homebrew installation): start the SQLPage server
-
-```bash
-sqlpage
 ```
 
 The below SQL code first drops the table if it already exists, then defines columns for key attributes such as title, geography, source, version, review date, description, status, and JSON-based elaboration. It includes audit fields like created_at, updated_at, and deleted_at for tracking changes.
@@ -271,7 +247,7 @@ NULL
 );
 ```
 
-these are the views to consolidate compliance controls from multiple frameworks (SCF, CMMC, HIPAA, HITRUST, ISO 27001, SOC2) and AI policy/prompt data. It standardizes fields like control codes, questions, evidence, and metadata, providing unified, queryable views for a Compliance Explorer platform.
+These are the views to consolidate compliance controls from multiple frameworks (SCF, CMMC, HIPAA, HITRUST, ISO 27001, SOC2) and AI policy/prompt data. It standardizes fields like control codes, questions, evidence, and metadata, providing unified, queryable views for a Compliance Explorer platform.
 
 ```sql HEAD
 DROP VIEW IF EXISTS compliance_regime_control;
