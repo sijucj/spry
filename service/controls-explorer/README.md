@@ -273,8 +273,6 @@ FROM uniform_resource_scf_2024_2 WHERE `NIST 800-171A rev 3` !='';
 
 DROP VIEW IF EXISTS scf_view;
 
-DROP VIEW IF EXISTS scf_view;
-
 CREATE VIEW scf_view AS
 SELECT 
     'SCF-' || ROWID AS control_identifier,
@@ -367,8 +365,7 @@ SELECT
     `SCF Domain` AS scf_domain,
     `SCF Control` AS scf_control,
     `SCF #` AS control_code,
-    `Secure Controls Framework (SCF)
-Control Description` AS control_description,
+    `Secure Controls Framework (SCF) Control Description` AS control_description,
     `SCF Control Question` AS control_question,
     Evidence AS evidence,
     tenant_id,
@@ -417,7 +414,7 @@ SELECT
     tenant_name
 FROM uniform_resource_aicpa_soc2_type2_controls;
 
---###view for complaince explorer prompts #####-------
+-- view for complaince explorer prompts 
 
 DROP VIEW IF EXISTS ai_ctxe_complaince_prompt;
 CREATE VIEW ai_ctxe_complaince_prompt AS
@@ -454,11 +451,11 @@ JOIN
 
 WHERE
   fs.file_basename LIKE '%.prompt.md'
-  AND json_extract(ur.frontmatter, '$.regimeType') IS NOT NULL;;
+  AND json_extract(ur.frontmatter, '$.regimeType') IS NOT NULL;
 
 
 
---###view for all controls details complaince explorer #####-------
+--view for all controls details complaince explorer
 
 DROP VIEW IF EXISTS all_control;
 
@@ -588,7 +585,7 @@ SELECT
     FROM uniform_resource_aicpa_soc2_type2_controls cntl;
 
 
---###view for cmmc controls details complaince explorer #####-------
+--view for cmmc controls details complaince explorer 
 
 DROP VIEW IF EXISTS cmmc_control;
 
@@ -644,7 +641,7 @@ FROM uniform_resource_scf_2024_2 AS cntl
 WHERE cntl."US CMMC 2.0 Level 3" != '';
 
 
---###view for hipaa controls details complaince explorer #####-------
+-- view for hipaa controls details complaince explorer 
 
 DROP VIEW IF EXISTS hipaa_control;
 
@@ -660,7 +657,7 @@ CREATE VIEW hipaa_control AS
           FROM uniform_resource_hipaa_security_rule_safeguards cntl;
 
 
---###view for hitrust controls details complaince explorer #####-------
+-- view for hitrust controls details complaince explorer 
 
 DROP VIEW IF EXISTS hitrust_control;
 
@@ -676,7 +673,7 @@ SELECT
           FROM uniform_resource_hitrust_e1_assessment cntl;
 
 
---###view for iso27001 controls details complaince explorer #####-------
+-- view for iso27001 controls details complaince explorer 
 
 DROP VIEW IF EXISTS iso27001_control;
 
@@ -694,7 +691,7 @@ SELECT
         FROM uniform_resource_iso_27001_v3 as cntl;
 
 
---###view for soc2 controls details complaince explorer #####-------
+-- view for soc2 controls details complaince explorer 
 
 DROP VIEW IF EXISTS soc2_control;
 
@@ -738,21 +735,19 @@ CREATE VIEW soc2_control AS
    ../../lib/sqlpage/codebook.ts --md README.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
    ```
 
-4. Start the SQLPage server:
+3. Start the SQLPage server:
 
    - Windows: `sqlpage.exe`
    - Linux (from repository root): `sqlpage.bin`
    - macOS (Homebrew): `sqlpage`
 
-5. Open your browser at the configured port (default in `README.md` example: `http://localhost:9219`).
+4. Open your browser at the configured port (default in `README.md` example: `http://localhost:9219`).
 
 ### Notes
-
 - This folder assumes you have the SQLPage tooling from the repository (see `lib/sqlpage`).
 - [`surveilr`](https://www.surveilr.com/) is used to ingest CSV files — ensure it is installed or available in your PATH.
 - Commands above assume a Unix-like shell; Windows paths/commands differ slightly.
 - The top of this `README.md` contains a YAML front-matter example used by SQLPage:
-
   - siteName: Sets the site name as Cpation-Explorer.
   - database_url: Points to the SQLite database (sqlpage.db) in read-write-create mode.
   - web_root: Defines the web root directory for serving files (./) 
