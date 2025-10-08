@@ -4,7 +4,7 @@ sqlpage-conf:
   database_url: "sqlite://sqlpage.db?mode=rwc"  
   web_root: "./"
   allow_exec: true  
-  port: 9219
+  port: 9220
 ---
 
 ## Intro
@@ -14,10 +14,6 @@ The compliance explorer covers a wide range of standards and guidelines across d
 # recursively processing files in the 'ingest' folder, and store results in 'sqlpage.db'
 surveilr ingest files --csv-transform-auto -r ingest -d sqlpage.db
 
-```sql HEAD
--- head at start
-PRAGMA foreign_keys = ON;
-```
 
 ```sql index.sql { route: { caption: "Compliance Explorer Home" } }
 SELECT
@@ -99,7 +95,7 @@ SELECT
   **Published/Last Reviewed Date/Year**: 2019-10-26 00:00:00+00' AS description_md
 ```
 # Run the notebook script with markdown input and config, then pipe output into SQLite database 'sqlpage.db'
-../../lib/sqlpage/codebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
+../../lib/sqlpage/codebook.ts --md index.md --md head.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
 
 # Windows: start the SQLPage server
 sqlpage.exe

@@ -26,7 +26,7 @@ The content in this folder is authored as a markdown-driven SQLPage page (`index
 
 3. Build the SQLPage notebook page from `index.md` and pipe into the database:
 
-   ../../lib/sqlpage/codebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
+ ../../lib/sqlpage/codebook.ts --md index.md --md head.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db
 
 4. Start the SQLPage server:
 
@@ -69,7 +69,7 @@ Adjust the `database_url` and `port` as needed.
 During active development it's convenient to automatically rebuild the packaged page and restart the `sqlpage.bin` server when markdown changes. The following example uses `watchexec` to watch `.md` files, rebuild the notebook with the repository `codebook` tool, write the output into `sqlpage.db`, and restart the local `sqlpage.bin` server:
 
 ```sh
-watchexec -e md -- bash -c 'pkill -f sqlpage.bin || true; deno run -A ../../lib/sqlpage/codebook.ts --md index.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db; sleep 1; sqlpage.bin &'
+watchexec -e md -- bash -c 'pkill -f sqlpage.bin || true; deno run -A ../../lib/sqlpage/codebook.ts --md index.md --md head.md --package --conf sqlpage/sqlpage.json | sqlite3 sqlpage.db; sleep 1; sqlpage.bin &'
 ```
 
 Notes:
