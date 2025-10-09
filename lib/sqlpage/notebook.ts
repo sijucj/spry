@@ -222,12 +222,14 @@ export class InfoDirectiveCells {
 export type SqlPageFile = {
   readonly kind: "head_sql" | "tail_sql" | "sqlpage_file_upsert";
   readonly path: string; // relative path (e.g., "sql.d/head/001.sql", "admin/index.sql")
-  readonly contents: string; // file contents
+  contents: string; // file contents
   readonly lastModified?: Date; // optional timestamp (not used in DML; engine time is used)
   readonly cell?: DocumentedCodeCell<string>;
   readonly asErrorContents: (text: string, error: unknown) => string;
   readonly isUnsafeInterpolatable?: boolean;
   readonly isLayoutCandidate?: boolean;
+  isInterpolated?: boolean;
+  layout?: Awaited<ReturnType<Layouts["findLayout"]>>;
 };
 
 /**
@@ -419,7 +421,7 @@ export class SqlPageNotebook {
   async *rawSqlPageFileEntries(
     opts: { md: string[] },
     directives: InfoDirectiveCells,
-  ) {
+  ): AsyncGenerator<SqlPageFile> {
     const pageRoutes: PageRoute[] = [];
     const errorAsSqlComments = (text: string, _error: unknown) =>
       text.replaceAll(/^/gm, "-- ");
@@ -583,14 +585,14 @@ export class SqlPageNotebook {
           );
 
           if (mutated !== spf.contents) {
-            (spf as Any).contents = String(mutated);
-            (spf as Any).isInterpolated = true;
+            spf.contents = String(mutated);
+            spf.isInterpolated = true;
           }
         } else if (layout) {
-          (spf as Any).contents = layout.wrap(spf.contents);
+          spf.contents = layout.wrap(spf.contents);
         }
 
-        if (layout) (spf as Any).layout = layout;
+        if (layout) spf.layout = layout;
         yield spf;
       } catch (error) {
         (spf as Any).isSqlPageFileError = error;
