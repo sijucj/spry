@@ -4,7 +4,7 @@ sqlpage-conf:
   database_url: "sqlite://sqlpage.db?mode=rwc"  
   web_root: "./"
   allow_exec: true  
-  port: 9221
+  port: 9227
 ---
 
 The compliance explorer covers a wide range of standards and guidelines across different areas of cybersecurity and data protection. They include industry-specific standards, privacy regulations, and cybersecurity frameworks. Complying with these frameworks supports a strong cybersecurity stance and alignment with data protection laws.
@@ -136,9 +136,6 @@ SELECT
 SELECT
   'Home' AS title,
   sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/' AS link;
-SELECT
-  $page_title AS title,
-sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/ce/regime/index.sql' AS link;
 SELECT
   'AICPA' AS title,
   sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/ce/regime/aicpa.sql' AS link;
