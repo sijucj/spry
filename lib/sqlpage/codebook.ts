@@ -2,8 +2,9 @@
 import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
 import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
 import { ensureDir } from "jsr:@std/fs@^1";
-import { dirname, join } from "jsr:@std/path@^1";
+import { dirname, globToRegExp, isGlob, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
+import { posix } from "node:path";
 import {
   AnnotatedRoute,
   pathExtensions,
@@ -11,11 +12,15 @@ import {
   Routes,
 } from "../assembler/mod.ts";
 import {
-  CodeCell,
+  DocCodeCellMutator,
+  DocumentedCodeCell,
   documentedNotebooks,
+  mutateDocCodeCells,
   notebooks,
+  pipedDocCodeCellMutators,
   safeFrontmatter,
 } from "../codebook/mod.ts";
+import { unsafeJsEvaluator } from "../universal/template.ts";
 
 // ----- SQLPage configuration schema (frontmatter-friendly) -----
 export const sqlPageConfSchema = z
@@ -42,15 +47,13 @@ export const sqlPageConfSchema = z
     environment: z.enum(["production", "development"]).optional(),
 
     // Frontmatter-friendly nested OIDC
-    oidc: z
-      .object({
-        issuer_url: z.string().min(1),
-        client_id: z.string().min(1),
-        client_secret: z.string().min(1),
-        scopes: z.array(z.string()).optional(),
-        redirect_path: z.string().min(1).optional(),
-      })
-      .optional(),
+    oidc: z.object({
+      issuer_url: z.string().min(1),
+      client_id: z.string().min(1),
+      client_secret: z.string().min(1),
+      scopes: z.array(z.string()).optional(),
+      redirect_path: z.string().min(1).optional(),
+    }).optional(),
 
     // Also accept already-flat OIDC keys (as SQLPage expects in json)
     oidc_issuer_url: z.string().min(1).optional(),
@@ -67,15 +70,70 @@ const defaultFmSchema = z.object({
   "sqlpage-conf": sqlPageConfSchema.optional(),
 }).catchall(z.unknown());
 
-export type SqlPageFileEntry = {
-  kind: "head_sql" | "tail_sql" | "sqlpage_file_insert";
+export type SqlPageFile = {
+  kind: "head_sql" | "tail_sql" | "sqlpage_file_upsert";
   path: string; // relative path (e.g., "sql.d/head/001.sql", "admin/index.sql")
   contents: string; // file contents
   lastModified?: Date; // optional timestamp (not used in DML; engine time is used)
 };
 
+export const isRouteSupplier = (o: unknown): o is { route: AnnotatedRoute } =>
+  o && typeof o === "object" && "route" in o &&
+    typeof o.route === "object"
+    ? true
+    : false;
+
+export const enrichRoute: DocCodeCellMutator<string> = (
+  cell,
+  { nb, registerIssue },
+) => {
+  if (!isRouteSupplier(cell.attrs)) return;
+  const route = cell.attrs.route as AnnotatedRoute;
+  if (!route.path && cell.info) {
+    route.path = cell.info;
+  }
+  const extensions = pathExtensions(route.path);
+  route.pathBasename = extensions.basename;
+  route.pathBasenameNoExtn = extensions.basename.split(".")[0];
+  route.pathDirname = dirname(route.path);
+  route.pathExtnTerminal = extensions.terminal;
+  route.pathExtns = extensions.extensions;
+  const parsed = z.safeParse(routeAnnSchema, route);
+  if (!parsed.success) {
+    registerIssue({
+      kind: "fence-attrs-json5-parse",
+      disposition: "error",
+      error: parsed.error,
+      message: `Zod error parsing route: ${z.prettifyError(parsed.error)}`,
+      provenance: nb.notebook.provenance,
+      startLine: cell.startLine,
+      endLine: cell.endLine,
+    });
+  }
+};
+
+export const enrichFrontmatter: DocCodeCellMutator<string> = (cell, { nb }) => {
+  if ("frontmatter" in cell) return;
+  // deno-lint-ignore no-explicit-any
+  (cell as any).frontmatter = nb.notebook.fm;
+};
+
 export class SqlPageCodebook {
-  protected constructor() {}
+  protected readonly docCodeCellMutators: DocCodeCellMutator<string>[] = [];
+  protected pipedMutators = pipedDocCodeCellMutators(this.docCodeCellMutators);
+  protected constructor() {
+    this.setupDocCodeCellMutators();
+  }
+
+  withDocCodeCellMutator(dcce: DocCodeCellMutator<string>) {
+    this.docCodeCellMutators.push(dcce);
+    this.pipedMutators = pipedDocCodeCellMutators(this.docCodeCellMutators);
+  }
+
+  setupDocCodeCellMutators() {
+    this.withDocCodeCellMutator(enrichRoute);
+    this.withDocCodeCellMutator(enrichFrontmatter);
+  }
 
   async *notebooks(opts: { md: string[] }) {
     const sources = async function* () {
@@ -99,43 +157,118 @@ export class SqlPageCodebook {
   }
 
   async *sqlPageCodebooks(opts: { md: string[] }) {
-    return yield* documentedNotebooks(this.notebooks(opts), { kind: "hr" });
+    return yield* mutateDocCodeCells(
+      this.pipedMutators,
+      documentedNotebooks(this.notebooks(opts), { kind: "hr" }),
+    );
   }
 
-  async *codeCells(opts: { md: string[] }) {
-    for await (const nb of this.notebooks(opts)) {
-      for (const cell of nb.cells) {
+  /** Build a matcher once; use findPath(path) to get the closest matching glob. */
+  layoutFinder(layouts: DocumentedCodeCell<string, Record<string, unknown>>[]) {
+    function toRegex(glob: string): RegExp {
+      if (!isGlob(glob)) {
+        // Treat literal as exact match (normalize + escape)
+        const exact = posix.normalize(glob).replace(
+          /[.*+?^${}()|[\]\\]/g,
+          "\\$&",
+        );
+        return new RegExp(`^${exact}$`);
+      }
+      return globToRegExp(glob, {
+        extended: true,
+        globstar: true,
+        caseInsensitive: false,
+      });
+    }
+
+    function wildcardCount(g: string): number {
+      // Penalize '**' heavier so it's considered less specific
+      const starStar = (g.match(/\*\*/g) ?? []).length * 2;
+      const singles = (g.replace(/\*\*/g, "").match(/[*?]/g) ?? []).length;
+      return starStar + singles;
+    }
+
+    const cached = layouts.map((layout) => {
+      const tokens = layout.info?.split(/\s+/);
+      if (tokens && tokens.length == 1) layout.info += " **/*";
+      const glob = tokens && tokens.length > 1 ? tokens[1] : "**/*";
+      const gg = posix.normalize(glob);
+      return {
+        layout,
+        glob,
+        g: gg,
+        re: toRegex(gg),
+        wc: wildcardCount(gg),
+        len: gg.length,
+      };
+    });
+
+    function findShell(path: string) {
+      const p = posix.normalize(path);
+      const hits = cached.filter((c) => c.re.test(p));
+      if (!hits.length) return undefined;
+      hits.sort((a, b) => (a.wc - b.wc) || (b.len - a.len));
+      const cell = hits[0].layout;
+      return { cell, wrap: (text: string) => `${cell.source}\n${text}` };
+    }
+
+    return {
+      findShell: (layouts.length == 0 ? (_: string) => undefined : findShell),
+    };
+  }
+
+  async *codeCells(
+    opts: { md: string[] },
+    extracted: {
+      layouts: DocumentedCodeCell<string>[];
+      heads: DocumentedCodeCell<string>[];
+      tails: DocumentedCodeCell<string>[];
+    },
+  ) {
+    const spBooks = await Array.fromAsync(this.sqlPageCodebooks(opts));
+    const { layouts, heads, tails } = extracted;
+
+    const isExtracted = (o: unknown): o is { extracted: true } =>
+      o && typeof o === "object" && "extracted" in o && o.extracted
+        ? true
+        : false;
+
+    const extract = (
+      cell: DocumentedCodeCell<string>,
+      to: DocumentedCodeCell<string>[],
+    ) => {
+      to.push(cell);
+      // deno-lint-ignore no-explicit-any
+      (cell as any).extracted = true;
+    };
+
+    for await (const spnb of spBooks) {
+      for (const cell of spnb.cells) {
         if (cell.kind === "code") {
-          if ("route" in cell.attrs) {
-            const route = cell.attrs.route as AnnotatedRoute;
-            if (!route.path && cell.info) {
-              route.path = cell.info;
-            }
-            const extensions = pathExtensions(route.path);
-            route.pathBasename = extensions.basename;
-            route.pathBasenameNoExtn = extensions.basename.split(".")[0];
-            route.pathDirname = dirname(route.path);
-            route.pathExtnTerminal = extensions.terminal;
-            route.pathExtns = extensions.extensions;
-            const parsed = z.safeParse(routeAnnSchema, route);
-            if (!parsed.success) {
-              nb.issues.push({
-                kind: "fence-attrs-json5-parse",
-                disposition: "error",
-                error: parsed.error,
-                message: `Zod error parsing route: ${
-                  z.prettifyError(parsed.error)
-                }`,
-                provenance: nb.provenance,
-                startLine: cell.startLine,
-                endLine: cell.endLine,
-              });
+          if (cell.info?.startsWith("LAYOUT")) {
+            extract(cell, layouts);
+          } else {
+            switch (cell.info) {
+              case "HEAD":
+                extract(cell, heads);
+                break;
+              case "TAIL":
+                extract(cell, tails);
+                break;
             }
           }
+        }
+      }
+    }
+
+    for await (const spnb of spBooks) {
+      for (const cell of spnb.cells) {
+        if (cell.kind === "code" && !isExtracted(cell)) {
           yield cell;
         }
       }
 
+      const { notebook: nb } = spnb;
       if (nb.issues.length) {
         yield {
           kind: "code",
@@ -144,13 +277,16 @@ export class SqlPageCodebook {
           info: "NOTEBOOK_ISSUES",
           attrs: { issues: nb.issues },
           provenance: nb.provenance,
-        } satisfies CodeCell<string>;
+        } satisfies DocumentedCodeCell<string>;
       }
     }
   }
 
   async *sqlPageFileEntries(opts: { md: string[] }) {
     const pageRoutes: AnnotatedRoute[] = [];
+    const layouts: DocumentedCodeCell<string>[] = [];
+    const heads: DocumentedCodeCell<string>[] = [];
+    const tails: DocumentedCodeCell<string>[] = [];
 
     function counter<Identifier>(identifier: Identifier, padValue = 4) {
       let value = -1;
@@ -159,57 +295,81 @@ export class SqlPageCodebook {
       return { identifier, incr, next };
     }
 
-    const headCount = counter("head");
-    const tailCount = counter("tail");
+    const codeCells = await Array.fromAsync(
+      this.codeCells(opts, { layouts, heads: tails, tails }),
+    );
 
-    for await (const cc of this.codeCells(opts)) {
+    const headCount = counter("head");
+    for (const head of heads) {
+      yield {
+        path: `sql.d/head/${headCount.next()}.sql`,
+        kind: "head_sql",
+        contents: head.source,
+      } satisfies SqlPageFile;
+    }
+
+    const { findShell } = this.layoutFinder(layouts);
+    const { evaluate } = unsafeJsEvaluator();
+    for await (const cc of codeCells) {
       switch (cc.language) {
         case "json": {
           if (cc.info && cc.info === "NOTEBOOK_ISSUES") {
             yield {
               path: `spry.d/issues/${cc.provenance}.auto.json`,
-              kind: "sqlpage_file_insert",
+              kind: "sqlpage_file_upsert",
               contents: cc.source,
-            } satisfies SqlPageFileEntry;
+            } satisfies SqlPageFile;
           }
           break;
         }
         case "sql": {
           if (!cc.info) {
-            console.error(
-              `INFO expected on line ${cc.startLine} of ${cc.provenance}`,
+            console.warn(
+              `sql fenced block found without INFO on line ${cc.startLine} of ${cc.provenance}`,
             );
             continue;
           }
           const { info: path } = cc;
-          if (path === "HEAD" || path === "TAIL") {
-            yield {
-              path: path === "HEAD"
-                ? `sql.d/head/${headCount.next()}.sql`
-                : `sql.d/tail/${tailCount.next()}.sql`,
-              kind: path === "HEAD" ? "head_sql" : "tail_sql",
-              contents: cc.source,
-            } satisfies SqlPageFileEntry;
-          } else {
-            yield {
-              path,
-              kind: "sqlpage_file_insert",
-              contents: cc.source,
-            } satisfies SqlPageFileEntry;
-            if (Object.entries(cc.attrs).length) {
-              if ("route" in cc.attrs) {
-                pageRoutes.push(cc.attrs.route as AnnotatedRoute);
-              }
-              yield {
-                path: `spry.d/auto/resource/${path}.auto.json`,
-                kind: "sqlpage_file_insert",
-                contents: JSON.stringify(this.dropUndef(cc.attrs), null, 2),
-              } satisfies SqlPageFileEntry;
+          const shell = findShell(path);
+          yield {
+            path,
+            kind: "sqlpage_file_upsert",
+            contents: await evaluate(
+              shell ? shell.wrap(cc.source) : cc.source,
+              { path, cell: cc, ...cc.attrs },
+            ),
+          } satisfies SqlPageFile;
+          if (Object.entries(cc.attrs).length) {
+            if (isRouteSupplier(cc.attrs)) {
+              pageRoutes.push(cc.attrs.route as AnnotatedRoute);
             }
+            yield {
+              path: `spry.d/auto/resource/${path}.auto.json`,
+              kind: "sqlpage_file_upsert",
+              contents: JSON.stringify(this.dropUndef(cc.attrs), null, 2),
+            } satisfies SqlPageFile;
           }
           break;
         }
       }
+    }
+
+    const layoutCount = counter("layout");
+    for (const lo of layouts) {
+      yield {
+        path: `spry.d/auto/layout/${layoutCount.next()}.auto.sql`,
+        kind: "sqlpage_file_upsert",
+        contents: `-- ${lo.info}\n${lo.source}`,
+      } satisfies SqlPageFile;
+    }
+
+    const tailCount = counter("tail");
+    for (const tail of tails) {
+      yield {
+        path: `sql.d/tail/${tailCount.next()}.sql`,
+        kind: "tail_sql",
+        contents: tail.source,
+      } satisfies SqlPageFile;
     }
 
     const routes = new Routes(pageRoutes);
@@ -220,23 +380,23 @@ export class SqlPageCodebook {
         showPath: true,
         includeCounts: true,
       }),
-      kind: "sqlpage_file_insert",
-    } satisfies SqlPageFileEntry;
+      kind: "sqlpage_file_upsert",
+    } satisfies SqlPageFile;
     yield {
       path: "spry.d/auto/route/forest.auto.json",
       contents: JSON.stringify(forest, null, 2),
-      kind: "sqlpage_file_insert",
-    } satisfies SqlPageFileEntry;
+      kind: "sqlpage_file_upsert",
+    } satisfies SqlPageFile;
     yield {
       path: "spry.d/auto/route/breadcrumbs.auto.json",
       contents: JSON.stringify(breadcrumbs, null, 2),
-      kind: "sqlpage_file_insert",
-    } satisfies SqlPageFileEntry;
+      kind: "sqlpage_file_upsert",
+    } satisfies SqlPageFile;
     yield {
       path: "spry.d/auto/route/edges.auto.json",
       contents: JSON.stringify(edges, null, 2),
-      kind: "sqlpage_file_insert",
-    } satisfies SqlPageFileEntry;
+      kind: "sqlpage_file_upsert",
+    } satisfies SqlPageFile;
   }
 
   async materializeContent(
@@ -273,7 +433,7 @@ export class SqlPageCodebook {
    * On conflict when contents differ, last_modified is set by the SQL engine (CURRENT_TIMESTAMP).
    * If contents are identical, the row is left unchanged.
    */
-  async emitSqlPageFilesUpsertDML(
+  async sqlPageFilesUpsertDML(
     dialect: "sqlite",
     opts: { md: string[]; includeSqlPageFilesTable?: boolean },
   ) {
@@ -293,7 +453,7 @@ export class SqlPageCodebook {
         ? `CREATE TABLE IF NOT EXISTS "sqlpage_files" ("path" VARCHAR PRIMARY KEY NOT NULL, "contents" TEXT NOT NULL, "last_modified" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);`
         : "-- sqlpage_files DDL not requested",
       ...list.filter((e) => e.kind === "head_sql").map((spf) => spf.contents),
-      ...list.filter((e) => e.kind === "sqlpage_file_insert").map((f) => {
+      ...list.filter((e) => e.kind === "sqlpage_file_upsert").map((f) => {
         const pathLit = `'${esc(f.path)}'`;
         const bodyLit = `'${esc(f.contents)}'`;
         return `INSERT INTO sqlpage_files (path, contents, last_modified) VALUES (${pathLit}, ${bodyLit}, CURRENT_TIMESTAMP) ` +
@@ -375,9 +535,6 @@ export class SqlPageCodebook {
         "Write sqlpage.json to this path (generated from frontmatter sqlpage-conf).",
       )
       .action(async (opts) => {
-        // const b = this.cb ?? SqlPageContentBuilder.typical<FM, M>();
-        // const content = b.build(sources());
-
         // If --fs is present, materialize files under that root
         if (typeof opts.fs === "string" && opts.fs.length > 0) {
           Array.fromAsync(this.materializeFs({ md: opts.md, fs: opts.fs }));
@@ -386,7 +543,7 @@ export class SqlPageCodebook {
         // If -p/--package is present (i.e., user requested SQL package), emit to stdout
         if (opts.package) {
           for (
-            const chunk of await this.emitSqlPageFilesUpsertDML("sqlite", {
+            const chunk of await this.sqlPageFilesUpsertDML("sqlite", {
               md: opts.md,
               includeSqlPageFilesTable: true,
             })
@@ -405,6 +562,7 @@ export class SqlPageCodebook {
                 opts.conf,
                 JSON.stringify(json, null, 2),
               );
+              break; // only pick from the first file
             }
           }
         }
