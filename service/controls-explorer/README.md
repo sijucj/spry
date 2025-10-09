@@ -195,7 +195,7 @@ SELECT 'title' AS component, (SELECT COALESCE(title, caption)
  
 SELECT
   'text' AS component,
-  'SOC 2 Type I Controls' AS title;
+  json_extract($resource_json, '$.route.caption') AS title;
  
 SELECT
     'The SOC 2 controls are based on the AICPA Trust Services Criteria, focusing on security, availability, processing integrity, confidentiality, and privacy.' AS contents;
@@ -235,7 +235,7 @@ SELECT 'text' AS component,
 
 SOC 2 Type II Controls page
 
-```sql ce/regime/soc2_type2.sql { route: { caption: "AICPA" } }
+```sql ce/regime/soc2_type2.sql { route: { caption: "SOC 2 Type II Controls" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 --- Display breadcrumb
@@ -253,8 +253,8 @@ SELECT
  
 --- Display page title
 SELECT
-  'title' AS component,
-  'SOC 2 Type II Controls' AS contents;
+  'text' AS component,
+  json_extract($resource_json, '$.route.caption') AS title;
  
 --- Display description
 SELECT
@@ -577,7 +577,7 @@ FROM (SELECT control_id, fii_id
 
 CMMC Level page
 
-```sql ce/regime/cmmc_level.sql { route: { caption: "AICPA" } }
+```sql ce/regime/cmmc_level.sql { route: { caption: "CMMC Level" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 
@@ -664,7 +664,7 @@ SET current_page = ($offset / $limit) + 1;
 
 CMMC Detail page
 
-```sql ce/regime/cmmc_detail.sql { route: { caption: "AICPA" } }
+```sql ce/regime/cmmc_detail.sql { route: { caption: "CMMC Control Details" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 
@@ -682,7 +682,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.
   
 
   --- Primary details card
-  SELECT 'card' AS component, 'CMMC Control Details' AS title, 1 AS columns;
+  SELECT 'card' AS component, json_extract($resource_json, '$.route.caption') AS title, 1 AS columns;
   SELECT
       COALESCE($code, '(unknown)') AS title,
       '**Control Question:** ' || COALESCE(control_question, '') || '  
@@ -931,16 +931,16 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.
 
 ```
 
-HIPAA Security Rule Details page
+CMMC page
 
-```sql ce/regime/cmmc.sql { route: { caption: "AICPA" } }
+```sql ce/regime/cmmc.sql { route: { caption: "Cybersecurity Maturity Model Certification (CMMC)" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 SELECT 'title' AS component, (SELECT COALESCE(title, caption)
     FROM sqlpage_aide_navigation
    WHERE namespace = 'prime' AND path = 'ce/regime/cmmc.sql/index.sql') as contents;
     ;
-SELECT 'text' AS component, 'Cybersecurity Maturity Model Certification (CMMC)' AS title;
+SELECT 'text' AS component, json_extract($resource_json, '$.route.caption') AS title;
 
 SELECT
   "The Cybersecurity Maturity Model Certification (CMMC) program aligns with the information security requirements of the U.S. Department of Defense (DoD) for Defense Industrial Base (DIB) partners. The DoD has mandated that all organizations engaged in business with them, irrespective of size, industry, or level of involvement, undergo a cybersecurity maturity assessment based on the CMMC framework. This initiative aims to ensure the protection of sensitive unclassified information shared between the Department and its contractors and subcontractors. The program enhances the Department's confidence that contractors and subcontractors adhere to cybersecurity requirements applicable to acquisition programs and systems handling controlled unclassified information" AS contents;
@@ -990,7 +990,7 @@ SELECT
 
 HIPAA page
 
-```sql ce/regime/hipaa_security_rule.sql { route: { caption: "AICPA" } }
+```sql ce/regime/hipaa_security_rule.sql { route: { caption: "HIPAA" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 SELECT 'title' AS component, (SELECT COALESCE(title, caption)
@@ -1000,7 +1000,7 @@ SELECT 'title' AS component, (SELECT COALESCE(title, caption)
  
 SELECT
   'text' AS component,
-  'HIPAA' AS title;
+  json_extract($resource_json, '$.route.caption') AS title;
  
 SELECT
   'The HIPAA define administrative, physical, and technical measures required to ensure the confidentiality, integrity, and availability of electronic protected health information (ePHI).' AS contents;
@@ -1295,7 +1295,7 @@ SELECT 'text' AS component,
 
 ISO 27001 v3 Control Details page
 
-```sql ce/regime/iso-27001.sql { route: { caption: "ISO 27001 v3" } }
+```sql ce/regime/iso-27001.sql { route: { caption: "ISO 27001 v3 Control Details" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 
@@ -1306,7 +1306,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.
     SELECT COALESCE($code, '') AS title, '#' AS link;
 
     --- Primary details card
-    SELECT 'card' AS component, 'ISO 27001 v3 Control Details' AS title, 1 AS columns;
+    SELECT 'card' AS component, json_extract($resource_json, '$.route.caption') AS title, 1 AS columns;
     SELECT
         COALESCE(control_code, '(unknown)') AS title,
         '**SCF Domain:** ' || COALESCE(scf_domain,'') || '  
@@ -2303,7 +2303,7 @@ CREATE VIEW soc2_control AS
 
 HIPAA Security Rule Detail page
 
-```sql ce/regime/hipaa_security_rule_detail.sql { route: { caption: "AICPA" } }
+```sql ce/regime/hipaa_security_rule_detail.sql { route: { caption: "HIPAA Security Rule Detail" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 
@@ -2327,7 +2327,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.
   
       SELECT
         'card' AS component,
-        'HIPAA Security Rule Detail' AS title,
+        json_extract($resource_json, '$.route.caption') AS title,
         1 AS columns;
   
       SELECT
@@ -2508,7 +2508,7 @@ WHERE hipaa_security_rule_reference = $id::TEXT;
 
 HiTRUST Control Details page
 
-```sql ce/regime/hitrust_detail.sql { route: { caption: "HiTRUST e1 Assessment" } }
+```sql ce/regime/hitrust_detail.sql { route: { caption: "HiTRUST Control Details" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 
@@ -2519,7 +2519,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.
     SELECT COALESCE($code, '') AS title, '#' AS link;
 
     --- Primary details card
-    SELECT 'card' AS component, 'HiTRUST Control Details' AS title, 1 AS columns;
+    SELECT 'card' AS component, json_extract($resource_json, '$.route.caption') AS title, 1 AS columns;
     SELECT
         COALESCE(control_id, '(unknown)') AS title,
         '**Common Criteria:** ' || COALESCE(common_criteria,'') || '  
@@ -2710,7 +2710,7 @@ WHERE control_id = $code::TEXT;
 
 THSA page
 
-```sql ce/regime/thsa.sql { route: { caption: "THSA" } }
+```sql ce/regime/thsa.sql { route: { caption: "Together.Health Security Assessment (THSA)" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 SELECT 'title' AS component, (SELECT COALESCE(title, caption)
@@ -2732,7 +2732,7 @@ SELECT
 -- Page Heading
 SELECT
   'text' AS component,
-  'Together.Health Security Assessment (THSA)' AS title;
+  json_extract($resource_json, '$.route.caption') AS title;
   
 SELECT
   'The THSA controls provide compliance requirements for health services, mapped against the Secure Controls Framework (SCF).' AS contents;
@@ -2774,7 +2774,7 @@ SELECT 'text' AS component,
 
 THSA Detail page
 
-```sql ce/regime/thsa_detail.sql { route: { caption: "THSA" } }
+```sql ce/regime/thsa_detail.sql { route: { caption: "Together.Health Security Assessment (THSA) Detail" } }
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 
@@ -2799,7 +2799,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.
     -- Main Control Detail Card
     SELECT
       'card' AS component,
-      'Together.Health Security Assessment (THSA) Detail' AS title,
+      json_extract($resource_json, '$.route.caption') AS title,
       1 AS columns;
  
     SELECT
