@@ -15,7 +15,6 @@ The content in this folder is authored as a markdown-driven SQLPage page (`READM
 
 ```sql LAYOUT
 -- global LAYOUT (defaults to **/*)
-SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
 
 SELECT 'shell' AS component,
        'Compliance Explorer' AS title,
@@ -25,11 +24,7 @@ SELECT 'shell' AS component,
        'fluid' AS layout,
        true AS fixed_top_menu,
        'index.sql' AS link,
-       '{"link":"./index.sql","title":"Home"}' AS menu_item,
-       'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js' AS javascript,
-       'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/sql.min.js' AS javascript,
-       'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/handlebars.min.js' AS javascript,
-       'https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/languages/json.min.js' AS javascript;
+       '{"link":"./index.sql","title":"Home"}' AS menu_item;
 
 ```
 
