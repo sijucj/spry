@@ -1,11 +1,12 @@
+import { basename, dirname, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
+import { DocCodeCellMutator } from "../notebook/mod.ts";
 import {
   forestToEdges,
   pathTree,
   pathTreeNavigation,
   pathTreeSerializers,
 } from "../universal/path-tree.ts";
-import { basename, dirname, join } from "jsr:@std/path@^1";
 
 export const pageRouteSchema = z.object({
   path: z.string().describe(
@@ -93,6 +94,35 @@ export function pathExtensions(path: string) {
     },
   };
 }
+
+export const enrichRoute: DocCodeCellMutator<string> = (
+  cell,
+  { nb, registerIssue },
+) => {
+  if (!isRouteSupplier(cell.attrs)) return;
+  const route = cell.attrs.route as PageRoute;
+  if (!route.path && cell.info) {
+    route.path = cell.info;
+  }
+  const extensions = pathExtensions(route.path);
+  route.pathBasename = extensions.basename;
+  route.pathBasenameNoExtn = extensions.basename.split(".")[0];
+  route.pathDirname = dirname(route.path);
+  route.pathExtnTerminal = extensions.terminal;
+  route.pathExtns = extensions.extensions;
+  const parsed = z.safeParse(pageRouteSchema, route);
+  if (!parsed.success) {
+    registerIssue({
+      kind: "fence-attrs-json5-parse",
+      disposition: "error",
+      error: parsed.error,
+      message: `Zod error parsing route: ${z.prettifyError(parsed.error)}`,
+      provenance: nb.notebook.provenance,
+      startLine: cell.startLine,
+      endLine: cell.endLine,
+    });
+  }
+};
 
 export class Routes {
   constructor(readonly routeAnns: Iterable<PageRoute>) {

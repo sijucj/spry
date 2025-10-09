@@ -119,7 +119,7 @@ export class CLI {
         (r) => r.path,
         (path) => ({
           // deno-lint-ignore no-explicit-any
-          kind: "virtual" as any,
+          kind: "" as any,
           path,
           contents: "virtual",
           asErrorContents: () => "virtual",
