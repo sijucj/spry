@@ -251,78 +251,17 @@ Spry validates and **flattens** OIDC fields into what SQLPage expects (e.g.,
 
 ## Example notebook (mirrors your `lib/sqlpage/notebook_test-01.fixture.md`)
 
-Here’s an illustrative slice that shows all the building blocks together:
+See [notebook_test-01.fixture.md](notebook_test-01.fixture.md) for a good
+starter example.
 
-````markdown
----
-
-title: SQLPage Demo sqlpage-conf: listen_on: "0.0.0.0:8080" site_prefix: "/demo"
-
-## Preamble
-
-```sql HEAD
-PRAGMA foreign_keys = ON;
-```
-````
-
-## Layouts & Partials
-
-```sql LAYOUT **/*.sql
-/* layout header for ${path} */
--- body below
-```
-
-```sql PARTIAL navbar
--- navbar partial
-SELECT 'Home' AS caption, '/' AS link;
-```
-
-## Pages
-
-```sql admin/index.sql {
-  route: { caption: 'Admin', description: 'Admin landing' },
-  site: '/admin'
-}
-SELECT ${sitePrefixed(`'${site}'`)} AS base_path;
-${partial('navbar')}
-```
-
-```sql docs/getting-started.sql {
-  route: { caption: 'Getting Started', siblingOrder: 1 }
-}
-SELECT 'Docs' AS section;
-```
-
-## Epilogue
-
-```sql TAIL
-SELECT 'done' AS status;
-```
-
-```
-Run:
-```
-
-# See what will be created
-
-deno run -A spry.ts -m lib/sqlpage/notebook_test-01.fixture.md ls --tree
-
-# Materialize files
-
-deno run -A spry.ts -m lib/sqlpage/notebook_test-01.fixture.md --fs ./site/
-
-# Or build a SQLite upsert package
-
-deno run -A spry.ts -m lib/sqlpage/notebook_test-01.fixture.md -p > upsert.sql
-
-```
 ## Tips & gotchas
 
-- For **regular SQL** fences, always set a valid **path** in the fence `info` (`path.sql`), otherwise Spry will warn and skip.
-- Use **JSON5** in attrs (trailing commas are NOT allowed if they break JSON5 rules — errors will surface in `spry.d/issues/*.auto.json`).
+- For **regular SQL** fences, always set a valid **path** in the fence `info`
+  (`path.sql`), otherwise Spry will warn and skip.
+- Use **JSON5** in attrs (trailing commas are NOT allowed if they break JSON5
+  rules — errors will surface in `spry.d/issues/*.auto.json`).
 - Keep **partials** small (they’re just text substitution).
-- Layout selection prefers **more specific globs** (fewer wildcards, longer patterns).
-- Interpolation is powerful—use it intentionally; it will mark files with `I` in `ls`.
-
-If you want, I can add a `deno.json` with `tasks` (e.g., `spry:ls`, `spry:build`, `spry:pkg`) and a minimal Makefile-ish README to the repo so your team can standardize usage.
-```
+- Layout selection prefers **more specific globs** (fewer wildcards, longer
+  patterns).
+- Interpolation is powerful—use it intentionally; it will mark files with `I` in
+  `ls`.
