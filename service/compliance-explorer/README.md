@@ -1,5 +1,5 @@
 ---
-siteName: Cpation-Explorer
+siteName: compliance-explorer
 sqlpage-conf:
   database_url: "sqlite://sqlpage.db?mode=rwc"  
   web_root: "./"
