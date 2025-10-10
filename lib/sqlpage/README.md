@@ -249,7 +249,7 @@ deno run -A spry.ts -m lib/sqlpage/notebook_test-01.fixture.md -c sqlpage.json
 Spry validates and **flattens** OIDC fields into what SQLPage expects (e.g.,
 `oidc_issuer_url`, etc.), and drops `undefined` keys.
 
-## Example notebook (mirrors your `lib/sqlpage/notebook_test-01.fixture.md`)
+## Example notebook
 
 See [notebook_test-01.fixture.md](notebook_test-01.fixture.md) for a good
 starter example.
