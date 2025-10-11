@@ -143,28 +143,23 @@ export class Routes {
     const tree = forest.roots;
     const nav = pathTreeNavigation(forest);
     const edges = forestToEdges(forest);
-    const serializers = {
-      ...pathTreeSerializers(forest),
-      crumbsJsonSchemaText: () =>
-        JSON.stringify(
-          nav.ancestorsJsonSchema({
-            outerIsMap: true,
-            payloadItemSchema: z.toJSONSchema(pageRouteSchema),
-          }),
-          null,
-          2,
-        ),
-    };
+    const serializers = pathTreeSerializers(forest);
 
-    const breadcrumbs: Record<string, ReturnType<typeof nav.ancestors>> = {};
+    // const breadcrumbsSchema =
+    const crumbs: z.infer<typeof nav.schemas.breadcrumbsMap> = {};
     for (const node of forest.treeByPath.values()) {
       if (node.payloads) {
         for (const p of node.payloads) {
-          breadcrumbs[p.path] = nav.ancestors(p);
+          crumbs[p.path] = nav.ancestors(p);
         }
       }
     }
-
-    return { forest, tree, breadcrumbs, serializers, edges };
+    return {
+      forest,
+      tree,
+      breadcrumbs: { crumbs, schema: nav.schemas.breadcrumbsMap },
+      serializers,
+      edges,
+    };
   }
 }
