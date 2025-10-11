@@ -24,6 +24,7 @@ Under the hood this is driven by:
 # Windows or Linux/macOS
 deno run -A spry.ts -m app.md [--fs out/] [-p] [-c sqlpage.json]
 deno run -A spry.ts -m app.md -p | sqlite3 app.db
+deno run -A spry.ts -m https://github.com/shah/my-repo/main/app.md ls
 
 # Linux/macOS
 ./spry.ts -m app.md [--fs out/] [-p] [-c sqlpage.json]
@@ -33,7 +34,9 @@ deno run -A spry.ts -m app.md -p | sqlite3 app.db
 Global option (repeatable):
 
 - `-m, --md <mdPath>`: one or more Markdown sources to load (glob your own list
-  if you want).
+  if you want). The Markdown path can be either a local file system path or a
+  remote URL or a combination. See `--src-rel-to` option to determine how source
+  files are resolved if Spry itself is running remotely from a URL vs. locally.
 
 Main behaviors:
 
