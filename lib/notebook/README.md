@@ -267,9 +267,9 @@ import { assert, assertEquals, assertMatch } from "jsr:@std/assert@1.0.6";
 import { notebooks } from "./core.ts";
 
 Deno.test("Codebook — basics", async (t) => {
-  const md = await Deno.readTextFile(
+  const md = await fetch(
     new URL("./core_test-fixture-01.md", import.meta.url),
-  );
+  ).text();
 
   const outs = [];
   for await (const nb of notebooks(md)) outs.push(nb);

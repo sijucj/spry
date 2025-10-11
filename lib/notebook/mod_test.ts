@@ -5,6 +5,10 @@ import {
   assertMatch,
 } from "jsr:@std/assert@^1";
 import {
+  safeSourceText,
+  SourceRelativeTo,
+} from "../universal/content-acquisition.ts";
+import {
   type Cell,
   type CodeCell,
   DocumentedCodeCell,
@@ -30,8 +34,12 @@ function isMarkdown<T extends Record<string, unknown>>(
 }
 
 async function loadFixture(): Promise<string> {
-  const url = new URL("./mod_test-fixture-01.md", import.meta.url);
-  return await Deno.readTextFile(url);
+  const safeText = await safeSourceText(
+    new URL("./mod_test-fixture-01.md", import.meta.url),
+    SourceRelativeTo.Module,
+  );
+  assert(safeText.nature != "error");
+  return safeText.text;
 }
 
 Deno.test("Markdown Notebook core - complex fixture", async (t) => {

@@ -10,6 +10,7 @@ import {
   pipedDocCodeCellMutators,
   safeFrontmatter,
 } from "../notebook/mod.ts";
+import { safeSourceText } from "../universal/content-acquisition.ts";
 import { sqlPageConfSchema } from "./conf.ts";
 import {
   enrichInfoDirective,
@@ -20,6 +21,11 @@ import { enrichRoute, isRouteSupplier, PageRoute, Routes } from "./route.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
+
+export enum SourceRelativeTo {
+  LocalFs = "fs",
+  Module = "module",
+}
 
 const defaultFmSchema = z.object({
   siteName: z.string().optional(),
@@ -69,12 +75,19 @@ export class SqlPageNotebook {
     this.withDocCodeCellMutator(enrichFrontmatter);
   }
 
-  async *notebooks(opts: { md: string[] }) {
+  async *notebooks(opts: { md: string[]; srcRelTo: SourceRelativeTo }) {
     const sources = async function* () {
       for await (const md of opts.md) {
+        const safeMdSrc = await safeSourceText(md, opts.srcRelTo);
+        if (safeMdSrc.nature == "error") {
+          console.error(safeMdSrc);
+          continue;
+        }
         yield {
-          provenance: md,
-          content: await Deno.readTextFile(md),
+          provenance: typeof safeMdSrc.source === "string"
+            ? safeMdSrc.source
+            : safeMdSrc.source.href,
+          content: safeMdSrc.text,
         };
       }
     };
@@ -90,7 +103,7 @@ export class SqlPageNotebook {
     }
   }
 
-  async *sqlPageCodebooks(opts: { md: string[] }) {
+  async *sqlPageCodebooks(opts: { md: string[]; srcRelTo: SourceRelativeTo }) {
     return yield* mutateDocCodeCells(
       this.pipedDocCCMutators,
       documentedNotebooks(this.notebooks(opts), { kind: "hr" }),
@@ -98,7 +111,7 @@ export class SqlPageNotebook {
   }
 
   async *codeCells(
-    opts: { md: string[] },
+    opts: { md: string[]; srcRelTo: SourceRelativeTo },
     directives: InfoDirectiveCells,
   ) {
     const spBooks = await Array.fromAsync(this.sqlPageCodebooks(opts));
@@ -135,7 +148,7 @@ export class SqlPageNotebook {
   }
 
   async *rawSqlPageFileEntries(
-    opts: { md: string[] },
+    opts: { md: string[]; srcRelTo: SourceRelativeTo },
     directives: InfoDirectiveCells,
   ): AsyncGenerator<SqlPageFile> {
     const pageRoutes: PageRoute[] = [];
@@ -279,7 +292,9 @@ export class SqlPageNotebook {
     };
   }
 
-  async *finalSqlPageFileEntries(opts: { md: string[] }) {
+  async *finalSqlPageFileEntries(
+    opts: { md: string[]; srcRelTo: SourceRelativeTo },
+  ) {
     const directives = new InfoDirectiveCells();
     const baseCtx = this.interpolationCtx(opts, directives);
 
@@ -341,7 +356,9 @@ export class SqlPageNotebook {
     return absPath;
   }
 
-  async *materializeFs(opts: { md: string[]; fs: string }) {
+  async *materializeFs(
+    opts: { md: string[]; srcRelTo: SourceRelativeTo; fs: string },
+  ) {
     for await (const spf of this.finalSqlPageFileEntries(opts)) {
       const absPath = this.materializeContent({
         fs: opts.fs,
@@ -367,7 +384,11 @@ export class SqlPageNotebook {
    */
   async sqlPageFilesUpsertDML(
     dialect: "sqlite",
-    opts: { md: string[]; includeSqlPageFilesTable?: boolean },
+    opts: {
+      md: string[];
+      srcRelTo: SourceRelativeTo;
+      includeSqlPageFilesTable?: boolean;
+    },
   ) {
     if (dialect !== "sqlite") {
       throw new Error(`Unsupported dialect: ${dialect}`);
