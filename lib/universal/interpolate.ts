@@ -7,16 +7,36 @@
  * Use ONLY with trusted templates and data.
  */
 
+/* ---------------------------
+   Example (trusted template)
+---------------------------
+type Ctx = { app: string; version: string; util: { up: (s: string) => string } };
+
+const { interpolate } = unsafeInterpolator<Ctx>(
+  { app: "Spry", version: "2.4.0", util: { up: (s) => s.toUpperCase() } },
+  { useCache: true, ctxName: "globals" }, // expose as `globals` instead of `ctx`
+);
+
+const out = interpolate(
+  "Hello ${user}! ${globals.app}@${globals.version} -> ${globals.util.up(user)} sum=${a+b}",
+  { user: "Zoya", a: 2, b: 3 },
+);
+// -> "Hello Zoya! Spry@2.4.0 -> ZOYA sum=5"
+*/
+
 export type UnsafeInterpolatorConfig = {
   /** Enable function caching per (template, local-keys-signature, ctxName). Default: true */
   useCache?: boolean;
   /** Identifier presented to templates for the bound global context. Default: "ctx" */
   ctxName?: string;
+  /** How many partials or recursions can be stacked */
+  recursionLimit?: number;
 };
 
 export function unsafeInterpolator<Context extends Record<string, unknown>>(
   ctx: Readonly<Context>,
-  { useCache = true, ctxName = "ctx" }: UnsafeInterpolatorConfig = {},
+  { useCache = true, ctxName = "ctx", recursionLimit = 9 }:
+    UnsafeInterpolatorConfig = {},
 ) {
   const IDENT_RX = /^[A-Za-z_$][\w$]*$/;
 
@@ -75,7 +95,14 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
   function interpolate<LocalContext extends Record<string, unknown>>(
     template: string,
     locals: Readonly<LocalContext>,
+    stack?: { template: string }[],
   ): string {
+    if (stack && stack.length > recursionLimit) {
+      return `Recursion stack exceeded max: ${recursionLimit} (${
+        stack.map((s) => s.template).join(" -> ")
+      })`;
+    }
+
     const keys = Object.keys(locals);
     const sig = keys.slice().sort().join("|");
 
@@ -107,20 +134,3 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
 
   return { interpolate, ctx };
 }
-
-/* ---------------------------
-   Example (trusted template)
----------------------------
-type Ctx = { app: string; version: string; util: { up: (s: string) => string } };
-
-const { interpolate } = unsafeInterpolator<Ctx>(
-  { app: "Spry", version: "2.4.0", util: { up: (s) => s.toUpperCase() } },
-  { useCache: true, ctxName: "globals" }, // expose as `globals` instead of `ctx`
-);
-
-const out = interpolate(
-  "Hello ${user}! ${globals.app}@${globals.version} -> ${globals.util.up(user)} sum=${a+b}",
-  { user: "Zoya", a: 2, b: 3 },
-);
-// -> "Hello Zoya! Spry@2.4.0 -> ZOYA sum=5"
-*/

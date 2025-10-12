@@ -357,11 +357,6 @@ export class SqlPagePlaybook {
       pagination: interp.pagination,
       absURL: interp.absURL,
       sitePrefixed: interp.absURL,
-
-      // TODO: partial needs to be able to have args passed in for recursive interpolation
-      partial: (name: string) =>
-        directives.partials.find((p) => p.infoDirective.identity == name)
-          ?.source ?? `/* partial '${name}' not found in directives */`,
     };
   }
 
@@ -389,6 +384,23 @@ export class SqlPagePlaybook {
           const mutated = unsafeInterp.interpolate(source, {
             ...spf.cell?.attrs,
             ...spf,
+            partial: (
+              name: string,
+              partialLocals?: Record<string, unknown>,
+            ) => {
+              const found = directives.partials.find((p) =>
+                p.infoDirective.identity == name
+              );
+              if (found) {
+                return unsafeInterp.interpolate(found.source, {
+                  ...partialLocals,
+                  ...spf.cell?.attrs,
+                  ...spf,
+                }, [{ template: source }]);
+              } else {
+                return `/* partial '${name}' not found in directives */`;
+              }
+            },
           });
 
           if (mutated !== spf.contents) {
