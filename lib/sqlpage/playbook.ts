@@ -56,7 +56,7 @@ export const enrichFrontmatter: PlaybookCodeCellMutator<string> = (
   (cell as Any).frontmatter = pb.notebook.fm;
 };
 
-export class SqlPageNotebook {
+export class SqlPagePlaybook {
   protected readonly PlaybookCodeCellMutators: PlaybookCodeCellMutator<
     string
   >[] = [];
@@ -488,6 +488,6 @@ export class SqlPageNotebook {
   }
 
   static instance() {
-    return new SqlPageNotebook();
+    return new SqlPagePlaybook();
   }
 }

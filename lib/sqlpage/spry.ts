@@ -16,7 +16,7 @@ import { dirname, globToRegExp, relative } from "jsr:@std/path@^1";
 import { basename } from "node:path";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
-import { SourceRelativeTo, SqlPageFile, SqlPageNotebook } from "./notebook.ts";
+import { SourceRelativeTo, SqlPageFile, SqlPagePlaybook } from "./playbook.ts";
 import { isRouteSupplier } from "./route.ts";
 
 export type LsCommandRow = SqlPageFile & {
@@ -67,7 +67,7 @@ export function upsertMissingAncestors<T>(
 }
 
 export class CLI {
-  constructor(readonly spn = SqlPageNotebook.instance()) {
+  constructor(readonly spn = SqlPagePlaybook.instance()) {
   }
 
   // deno-lint-ignore no-explicit-any

@@ -1,17 +1,17 @@
 # Spry for SQLPage
 
-Spry lets you maintain a whole SQLPage site from one or more Markdown notebooks:
+Spry lets you maintain a whole SQLPage site from one or more Markdown playbooks:
 
 - You write prose + fenced blocks.
 - Special **INFO directives** in the fence header tell Spry what each block is
   (HEAD, TAIL, PARTIAL, LAYOUT, or a concrete SQL file path).
 - Optional JSON5 fence attributes annotate things like routes.
-- Spry turns your notebook into real `.sql` files (or SQL DML to upsert into
+- Spry turns your playbook into real `.sql` files (or SQL DML to upsert into
   SQLPage’s virtual file table), plus helpful auto-generated artifacts.
 
 Under the hood this is driven by:
 
-- `lib/sqlpage/notebook.ts` — parses notebooks and emits file entries (and DML).
+- `lib/sqlpage/playbook.ts` — parses playbooks and emits file entries (and DML).
 - `lib/sqlpage/directives.ts` — parses fence `info` into directives: `HEAD`,
   `TAIL`, `PARTIAL`, `LAYOUT`, or default `sqlpage_file`.
 - `lib/sqlpage/route.ts` — validates and renders navigation routes from
@@ -180,7 +180,7 @@ ${partial('navbar')}
 ```
 
 **Security note:** interpolation uses `eval` of a template string (on purpose,
-for power). Treat your notebooks as source code; do not feed untrusted content.
+for power). Treat your playbooks as source code; do not feed untrusted content.
 
 ## Routes (navigation) from attrs
 
@@ -192,7 +192,7 @@ SELECT 'Docs' AS section;
 
 If you omit `route.path`, Spry defaults it to the fence `info` path. Route attrs
 are validated and enriched with derived fields (basename, dirname, extension(s),
-etc.). All routes across your notebooks are assembled into:
+etc.). All routes across your playbooks are assembled into:
 
 - `spry.d/auto/route/forest.auto.json` — a hierarchical forest (all the routes
   in one file).
@@ -204,7 +204,7 @@ These are marked **auto-generated** in `ls`.
 
 ## What gets generated
 
-Running the CLI against your notebook(s) yields a stream of **file entries**;
+Running the CLI against your playbook(s) yields a stream of **file entries**;
 depending on options you either:
 
 - write them to disk under `--fs`, or
@@ -227,7 +227,7 @@ You’ll typically see:
 
 ### Frontmatter → `sqlpage.json`
 
-Place this at the top of one of your notebooks:
+Place this at the top of one of your playbooks:
 
 ```yaml
 ---
@@ -252,7 +252,7 @@ deno run -A spry.ts -m lib/sqlpage/notebook_test-01.fixture.md -c sqlpage.json
 Spry validates and **flattens** OIDC fields into what SQLPage expects (e.g.,
 `oidc_issuer_url`, etc.), and drops `undefined` keys.
 
-## Example notebook
+## Example playbook
 
 See [notebook_test-01.fixture.md](notebook_test-01.fixture.md) for a good
 starter example.
