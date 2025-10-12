@@ -3,18 +3,19 @@ import { unsafeInterpolator } from "../universal/interpolate.ts";
 // TODO: increase type-safety of `path` by ensuring it's valid based on
 //       all defined pages?
 
-export function literal(
-  value: unknown,
-): [value: unknown, quoted: string] {
-  if (typeof value === "undefined") return [value, "NULL"];
+const isSingleQuoted = (s: string) => /^\s*'[\s\S]*'\s*$/.test(s);
+
+export function quotedSqlLiteral(value: unknown, skipIfQuoted = false): string {
+  if (typeof value === "undefined" || value == null) "NULL";
   if (typeof value === "string") {
-    return [value, `'${value.replaceAll("'", "''")}'`];
+    if (skipIfQuoted && isSingleQuoted(value)) return value;
+    return `'${value.replaceAll("'", "''")}'`;
   }
   if (value instanceof Date) {
     // TODO: add date formatting options
-    return [value, `'${String(value)}'`];
+    return `'${String(value)}'`;
   }
-  return [value, String(value)];
+  return String(value);
 }
 
 const absoluteURL = (relativeURL: string) => {
@@ -22,7 +23,7 @@ const absoluteURL = (relativeURL: string) => {
 };
 
 const constructHomePath = (parentPath: string) => {
-  return `'${parentPath}'||'/index.sql'`;
+  return `'${parentPath}' || '/index.sql'`;
 };
 
 /**
@@ -185,7 +186,7 @@ const activePageTitle = (path?: string) => {
     return `
           SELECT 'title' AS component, (SELECT COALESCE(title, caption)
               FROM sqlpage_aide_navigation
-             WHERE namespace = 'prime' AND path = ${literal(path ?? "/")
+             WHERE namespace = 'prime' AND path = ${quotedSqlLiteral(path ?? "/")
       }) as contents;
     `;
   }
