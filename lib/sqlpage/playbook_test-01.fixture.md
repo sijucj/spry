@@ -25,15 +25,15 @@ PRAGMA foreign_keys = ON;
 
 ```sql admin/index.sql { route: { caption: "test" } }
 select 1;
--- this is the path: ${ctx.path}
--- this is the caption: ${ctx.route.caption}
+-- this is the path: ${path}
+-- this is the caption: ${route.caption}
 ```
 
 ```sql users/list.sql
 select 2;
--- this is the path: ${ctx.path}
--- this is the cell: ${ctx.cell?.kind}
--- this is the frontmatter in the cell's notebook: ${JSON.stringify(ctx.cell.frontmatter)}
+-- this is the path: ${path}
+-- this is the cell: ${cell?.kind}
+-- this is the frontmatter in the cell's notebook: ${JSON.stringify(cell.frontmatter)}
 ```
 
 ```sql debug.sql
@@ -47,12 +47,13 @@ select 2;
 The following `LAYOUT` will be prefixed across every SQLPage page because no
 paths are provided (`sql LAYOUT` without path is same as `sql LAYOUT **/*`).
 
-The `${ctx.path}` will be replaced with the path of the page. `${ctx.*}` are all
-variables like `${ctx.route}`, etc.
+The `${path}` will be replaced with the path of the page. `${ctx.*}` are all
+state variables like `${ctx.directives}`, `${ctx.routes}`, etc. but the local
+page variables are like `${page}`, `${route}`, `${cell}`, etc.
 
 ```sql LAYOUT
 -- global LAYOUT (defaults to **/*)
-SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
+SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${path}.auto.json');
 -- add shell, etc. here
 ```
 
@@ -60,7 +61,7 @@ The following `LAYOUT` will be prefixed only for the admin paths:
 
 ```sql LAYOUT admin/**
 -- admin/** LAYOUT
-SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${ctx.path}.auto.json');
+SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${path}.auto.json');
 -- add shell, etc. here
 ```
 

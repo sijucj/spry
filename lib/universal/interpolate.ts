@@ -105,7 +105,7 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
     return fn(ctx, locals as Record<string, unknown>);
   }
 
-  return { interpolate };
+  return { interpolate, ctx };
 }
 
 /* ---------------------------

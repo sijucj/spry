@@ -162,7 +162,7 @@ For **regular SQL files**, Spry evaluates the block as a **template literal** to
 support simple composition. It provides a context with:
 
 - `partial(name: string)` → the source of a `PARTIAL` of that identity.
-- `sitePrefixed(sqlClause: string)` → expands to
+- `absURL(sqlClause: string)` and `sitePrefixed(sqlClause: string)` → expands to
   `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || <sqlClause>)` (handy
   when you need dynamic site prefixing).
 - All fence **attrs** (so you can inline small values).
@@ -174,7 +174,7 @@ Example:
 -- Apply a layout and a partial; both support interpolation
 -- `${partial('navbar')}` injects the code from the PARTIAL above
 
-SELECT ${sitePrefixed(`'${ctx.site}'`)} AS base_path;
+SELECT ${sitePrefixed(`'${path}'`)} AS base_path;
 
 ${partial('navbar')}
 ```

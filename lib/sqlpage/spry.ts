@@ -70,8 +70,9 @@ export class CLI {
   constructor(readonly spn = SqlPagePlaybook.instance()) {
   }
 
-  // deno-lint-ignore no-explicit-any
-  lsColorPathField(header: string): Partial<ColumnDef<any, string>> {
+  lsColorPathField<Row extends LsCommandRow>(
+    header: string,
+  ): Partial<ColumnDef<Row, string>> {
     return {
       header,
       format: (supplied) => {
@@ -80,7 +81,8 @@ export class CLI {
         return i < 0 ? bold(p) : gray(p.slice(0, i + 1)) + bold(p.slice(i + 1));
       },
       rules: [{
-        when: (_v, r) => (r.error?.trim().length ?? 0) > 0,
+        when: (_v, r) =>
+          (r.error ? String(r.error)?.trim().length ?? 0 : 0) > 0,
         color: red,
       }],
     };
@@ -143,7 +145,9 @@ export class CLI {
       isRouteSupplier: isRouteSupplier(spf) ? true : false,
     });
 
-    let spfe = (await Array.fromAsync(this.spn.finalSqlPageFileEntries(opts)))
+    let spfe = (await Array.fromAsync(
+      this.spn.finalSqlPageFileEntries(opts, this.spn.prepareState()),
+    ))
       .map((spf) => ({
         ...spf,
         name: basename(spf.path),
@@ -177,14 +181,15 @@ export class CLI {
       );
 
       const base = new ListerBuilder<LsCommandRow>()
-        .declareColumns("kind", "name", "flags", "notebook")
+        .declareColumns("kind", "name", "flags", "error", "notebook")
         .from(spfe)
         .field("name", "name", this.lsNaturePathField())
         .field("kind", "kind", this.lsNatureField())
         .field("flags", "flags", this.lsFlagsField())
+        .field("error", "error", { header: "Err" })
         .field("notebook", "notebook", this.lsColorPathField("Notebook"))
         // IMPORTANT: make the tree column first so glyphs appear next to it
-        .select("name", "kind", "flags", "notebook");
+        .select("name", "kind", "flags", "error", "notebook");
       const tree = TreeLister
         .wrap(base)
         .from(spfe)
@@ -193,11 +198,12 @@ export class CLI {
       await tree.ls(true);
     } else {
       await new ListerBuilder<LsCommandRow>()
-        .declareColumns("kind", "path", "flags", "notebook")
+        .declareColumns("kind", "path", "flags", "notebook", "error")
         .from(spfe)
         .field("kind", "kind", this.lsNatureField())
         .field("path", "path", this.lsNaturePathField())
         .field("flags", "flags", this.lsFlagsField())
+        .field("error", "error", { header: "Err" })
         .field("notebook", "notebook", this.lsColorPathField("Notebook"))
         .sortBy("path").sortDir("asc")
         .build()
@@ -213,7 +219,12 @@ export class CLI {
         globToRegExp(g, { extended: true, globstar: true }).test(path)
       );
 
-    for await (const spf of this.spn.finalSqlPageFileEntries(opts)) {
+    for await (
+      const spf of this.spn.finalSqlPageFileEntries(
+        opts,
+        this.spn.prepareState(),
+      )
+    ) {
       if (matchesAnyGlob(spf.path)) {
         console.log(spf.contents);
       }

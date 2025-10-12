@@ -1,30 +1,8 @@
-import { unsafeInterpolator } from "../universal/interpolate.ts";
+import { SQL } from "../universal/sql-text.ts";
+import { SqlPagePath } from "./spp.ts";
 
-// TODO: increase type-safety of `path` by ensuring it's valid based on
-//       all defined pages?
-
-const isSingleQuoted = (s: string) => /^\s*'[\s\S]*'\s*$/.test(s);
-
-export function quotedSqlLiteral(value: unknown, skipIfQuoted = false): string {
-  if (typeof value === "undefined" || value == null) "NULL";
-  if (typeof value === "string") {
-    if (skipIfQuoted && isSingleQuoted(value)) return value;
-    return `'${value.replaceAll("'", "''")}'`;
-  }
-  if (value instanceof Date) {
-    // TODO: add date formatting options
-    return `'${String(value)}'`;
-  }
-  return String(value);
-}
-
-const absoluteURL = (relativeURL: string) => {
-  return `sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${relativeURL}'`;
-};
-
-const constructHomePath = (parentPath: string) => {
-  return `'${parentPath}' || '/index.sql'`;
-};
+export const absURL = (path: string) =>
+  `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
 
 /**
  * Generates SQL pagination logic including initialization, debugging variables,
@@ -48,7 +26,7 @@ const constructHomePath = (parentPath: string) => {
  * - optional: paginationInstance.debugVars() should be placed into a SQLa template to view var values in web UI;
  * - required: paginationInstance.renderSimpleMarkdown() should be placed into SQLa template to show the next/prev pagination component in simple markdown;
  */
-const pagination = (
+export const pagination = (
   config:
     & {
       varName?: (name: string) => string;
@@ -129,7 +107,6 @@ const pagination = (
 //       link?: string;
 //     })[]
 //   ) {
-//     // deno-fmt-ignore
 //     return ws.unindentWhitespace(`
 //         SELECT 'breadcrumb' as component;
 //         WITH RECURSIVE breadcrumbs AS (
@@ -182,14 +159,13 @@ const pagination = (
  * the page title.
  * @returns the SQL for page title
  */
-const activePageTitle = (path?: string) => {
-    return `
-          SELECT 'title' AS component, (SELECT COALESCE(title, caption)
-              FROM sqlpage_aide_navigation
-             WHERE namespace = 'prime' AND path = ${quotedSqlLiteral(path ?? "/")
-      }) as contents;
+export const activePageTitle = (spp?: SqlPagePath) => {
+  return SQL`
+       SELECT 'title' AS component, (SELECT COALESCE(title, caption)
+       FROM sqlpage_aide_navigation
+       WHERE namespace = 'prime' AND path = ${spp?.path ?? "/"}) as contents;
     `;
-  }
+};
 
 /**
  * Assume caller's method name contains "path/path/file.sql" format, reflect
@@ -197,23 +173,12 @@ const activePageTitle = (path?: string) => {
  * link to the page's source in /console/sqlpage-files/*.
  * @returns the SQL for linking to this page's source
  */
-const activePageSource = (path?: string) => {
+export const activePageSource = (spp: SqlPagePath) => {
   return `
-        SELECT 'text' AS component,
-       '[View ${path}](' || ${
-    absoluteURL(
-      `/console/sqlpage-files/sqlpage-file.sql?path=${path}`,
-    )
+    SELECT 'text' AS component, '[View ${
+    spp.isRoute ? spp.route.caption : spp.path
+  }](' || ${
+    absURL(`/console/sqlpage-files/sqlpage-file.sql?path=${spp.path}`)
   } || ')' AS contents_md;
   `;
 };
-
-export function unsafeSqlPageInterpolater() {
-  return unsafeInterpolator({
-    absoluteURL,
-    constructHomePath,
-    pagination,
-    activePageSource,
-    activePageTitle,
-  });
-}

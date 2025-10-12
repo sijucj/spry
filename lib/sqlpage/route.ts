@@ -124,42 +124,39 @@ export const enrichRoute: PlaybookCodeCellMutator<string> = (
   }
 };
 
-export class Routes {
-  constructor(readonly routeAnns: Iterable<PageRoute>) {
-  }
+export async function resolvedRoutes(candidates: Iterable<PageRoute>) {
+  const forest = await pathTree<PageRoute, string>(
+    candidates,
+    {
+      nodePath: (n) => n.path,
+      pathDelim: "/",
+      synthesizeContainers: true,
+      folderFirst: false,
+      indexBasenames: ["index.sql"],
+    },
+  );
 
-  async populate() {
-    const forest = await pathTree<PageRoute, string>(
-      this.routeAnns,
-      {
-        nodePath: (n) => n.path,
-        pathDelim: "/",
-        synthesizeContainers: true,
-        folderFirst: false,
-        indexBasenames: ["index.sql"],
-      },
-    );
+  const roots = forest.roots;
+  const nav = pathTreeNavigation(forest);
+  const edges = forestToEdges(forest);
+  const serializers = pathTreeSerializers(forest);
 
-    const tree = forest.roots;
-    const nav = pathTreeNavigation(forest);
-    const edges = forestToEdges(forest);
-    const serializers = pathTreeSerializers(forest);
-
-    // const breadcrumbsSchema =
-    const crumbs: z.infer<typeof nav.schemas.breadcrumbsMap> = {};
-    for (const node of forest.treeByPath.values()) {
-      if (node.payloads) {
-        for (const p of node.payloads) {
-          crumbs[p.path] = nav.ancestors(p);
-        }
+  const crumbs: z.infer<typeof nav.schemas.breadcrumbsMap> = {};
+  for (const node of forest.treeByPath.values()) {
+    if (node.payloads) {
+      for (const p of node.payloads) {
+        crumbs[p.path] = nav.ancestors(p);
       }
     }
-    return {
-      forest,
-      tree,
-      breadcrumbs: { crumbs, schema: nav.schemas.breadcrumbsMap },
-      serializers,
-      edges,
-    };
   }
+
+  return {
+    candidates,
+    forest,
+    roots,
+    breadcrumbs: { crumbs, schema: nav.schemas.breadcrumbsMap },
+    serializers,
+    edges,
+    nav,
+  };
 }

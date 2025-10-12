@@ -18,7 +18,15 @@ import {
   InfoDirectiveCells,
   Layouts,
 } from "./directives.ts";
-import { enrichRoute, isRouteSupplier, PageRoute, Routes } from "./route.ts";
+import {
+  enrichRoute,
+  isRouteSupplier,
+  PageRoute,
+  resolvedRoutes,
+} from "./route.ts";
+import * as interp from "./interpolate.ts";
+import { unsafeInterpolator } from "../universal/interpolate.ts";
+import { sqlPagePathsFactory } from "./spp.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -36,7 +44,7 @@ const defaultFmSchema = z.object({
 export type SqlPageFile = {
   readonly kind: "head_sql" | "tail_sql" | "sqlpage_file_upsert";
   readonly path: string; // relative path (e.g., "sql.d/head/001.sql", "admin/index.sql")
-  contents: string; // file contents
+  contents: string; // file contents (comes from cell.source but will be mutated for interpolations)
   readonly lastModified?: Date; // optional timestamp (not used in DML; engine time is used)
   readonly cell?: PlaybookCodeCell<string>;
   readonly asErrorContents: (text: string, error: unknown) => string;
@@ -47,6 +55,59 @@ export type SqlPageFile = {
   isInterpolated?: boolean;
   layout?: Awaited<ReturnType<Layouts["findLayout"]>>;
 };
+
+export function sqlPageFilesFactory() {
+  function counter<Identifier>(identifier: Identifier, padValue = 4) {
+    let value = -1;
+    const incr = () => ++value;
+    const next = () => String(incr()).padStart(padValue, "0");
+    return { identifier, incr, next };
+  }
+
+  const sql = (
+    path: string,
+    contents: string,
+    candidate?: Partial<SqlPageFile>,
+  ): SqlPageFile => ({
+    kind: candidate?.kind ?? "sqlpage_file_upsert",
+    path,
+    contents,
+    asErrorContents: (text) => text.replaceAll(/^/gm, "-- "),
+    ...candidate,
+  });
+
+  const json = (
+    path: string,
+    contents: string,
+    candidate?: Partial<SqlPageFile>,
+  ): SqlPageFile => ({
+    kind: candidate?.kind ?? "sqlpage_file_upsert",
+    path,
+    contents,
+    asErrorContents: (text, error) => JSON.stringify({ text, error }),
+    ...candidate,
+  });
+
+  return { sql, json, counter };
+}
+
+export class RoutesBuilder {
+  #resolved?: Awaited<ReturnType<typeof resolvedRoutes>>;
+
+  constructor(readonly encountered: PageRoute[] = []) {
+  }
+
+  encounter(pr: PageRoute) {
+    this.encountered.push(pr);
+  }
+
+  async resolved() {
+    if (!this.#resolved) {
+      this.#resolved = await resolvedRoutes(this.encountered);
+    }
+    return this.#resolved;
+  }
+}
 
 export const enrichFrontmatter: PlaybookCodeCellMutator<string> = (
   cell,
@@ -153,42 +214,19 @@ export class SqlPagePlaybook {
     }
   }
 
+  prepareState() {
+    const directives = new InfoDirectiveCells();
+    const routes = new RoutesBuilder();
+    const spp = sqlPagePathsFactory();
+    return { directives, routes, spp };
+  }
+
   async *rawSqlPageFileEntries(
     opts: { md: string[]; srcRelTo: SourceRelativeTo },
-    directives: InfoDirectiveCells,
+    state: ReturnType<SqlPagePlaybook["prepareState"]>,
   ): AsyncGenerator<SqlPageFile> {
-    const pageRoutes: PageRoute[] = [];
-
-    const sqlSPF = (
-      path: string,
-      contents: string,
-      candidate?: Partial<SqlPageFile>,
-    ): SqlPageFile => ({
-      kind: candidate?.kind ?? "sqlpage_file_upsert",
-      path,
-      contents,
-      asErrorContents: (text) => text.replaceAll(/^/gm, "-- "),
-      ...candidate,
-    });
-
-    const jsonSPF = (
-      path: string,
-      contents: string,
-      candidate?: Partial<SqlPageFile>,
-    ): SqlPageFile => ({
-      kind: candidate?.kind ?? "sqlpage_file_upsert",
-      path,
-      contents,
-      asErrorContents: (text, error) => JSON.stringify({ text, error }),
-      ...candidate,
-    });
-
-    function counter<Identifier>(identifier: Identifier, padValue = 4) {
-      let value = -1;
-      const incr = () => ++value;
-      const next = () => String(incr()).padStart(padValue, "0");
-      return { identifier, incr, next };
-    }
+    const { routes, directives } = state;
+    const { sql: sqlSPF, json: jsonSPF, counter } = sqlPageFilesFactory();
 
     const codeCells = await Array.fromAsync(
       this.codeCells(opts, directives),
@@ -231,7 +269,7 @@ export class SqlPagePlaybook {
 
           if (Object.entries(cell.attrs).length) {
             if (isRouteSupplier(cell.attrs)) {
-              pageRoutes.push(cell.attrs.route as PageRoute);
+              routes.encounter(cell.attrs.route as PageRoute);
             }
             yield jsonSPF(
               `spry.d/auto/resource/${path}.auto.json`,
@@ -261,8 +299,7 @@ export class SqlPagePlaybook {
       });
     }
 
-    const routes = new Routes(pageRoutes);
-    const { forest, breadcrumbs, edges, serializers } = await routes.populate();
+    const { forest, breadcrumbs, edges, serializers } = await routes.resolved();
 
     yield sqlSPF(
       `spry.d/auto/route/tree.auto.txt`,
@@ -309,10 +346,19 @@ export class SqlPagePlaybook {
     });
   }
 
-  interpolationCtx(_opts: { md: string[] }, directives: InfoDirectiveCells) {
+  interpolationCtx(
+    _opts: { md: string[] },
+    state: ReturnType<SqlPagePlaybook["prepareState"]>,
+  ) {
+    const { directives, routes } = state;
     return {
-      sitePrefixed: (sqlClause: string) =>
-        `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${sqlClause})`,
+      directives,
+      routes,
+      pagination: interp.pagination,
+      absURL: interp.absURL,
+      sitePrefixed: interp.absURL,
+
+      // TODO: partial needs to be able to have args passed in for recursive interpolation
       partial: (name: string) =>
         directives.partials.find((p) => p.infoDirective.identity == name)
           ?.source ?? `/* partial '${name}' not found in directives */`,
@@ -321,15 +367,15 @@ export class SqlPagePlaybook {
 
   async *finalSqlPageFileEntries(
     opts: { md: string[]; srcRelTo: SourceRelativeTo },
+    state: ReturnType<SqlPagePlaybook["prepareState"]>,
   ) {
-    const directives = new InfoDirectiveCells();
-    const baseCtx = this.interpolationCtx(opts, directives);
+    const { directives } = state;
+    const baseCtx = this.interpolationCtx(opts, state);
+    const unsafeInterp = unsafeInterpolator(baseCtx);
 
-    for await (const spf of this.rawSqlPageFileEntries(opts, directives)) {
+    for await (const spf of this.rawSqlPageFileEntries(opts, state)) {
       const { path } = spf;
 
-      // ctx is for interpolation so it won't be used locally but in the interpolation (maybe)
-      const ctx = { ...spf, ...spf.cell?.attrs, ...baseCtx };
       try {
         const layout = spf.isLayoutCandidate
           ? directives.layouts.findLayout(path)
@@ -338,15 +384,12 @@ export class SqlPagePlaybook {
         if (spf.isUnsafeInterpolatable) {
           const source = layout ? layout.wrap(spf.contents) : spf.contents;
 
-          // Escape backticks and backslashes so we can embed `source` inside a template literal
-          const safe = source.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-
-          // Direct eval runs in the current scope (locals in this block) and we .call(this)
-          // so `${this.*}` inside the template works too.
           // NOTE: This is intentionally unsafe. Do not feed untrusted content.
-          const mutated = eval(
-            `(function() { return \`${safe}\`; }).call(this)`,
-          );
+          // Assume you're treating code cell blocks as fully trusted source code.
+          const mutated = unsafeInterp.interpolate(source, {
+            ...spf.cell?.attrs,
+            ...spf,
+          });
 
           if (mutated !== spf.contents) {
             spf.contents = String(mutated);
@@ -364,7 +407,7 @@ export class SqlPagePlaybook {
           ...spf,
           contents: spf.asErrorContents(
             `finalSqlPageFileEntries error: ${String(error)}\n*****\n${
-              JSON.stringify({ ctx, spf }, null, 2)
+              JSON.stringify({ ctx: unsafeInterp.ctx, spf }, null, 2)
             }`,
             error,
           ),
@@ -386,7 +429,9 @@ export class SqlPagePlaybook {
   async *materializeFs(
     opts: { md: string[]; srcRelTo: SourceRelativeTo; fs: string },
   ) {
-    for await (const spf of this.finalSqlPageFileEntries(opts)) {
+    for await (
+      const spf of this.finalSqlPageFileEntries(opts, this.prepareState())
+    ) {
       const absPath = this.materializeContent({
         fs: opts.fs,
         path: spf.path,
@@ -425,7 +470,10 @@ export class SqlPagePlaybook {
     }
 
     const esc = (s: string) => s.replace(/'/g, "''");
-    const list = await Array.fromAsync(this.finalSqlPageFileEntries(opts));
+    const state = this.prepareState();
+    const list = await Array.fromAsync(
+      this.finalSqlPageFileEntries(opts, state),
+    );
 
     // Deterministic order: heads → non-head/tail → tails
     return [
