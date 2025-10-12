@@ -1,6 +1,7 @@
 import { ensureDir } from "jsr:@std/fs@^1";
 import { dirname, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
+import { safeSourceText } from "../universal/content-acquisition.ts";
 import { notebooks } from "../universal/md-notebook.ts";
 import {
   mutatePlaybookCodeCells,
@@ -10,7 +11,6 @@ import {
   playbooks,
   safeFrontmatter,
 } from "../universal/md-playbook.ts";
-import { safeSourceText } from "../universal/content-acquisition.ts";
 import { forestToStatelessViews } from "../universal/path-tree-tabular.ts";
 import { sqlPageConfSchema } from "./conf.ts";
 import {
