@@ -1,30 +1,88 @@
 /**
- * Minimal Markdown-based Code Notebook ("codebook") core.
+ * Programmable-Markdown "Notebook" core.
  *
- * - Accepts input as a string, a ReadableStream of Uint8Array, or an async
- *   iterable/iterator of those.
- * - Parses a single Markdown document into a sequence of cells while preserving
- *   order and line ranges.
- * - Treats all fenced code blocks as code cells and partitions non-fenced
- *   content into markdown cells using fixed delimiters.
- * - Recognizes YAML frontmatter only at the head of the document and parses it
- *   into a plain object.
- * - Extracts fence metadata: language, code body, and JSON5 attributes when a
- *   trailing {...} object is present in the fence meta; any leading meta text
- *   is captured as info.
- * - Defines cell boundaries using top-level heading level 2 and thematic breaks;
- *   delimiters start a new markdown cell and belong to the following slice.
- * - Emits only what is derivable from the Markdown source: frontmatter object,
- *   cells with kinds and locations, and a small set of parse issues when
- *   applicable.
- * - Stays side-effect free; does not evaluate or transform code, does not assign
- *   identifiers, and does not validate schemas.
+ * This module turns a Markdown document into a notebook-like model that separates
+ * prose from code so higher layers can program against Markdown without guessing
+ * about structure. It is intentionally minimal: it parses, classifies, and
+ * annotates—never executes or transforms—so you can plug it into your own
+ * validators, generators, runners, and exporters.
  *
- * Non-goals:
- * - No execution, no kernel or runtime metadata, no schema validation, and no
- *   attribute resolution beyond JSON5 parsing of fence meta.
- * - No plugin system; higher layers can wrap this core to add validation,
- *   execution, or export.
+ * What it does (invariants):
+ * - Input forms: accepts a single { provenance, content } object, or an async
+ *   stream/iterator of those. Content may be a full document string or a
+ *   ReadableStream<Uint8Array>.
+ * - Frontmatter: YAML frontmatter is recognized only at the head of the
+ *   document and parsed with @std/yaml. Failures are reported as
+ *   "frontmatter-parse" issues.
+ * - Cells:
+ *   - Every fenced code block becomes a code cell (kind: "code").
+ *   - All other top-level content is partitioned into markdown cells (kind:
+ *     "markdown").
+ *   - Delimiters: H2 headings (##) and thematic breaks (---) start a new
+ *     markdown cell; the delimiter belongs to the following slice.
+ * - Fence meta:
+ *   - Language is captured from the fence info string (defaults to "text").
+ *   - Trailing "{ ... }" in the fence info is parsed with JSON5 into attrs.
+ *   - Any leading text before "{ ... }" is preserved as `info`.
+ *   - JSON5 parse errors are reported as "fence-issue" issues and attrs
+ *     falls back to {}.
+ * - Locations: all cells include best-effort startLine and endLine based on
+ *   mdast positions, enabling precise diagnostics and tooling.
+ * - AST cache: for markdown cells, the mdast node slice is cached so callers
+ *   can traverse or re-stringify without reparsing.
+ *
+ * What it does not do (non-goals):
+ * - No execution, kernel, or runtime metadata.
+ * - No schema or attribute resolution beyond JSON5 parsing.
+ * - No plugin system here; compose your own higher-level layers for
+ *   validation, execution, export, etc.
+ *
+ * Key types:
+ * - Notebook<Provenance, FM, Attrs, I>: a parsed document with
+ *   - fm: frontmatter object ({} if none)
+ *   - cells: CodeCell | MarkdownCell list, in order
+ *   - issues: structured parse/lint findings (extensible)
+ *   - ast: mdast cache (per-cell and pre/post-code ranges)
+ *   - provenance: identifier for the document source
+ * - CodeCell: { kind: "code", language, source, attrs, info?, startLine?, endLine? }
+ * - MarkdownCell: { kind: "markdown", markdown, text, startLine?, endLine? }
+ * - IssueDisposition: "error" | "warning" | "lint"
+ * - Issue union: "frontmatter-parse" | "fence-issue" | "fence-attrs-json5-parse"
+ *
+ * DX with generics:
+ * - Use the defaults for quick starts, or specialize:
+ *   - FM for strongly typed frontmatter
+ *   - Attrs for typed fence attributes
+ *   - I to extend the base Issue shape (for example, { origin?: string })
+ *
+ * Public API:
+ * - normalizeSources(input): async iterable of [provenance, string].
+ *   Normalizes heterogeneous inputs to full document strings.
+ * - notebooks(input): async generator of Notebook<...>.
+ *   Parses one or many documents or streams into notebooks in order.
+ *
+ * Error and lint reporting:
+ * - Frontmatter YAML failures → "frontmatter-parse" (disposition: "error")
+ * - Invalid fence attrs JSON5 → "fence-issue" (disposition: "warning")
+ * - Additional parser-level notices may be surfaced as "lint" to enrich
+ *   downstream UX.
+ *
+ * Performance and streaming notes:
+ * - Input may be streamed (async iterator or ReadableStream), but each document
+ *   is parsed as a whole Markdown string.
+ * - Use normalizeSources to handle mixed inputs before handing them to notebooks.
+ *
+ * Intended use:
+ * - Acts as the parse stage for programmable Markdown pipelines.
+ * - Enables linting, validation, and code extraction with typed frontmatter and
+ *   fence attributes.
+ * - Facilitates generation of SQL, TypeScript, or CLI code from code cells while
+ *   preserving human-readable context.
+ * - Serves as a foundation for building executable or richly annotated
+ *   documentation notebooks.
+ *
+ * Dependencies: remark (with frontmatter, GFM, stringify), mdast-util-to-string,
+ * @std/yaml, and json5.
  */
 import { parse as YAMLparse } from "jsr:@std/yaml@^1";
 import type { Root, RootContent } from "npm:@types/mdast@^4";
@@ -50,45 +108,32 @@ export type SourceStream<Provenance> =
 /** Includes "lint" for enrichment/lint-stage findings. */
 export type IssueDisposition = "error" | "warning" | "lint";
 
-/** Built-in issue variants (non-generic) */
-export type FrontmatterIssue<Provenance> = {
-  kind: "frontmatter-parse";
+export type MarkdownIssue<Provenance> = {
+  kind: string;
   provenance: Provenance;
   message: string;
+  startLine?: number;
+  endLine?: number;
+  disposition: IssueDisposition;
+  error?: unknown;
+};
+
+export type FrontmatterIssue<Provenance> = MarkdownIssue<Provenance> & {
+  kind: "frontmatter-parse";
   raw: unknown;
   error: unknown;
-  startLine?: number;
-  endLine?: number;
-  disposition: IssueDisposition;
 };
 
-export type FenceIssue<Provenance> = {
+export type FenceIssue<Provenance> = MarkdownIssue<Provenance> & {
   kind: "fence-issue";
-  provenance: Provenance;
-  message: string;
   metaText?: string;
   error: unknown;
-  startLine?: number;
-  endLine?: number;
-  disposition: IssueDisposition;
-};
-
-export type FenceAttrsIssue<Provenance> = {
-  kind: "fence-attrs-json5-parse";
-  provenance: Provenance;
-  message: string;
-  metaText?: string;
-  error: unknown;
-  startLine?: number;
-  endLine?: number;
-  disposition: IssueDisposition;
 };
 
 /** Base Issue union (non-generic) */
 export type Issue<Provenance> =
   | FrontmatterIssue<Provenance>
-  | FenceIssue<Provenance>
-  | FenceAttrsIssue<Provenance>;
+  | FenceIssue<Provenance>;
 
 /**
  * DX note:
@@ -220,9 +265,10 @@ export async function* notebooks<
 
 /* =========================== Internal Parser ========================= */
 
-const processor = remark().use(remarkFrontmatter).use(remarkGfm).use(
-  remarkStringify,
-);
+export const remarkProcessor = remark()
+  .use(remarkFrontmatter)
+  .use(remarkGfm)
+  .use(remarkStringify);
 
 /** Parse a single Markdown document into a Notebook<FM, Attrs, I>. */
 function parseDocument<
@@ -235,7 +281,7 @@ function parseDocument<
 
   const issues: I[] = [];
 
-  const tree = processor.parse(source) as Root;
+  const tree = remarkProcessor.parse(source) as Root;
 
   const { fm, fmEndIdx } = (() => {
     type FMParseResult = { fm: FM; fmEndIdx: number };
@@ -297,7 +343,7 @@ function parseDocument<
 
   const stringifyNodes = (nodes: RootContent[]) => {
     const root: Root = { type: "root", children: nodes };
-    return String(processor.stringify(root));
+    return String(remarkProcessor.stringify(root));
   };
 
   const plainTextOfNodes = (nodes: RootContent[]) =>
@@ -320,8 +366,8 @@ function parseDocument<
     try {
       return JSON5.parse(jsonish) as Attrs;
     } catch (error) {
-      const base: FenceAttrsIssue<Provenance> = {
-        kind: "fence-attrs-json5-parse",
+      const base: FenceIssue<Provenance> = {
+        kind: "fence-issue",
         provenance,
         message: "Invalid JSON5 in fence attributes.",
         metaText: jsonish,
@@ -465,167 +511,6 @@ function parseDocument<
     },
     provenance,
   } satisfies Notebook<Provenance, FM, Attrs, I>;
-}
-
-/* =========================== Instructions API ======================= */
-
-/** Instructions delimiter configuration */
-export type InstructionsDelimiter =
-  | { kind: "hr" }
-  | { kind: "heading"; level?: 1 | 2 | 3 | 4 | 5 | 6 };
-
-/** Strongly-typed instruction payload for a block or module region */
-export interface Instructions {
-  readonly nodes: ReadonlyArray<RootContent>;
-  readonly markdown: string;
-  readonly text: string;
-}
-
-/** A documented code cell: base CodeCell plus optional instructions */
-export type DocumentedCodeCell<
-  Provenance,
-  Attrs extends Record<string, unknown> = Record<string, unknown>,
-> = CodeCell<Provenance, Attrs> & { readonly instructions?: Instructions };
-
-/** Discriminated union: narrowing by `kind` gives you the right shape */
-export type DocumentedCell<
-  Provenance,
-  Attrs extends Record<string, unknown> = Record<string, unknown>,
-> = DocumentedCodeCell<Provenance, Attrs> | MarkdownCell<Provenance>;
-
-/** Notebook annotated with header/appendix instructions and documented cells */
-export type DocumentedNotebook<
-  Provenance,
-  FM extends Record<string, unknown>,
-  Attrs extends Record<string, unknown>,
-  I extends Issue<Provenance> = Issue<Provenance>,
-> = {
-  readonly notebook: Notebook<Provenance, FM, Attrs, I>;
-  readonly cells: ReadonlyArray<DocumentedCell<Provenance, Attrs>>;
-  readonly instructions?: Instructions;
-  readonly appendix?: Instructions;
-};
-
-function stringifyNodesForInstr(nodes: ReadonlyArray<RootContent>): string {
-  const root: Root = { type: "root", children: nodes.slice() as RootContent[] };
-  return String(processor.stringify(root));
-}
-
-function textOfNodesForInstr(nodes: ReadonlyArray<RootContent>): string {
-  return nodes.map((n) => mdToString(n)).join("\n").trim();
-}
-
-function mkInstructions(
-  nodes: ReadonlyArray<RootContent>,
-): Instructions | undefined {
-  if (!nodes.length) return undefined;
-  return {
-    nodes,
-    markdown: stringifyNodesForInstr(nodes),
-    text: textOfNodesForInstr(nodes),
-  };
-}
-
-function isDelimiterNode(
-  n: RootContent,
-  delim: InstructionsDelimiter,
-): boolean {
-  if (delim.kind === "hr") return n.type === "thematicBreak";
-  if (n.type !== "heading") return false;
-  return typeof delim.level === "number" ? n.depth === delim.level : true;
-}
-
-function isAsyncIterable<T>(
-  obj: unknown,
-): obj is AsyncIterable<T> {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    typeof (obj as { [Symbol.asyncIterator]?: () => AsyncIterator<unknown> })[
-        Symbol.asyncIterator
-      ] === "function"
-  );
-}
-
-/**
- * documentedNotebooks
- * -------------------
- * Uses the mdast cache inside Notebook.ast to:
- * - Build notebook-level `instructions` (header) from ast.nodesBeforeFirstCode
- * - Build notebook-level `appendix`   from ast.nodesAfterLastCode
- * - Walk markdown cells (via ast.mdastByCell) with a buffer that resets at delimiters.
- *   When a code cell is hit, attach the buffered nodes as `instructions` to that cell.
- *
- * Default delimiter: heading level 2 (##).
- */
-export async function* documentedNotebooks<
-  Provenance,
-  FM extends Record<string, unknown>,
-  Attrs extends Record<string, unknown>,
-  I extends Issue<Provenance> = Issue<Provenance>,
->(
-  input:
-    | AsyncIterable<Notebook<Provenance, FM, Attrs, I>>
-    | Iterable<Notebook<Provenance, FM, Attrs, I>>,
-  delimiter: InstructionsDelimiter = { kind: "heading", level: 2 },
-): AsyncIterable<DocumentedNotebook<Provenance, FM, Attrs, I>> {
-  const iterable: AsyncIterable<Notebook<Provenance, FM, Attrs, I>> =
-    isAsyncIterable<
-        Notebook<Provenance, FM, Attrs, I>
-      >(input)
-      ? (input as AsyncIterable<Notebook<Provenance, FM, Attrs, I>>)
-      : (async function* () {
-        for (const n of input as Iterable<Notebook<Provenance, FM, Attrs, I>>) {
-          yield n;
-        }
-      })();
-
-  for await (const nb of iterable) {
-    const { mdastByCell, nodesBeforeFirstCode, nodesAfterLastCode } = nb.ast;
-
-    // Notebook-level regions (ignore delimiters for these)
-    const headerInstr = mkInstructions(nodesBeforeFirstCode);
-    const appendixInstr = mkInstructions(nodesAfterLastCode);
-
-    // Per-code-cell buffer logic over markdown cells
-    const buffer: RootContent[] = [];
-    const outCells: DocumentedCell<Provenance, Attrs>[] = [];
-
-    for (let i = 0; i < nb.cells.length; i++) {
-      const c = nb.cells[i] as unknown as Cell<Provenance, Attrs>;
-      const nodes = mdastByCell[i]; // null for code, mdast[] for markdown
-
-      if (nodes) {
-        // markdown cell -> feed nodes into buffer with delimiter behavior
-        for (const n of nodes) {
-          if (isDelimiterNode(n, delimiter)) {
-            buffer.length = 0; // clear
-            if (delimiter.kind === "heading" && n.type === "heading") {
-              buffer.push(n); // seed with heading
-            }
-            continue;
-          }
-          buffer.push(n);
-        }
-        outCells.push(c); // unchanged markdown cell
-        continue;
-      }
-
-      // code cell -> attach current buffer (if any), then clear
-      const instr = mkInstructions(buffer);
-      const docCell: DocumentedCell<Provenance, Attrs> =
-        c.kind === "code" && instr ? { ...c, instructions: instr } : c;
-      outCells.push(docCell);
-      buffer.length = 0;
-    }
-
-    yield {
-      notebook: nb,
-      cells: outCells,
-      instructions: headerInstr,
-      appendix: appendixInstr,
-    };
-  }
 }
 
 /* =========================== Tiny Runtime & Type Guards ============== */

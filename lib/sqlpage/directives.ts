@@ -1,7 +1,10 @@
 import { globToRegExp, isGlob } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
 import { posix } from "node:path";
-import { DocCodeCellMutator, DocumentedCodeCell } from "../notebook/mod.ts";
+import {
+  PlaybookCodeCell,
+  PlaybookCodeCellMutator,
+} from "../universal/md-playbook.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -37,22 +40,22 @@ export const isSqlInfoDirectiveSupplier = (
     : false;
 
 type DocCodeCellWithDirective<N extends SqlInfoDirective["nature"]> =
-  & DocumentedCodeCell<string>
+  & PlaybookCodeCell<string>
   & { infoDirective: Extract<SqlInfoDirective, { nature: N }> };
 
 function docCodeCellHasNature<N extends SqlInfoDirective["nature"]>(
-  cell: DocumentedCodeCell<string> & { infoDirective: SqlInfoDirective },
+  cell: PlaybookCodeCell<string> & { infoDirective: SqlInfoDirective },
   nature: N,
 ): cell is DocCodeCellWithDirective<N> {
   return cell.infoDirective.nature === nature;
 }
 
 export class Layouts {
-  readonly layouts: (DocumentedCodeCell<string> & {
+  readonly layouts: (PlaybookCodeCell<string> & {
     infoDirective: Extract<SqlInfoDirective, { nature: "LAYOUT" }>;
   })[] = [];
   protected cached: {
-    layout: DocumentedCodeCell<string> & {
+    layout: PlaybookCodeCell<string> & {
       infoDirective: Extract<SqlInfoDirective, { nature: "LAYOUT" }>;
     };
     glob: string;
@@ -62,7 +65,7 @@ export class Layouts {
     len: number;
   }[] = [];
 
-  register(cell: DocumentedCodeCell<string>) {
+  register(cell: PlaybookCodeCell<string>) {
     // assume the enrichInfoDirective has already been run
     if (isSqlInfoDirectiveSupplier(cell)) {
       if (docCodeCellHasNature(cell, "LAYOUT")) {
@@ -125,17 +128,17 @@ export class Layouts {
 
 export class InfoDirectiveCells {
   readonly layouts = new Layouts();
-  readonly heads: (DocumentedCodeCell<string> & {
+  readonly heads: (PlaybookCodeCell<string> & {
     infoDirective: Extract<SqlInfoDirective, { nature: "HEAD" }>;
   })[] = [];
-  readonly tails: (DocumentedCodeCell<string> & {
+  readonly tails: (PlaybookCodeCell<string> & {
     infoDirective: Extract<SqlInfoDirective, { nature: "TAIL" }>;
   })[] = [];
-  readonly partials: (DocumentedCodeCell<string> & {
+  readonly partials: (PlaybookCodeCell<string> & {
     infoDirective: Extract<SqlInfoDirective, { nature: "PARTIAL" }>;
   })[] = [];
 
-  register(cell: DocumentedCodeCell<string>) {
+  register(cell: PlaybookCodeCell<string>) {
     if (this.layouts.register(cell)) return true;
 
     // assume the enrichInfoDirective has already been run
@@ -162,9 +165,9 @@ export class InfoDirectiveCells {
  * - PARTIAL → requires identity
  * - unknown → defaults to { nature: "sqlpage_file", path: first token }
  */
-export const enrichInfoDirective: DocCodeCellMutator<string> = (
+export const enrichInfoDirective: PlaybookCodeCellMutator<string> = (
   cell,
-  { nb, registerIssue },
+  { pb, registerIssue },
 ) => {
   if (isSqlInfoDirectiveSupplier(cell)) return;
   if (!cell.info) return;
@@ -212,7 +215,7 @@ export const enrichInfoDirective: DocCodeCellMutator<string> = (
       message: `Zod error parsing info directive '${cell.info}': ${
         z.prettifyError(parsed.error)
       }`,
-      provenance: nb.notebook.provenance,
+      provenance: pb.notebook.provenance,
       startLine: cell.startLine,
       endLine: cell.endLine,
     });

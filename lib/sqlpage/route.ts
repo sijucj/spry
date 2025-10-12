@@ -1,6 +1,6 @@
 import { basename, dirname, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
-import { DocCodeCellMutator } from "../notebook/mod.ts";
+import { PlaybookCodeCellMutator } from "../universal/md-playbook.ts";
 import {
   forestToEdges,
   pathTree,
@@ -95,9 +95,9 @@ export function pathExtensions(path: string) {
   };
 }
 
-export const enrichRoute: DocCodeCellMutator<string> = (
+export const enrichRoute: PlaybookCodeCellMutator<string> = (
   cell,
-  { nb, registerIssue },
+  { pb, registerIssue },
 ) => {
   if (!isRouteSupplier(cell.attrs)) return;
   const route = cell.attrs.route as PageRoute;
@@ -113,11 +113,11 @@ export const enrichRoute: DocCodeCellMutator<string> = (
   const parsed = z.safeParse(pageRouteSchema, route);
   if (!parsed.success) {
     registerIssue({
-      kind: "fence-attrs-json5-parse",
+      kind: "fence-issue",
       disposition: "error",
       error: parsed.error,
       message: `Zod error parsing route: ${z.prettifyError(parsed.error)}`,
-      provenance: nb.notebook.provenance,
+      provenance: pb.notebook.provenance,
       startLine: cell.startLine,
       endLine: cell.endLine,
     });
