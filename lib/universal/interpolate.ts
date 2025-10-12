@@ -99,7 +99,7 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
   ): string {
     if (stack && stack.length > recursionLimit) {
       return `Recursion stack exceeded max: ${recursionLimit} (${
-        stack.map((s) => s.template).join(" -> ")
+        stack.map((s) => s.template).join(" → ")
       })`;
     }
 

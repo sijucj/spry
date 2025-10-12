@@ -2,6 +2,7 @@ import { ensureDir } from "jsr:@std/fs@^1";
 import { dirname, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
 import { safeSourceText } from "../universal/content-acquisition.ts";
+import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { notebooks } from "../universal/md-notebook.ts";
 import {
   mutatePlaybookCodeCells,
@@ -18,14 +19,13 @@ import {
   InfoDirectiveCells,
   Layouts,
 } from "./directives.ts";
+import * as interp from "./interpolate.ts";
 import {
   enrichRoute,
   isRouteSupplier,
   PageRoute,
   resolvedRoutes,
 } from "./route.ts";
-import * as interp from "./interpolate.ts";
-import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { sqlPagePathsFactory } from "./spp.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -388,15 +388,15 @@ export class SqlPagePlaybook {
               name: string,
               partialLocals?: Record<string, unknown>,
             ) => {
-              const found = directives.partials.find((p) =>
-                p.infoDirective.identity == name
-              );
-              if (found) {
-                return unsafeInterp.interpolate(found.source, {
-                  ...partialLocals,
-                  ...spf.cell?.attrs,
-                  ...spf,
-                }, [{ template: source }]);
+              const partial = directives.partial(name, partialLocals);
+              if (partial) {
+                return partial.error
+                  ? partial.error
+                  : unsafeInterp.interpolate(partial.found.source, {
+                    ...partialLocals,
+                    ...spf.cell?.attrs,
+                    ...spf,
+                  }, [{ template: source }]);
               } else {
                 return `/* partial '${name}' not found in directives */`;
               }

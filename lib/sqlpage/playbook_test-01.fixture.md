@@ -36,7 +36,7 @@ select 2;
 -- this is the frontmatter in the cell's notebook: ${JSON.stringify(cell.frontmatter)}
 ```
 
-```sql PARTIAL test-partial
+```sql PARTIAL test-partial { newLocal: { type: "string", required: true } }
 -- this is the path in test-partial: ${path}
 -- this is the cell in test-partial: ${cell?.kind}
 -- this is the newLocal in test-partial: ${newLocal}
@@ -48,6 +48,8 @@ select 2;
 -- site prefixed: ${partial("non-existent")}
 
 -- site prefixed: ${partial("test-partial", { newLocal: "passed from debug.sql"})}
+
+-- site prefixed: ${partial("test-partial", { mistypedNewLocal: "passed from debug.sql"})}
 
 -- full context: ${JSON.stringify(ctx)}
 ```
