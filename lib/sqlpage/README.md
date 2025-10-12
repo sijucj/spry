@@ -246,7 +246,7 @@ sqlpage-conf:
 Then run:
 
 ```
-deno run -A spry.ts -m lib/sqlpage/notebook_test-01.fixture.md -c sqlpage.json
+deno run -A spry.ts -m lib/sqlpage/playbook_test-01.fixture.md -c sqlpage.json
 ```
 
 Spry validates and **flattens** OIDC fields into what SQLPage expects (e.g.,
@@ -254,7 +254,7 @@ Spry validates and **flattens** OIDC fields into what SQLPage expects (e.g.,
 
 ## Example playbook
 
-See [notebook_test-01.fixture.md](notebook_test-01.fixture.md) for a good
+See [playbook_test-01.fixture.md](playbook_test-01.fixture.md) for a good
 starter example.
 
 ## Tips & gotchas
