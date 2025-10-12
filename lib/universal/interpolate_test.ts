@@ -18,7 +18,7 @@ import { unsafeInterpolator } from "./interpolate.ts";
  *  6) Collision detection when a local key matches `ctxName`.
  */
 
-Deno.test("unsafeInterpolator – documentation and behavior", async (t) => {
+Deno.test("unsafeInterpolator - documentation and behavior", async (t) => {
   type Ctx = {
     app: string;
     version: string;
