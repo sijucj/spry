@@ -18,6 +18,7 @@ import {
   enrichInfoDirective,
   InfoDirectiveCells,
   Layouts,
+  SqlInfoDirective,
 } from "./directives.ts";
 import * as interp from "./interpolate.ts";
 import {
@@ -27,6 +28,7 @@ import {
   resolvedRoutes,
 } from "./route.ts";
 import { sqlPagePathsFactory } from "./spp.ts";
+import { fbPartialsCollection } from "../universal/md-partial.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -215,10 +217,13 @@ export class SqlPagePlaybook {
   }
 
   prepareState() {
-    const directives = new InfoDirectiveCells();
+    const partials = fbPartialsCollection<
+      Extract<SqlInfoDirective, { nature: "PARTIAL" }>
+    >();
+    const directives = new InfoDirectiveCells(partials);
     const routes = new RoutesBuilder();
     const spp = sqlPagePathsFactory();
-    return { directives, routes, spp };
+    return { directives, routes, spp, partials };
   }
 
   async *rawSqlPageFileEntries(
@@ -391,7 +396,7 @@ export class SqlPagePlaybook {
               const found = directives.partial(name);
               if (found) {
                 const { content: partial, interpolate, locals } = await found
-                  .infoDirective.partial.content({
+                  .content({
                     ...partialLocals,
                     ...spf.cell?.attrs,
                     ...spf,

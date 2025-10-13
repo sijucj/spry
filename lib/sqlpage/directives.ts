@@ -3,12 +3,15 @@ import { z } from "jsr:@zod/zod@4";
 import { posix } from "node:path";
 import {
   fbPartialCandidate,
+  fbPartialsCollection,
   mdFencedBlockPartialSchema,
 } from "../universal/md-partial.ts";
 import {
   PlaybookCodeCell,
   PlaybookCodeCellMutator,
 } from "../universal/md-playbook.ts";
+
+export const sqlCodeCellLang = "sql" as const;
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -138,11 +141,18 @@ export class InfoDirectiveCells {
   readonly tails: (PlaybookCodeCell<string> & {
     infoDirective: Extract<SqlInfoDirective, { nature: "TAIL" }>;
   })[] = [];
-  readonly partials: (PlaybookCodeCell<string> & {
-    infoDirective: Extract<SqlInfoDirective, { nature: "PARTIAL" }>;
-  })[] = [];
+
+  constructor(
+    readonly partials: ReturnType<
+      typeof fbPartialsCollection<
+        Extract<SqlInfoDirective, { nature: "PARTIAL" }>
+      >
+    >,
+  ) {
+  }
 
   register(cell: PlaybookCodeCell<string>) {
+    if (cell.language !== sqlCodeCellLang) return false;
     if (this.layouts.register(cell)) return true;
 
     // assume the enrichInfoDirective has already been run
@@ -154,7 +164,7 @@ export class InfoDirectiveCells {
         this.tails.push(cell);
         return true;
       } else if (docCodeCellHasNature(cell, "PARTIAL")) {
-        this.partials.push(cell);
+        this.partials.register(cell.infoDirective);
         return true;
       }
     }
@@ -162,7 +172,7 @@ export class InfoDirectiveCells {
   }
 
   partial(name: string) {
-    return this.partials.find((p) => p.infoDirective.partial.identity == name);
+    return this.partials.partial(name);
   }
 }
 
@@ -178,6 +188,7 @@ export const enrichInfoDirective: PlaybookCodeCellMutator<string> = (
   { pb, registerIssue },
 ) => {
   if (isSqlInfoDirectiveSupplier(cell)) return;
+  if (cell.language !== sqlCodeCellLang) return;
   if (!cell.info) return;
 
   let info = cell.info;

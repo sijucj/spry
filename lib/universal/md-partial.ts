@@ -35,6 +35,10 @@ export const mdFencedBlockPartialSchema = z.object({
 
 export type FencedBlockPartial = z.infer<typeof mdFencedBlockPartialSchema>;
 
+export type FencedBlockPartialSupplier = {
+  partial: FencedBlockPartial;
+};
+
 export function fbPartialCandidate(
   info: string,
   content: string,
@@ -92,5 +96,33 @@ export function fbPartialCandidate(
       }
       return { content, interpolate: true, locals };
     },
+  };
+}
+
+export function fbPartialsCollection<
+  Supplier extends FencedBlockPartialSupplier,
+>(
+  init?: { onDuplicate?: (fbps: Supplier) => "overwrite" | "throw" | "ignore" },
+) {
+  const catalog = new Map<string, Supplier>();
+  return {
+    catalog,
+    register: (fbps: Supplier) => {
+      const { identity } = fbps.partial;
+      const found = catalog.get(identity);
+      if (found && init?.onDuplicate) {
+        const onDupe = init.onDuplicate(fbps);
+        if (onDupe === "throw") {
+          throw new Deno.errors.AlreadyExists(
+            `Partial '${identity}' defined already, not creating duplicate in fbPartialsCollection`,
+          );
+        } else if (onDupe === "ignore") {
+          return;
+        }
+      } // else we overwrite by default
+      catalog.set(identity, fbps);
+    },
+    partialSupplier: (identity: string) => catalog.get(identity),
+    partial: (identity: string) => catalog.get(identity)?.partial,
   };
 }
