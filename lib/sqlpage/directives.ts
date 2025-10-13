@@ -1,11 +1,14 @@
 import { globToRegExp, isGlob } from "jsr:@std/path@^1";
-import { z, ZodType } from "jsr:@zod/zod@4";
+import { z } from "jsr:@zod/zod@4";
 import { posix } from "node:path";
+import {
+  fbPartialCandidate,
+  mdFencedBlockPartialSchema,
+} from "../universal/md-partial.ts";
 import {
   PlaybookCodeCell,
   PlaybookCodeCellMutator,
 } from "../universal/md-playbook.ts";
-import { jsonToZod } from "../universal/zod-aide.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -26,9 +29,7 @@ export const sqlInfoDirectiveSchema = z.discriminatedUnion("nature", [
   }).strict(),
   z.object({
     nature: z.literal("PARTIAL"),
-    identity: z.string().min(1), // required for PARTIAL
-    argsZodSchema: z.instanceof(ZodType).optional(),
-    argsZodSchemaSpec: z.string().optional(),
+    partial: mdFencedBlockPartialSchema,
   }).strict(),
 ]);
 
@@ -160,26 +161,8 @@ export class InfoDirectiveCells {
     return false;
   }
 
-  partial(name: string, partialLocals?: Record<string, unknown>) {
-    const found = this.partials.find((p) => p.infoDirective.identity == name);
-    if (found) {
-      if (found.infoDirective.argsZodSchema) {
-        const parsed = z.safeParse(
-          found.infoDirective.argsZodSchema,
-          partialLocals,
-        );
-        if (!parsed.success) {
-          return {
-            found,
-            error: `Invalid arguments passed to partial '${name}': ${
-              z.prettifyError(parsed.error)
-            }\nPartial '${name}' expected arguments ${found.infoDirective.argsZodSchemaSpec}`,
-          };
-        }
-      }
-      return { found };
-    }
-    return false;
+  partial(name: string) {
+    return this.partials.find((p) => p.infoDirective.partial.identity == name);
   }
 }
 
@@ -218,38 +201,20 @@ export const enrichInfoDirective: PlaybookCodeCellMutator<string> = (
       break;
 
     case "PARTIAL": {
-      const argsZodSchemaSpec = JSON.stringify(
-        cell.attrs
-          ? Object.keys(cell.attrs).length > 0 ? cell.attrs : undefined
-          : undefined,
-      );
-      let argsZodSchema: ZodType | undefined;
-      if (argsZodSchemaSpec) {
-        try {
-          argsZodSchema = jsonToZod(JSON.stringify({
-            type: "object",
-            properties: JSON.parse(argsZodSchemaSpec),
-            additionalProperties: true,
-          }));
-        } catch (error) {
-          argsZodSchema = undefined;
-          registerIssue({
-            kind: "fence-issue",
-            disposition: "error",
-            error,
-            message: `Invalid Zod schema spec: ${argsZodSchemaSpec}`,
-            provenance: pb.notebook.provenance,
-            startLine: cell.startLine,
-            endLine: cell.endLine,
-          });
-        }
-      }
-
       candidate = {
         nature: "PARTIAL",
-        identity: remainder,
-        argsZodSchema,
-        argsZodSchemaSpec,
+        partial: fbPartialCandidate(remainder, cell.source, cell.attrs, {
+          registerIssue: (message, error) =>
+            registerIssue({
+              kind: "fence-issue",
+              disposition: "error",
+              error,
+              message,
+              provenance: pb.notebook.provenance,
+              startLine: cell.startLine,
+              endLine: cell.endLine,
+            }),
+        }),
       };
       break;
     }

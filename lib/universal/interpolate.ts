@@ -53,7 +53,10 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
   // cache: template -> ctxName -> sig -> compiled
   const cache = new Map<
     string,
-    Map<string, Map<string, (c: Context, l: Record<string, unknown>) => string>>
+    Map<
+      string,
+      Map<string, (c: Context, l: Record<string, unknown>) => Promise<string>>
+    >
   >();
 
   function compile(source: string, keys: readonly string[]) {
@@ -85,18 +88,23 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
       `return \`${safe}\`;`,
     ].join("\n");
 
-    return new Function(
+    // 👇 Create the AsyncFunction constructor once
+    const AsyncFunction =
+      Object.getPrototypeOf(async function () {}).constructor;
+
+    // 👇 Use it instead of new Function
+    return new AsyncFunction(
       "__ctx",
       "__l",
       body,
-    ) as (c: Context, l: Record<string, unknown>) => string;
+    ) as (c: Context, l: Record<string, unknown>) => Promise<string>;
   }
 
-  function interpolate<LocalContext extends Record<string, unknown>>(
+  async function interpolate<LocalContext extends Record<string, unknown>>(
     template: string,
     locals: Readonly<LocalContext>,
     stack?: { template: string }[],
-  ): string {
+  ): Promise<string> {
     if (stack && stack.length > recursionLimit) {
       return `Recursion stack exceeded max: ${recursionLimit} (${
         stack.map((s) => s.template).join(" → ")
@@ -129,7 +137,7 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
       bySig.set(sig, fn);
     }
 
-    return fn(ctx, locals as Record<string, unknown>);
+    return await fn(ctx, locals as Record<string, unknown>);
   }
 
   return { interpolate, ctx };

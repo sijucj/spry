@@ -45,11 +45,13 @@ select 2;
 ```sql debug.sql
 -- site prefixed: ${ctx.sitePrefixed("'test'")}
 
--- site prefixed: ${partial("non-existent")}
+-- partial 1 (error): ${await partial("non-existent")}
 
--- site prefixed: ${partial("test-partial", { newLocal: "passed from debug.sql"})}
+-- partial 2 (works): ${await partial("test-partial", { newLocal: "passed from debug.sql"})}
 
--- site prefixed: ${partial("test-partial", { mistypedNewLocal: "passed from debug.sql"})}
+-- partial 3 (error): ${await partial("test-partial", { mistypedNewLocal: "passed from debug.sql"})}
+
+-- partial 4 (without await): ${partial("test-partial", { newLocal: "passed from debug.sql without await"})}
 
 -- full context: ${JSON.stringify(ctx)}
 ```

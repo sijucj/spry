@@ -381,24 +381,27 @@ export class SqlPagePlaybook {
 
           // NOTE: This is intentionally unsafe. Do not feed untrusted content.
           // Assume you're treating code cell blocks as fully trusted source code.
-          const mutated = unsafeInterp.interpolate(source, {
+          const mutated = await unsafeInterp.interpolate(source, {
             ...spf.cell?.attrs,
             ...spf,
-            partial: (
+            partial: async (
               name: string,
               partialLocals?: Record<string, unknown>,
             ) => {
-              const partial = directives.partial(name, partialLocals);
-              if (partial) {
-                return partial.error
-                  ? partial.error
-                  : unsafeInterp.interpolate(partial.found.source, {
+              const found = directives.partial(name);
+              if (found) {
+                const { content: partial, interpolate, locals } = await found
+                  .infoDirective.partial.content({
                     ...partialLocals,
                     ...spf.cell?.attrs,
                     ...spf,
-                  }, [{ template: source }]);
+                  });
+                if (!interpolate) return partial;
+                return await unsafeInterp.interpolate(partial, locals, [{
+                  template: partial,
+                }]);
               } else {
-                return `/* partial '${name}' not found in directives */`;
+                return `/* partial '${name}' not found */`;
               }
             },
           });
