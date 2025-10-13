@@ -16,8 +16,8 @@ export const sqlCodeCellLang = "sql" as const;
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-/** Schema for typed InfoDirective from `Cell.info?` property */
-export const sqlInfoDirectiveSchema = z.discriminatedUnion("nature", [
+/** Schema for typed SqlDirective from `Cell.info?` property */
+export const sqlDirectiveSchema = z.discriminatedUnion("nature", [
   z.object({
     nature: z.enum(["HEAD", "TAIL"]),
     identity: z.string().min(1).optional(), // optional for HEAD/TAIL
@@ -36,34 +36,34 @@ export const sqlInfoDirectiveSchema = z.discriminatedUnion("nature", [
   }).strict(),
 ]);
 
-export type SqlInfoDirective = z.infer<typeof sqlInfoDirectiveSchema>;
+export type SqlDirective = z.infer<typeof sqlDirectiveSchema>;
 
-export const isSqlInfoDirectiveSupplier = (
+export const isSqlDirectiveSupplier = (
   o: unknown,
-): o is { infoDirective: SqlInfoDirective } =>
-  o && typeof o === "object" && "infoDirective" in o &&
-    typeof o.infoDirective === "object"
+): o is { sqlDirective: SqlDirective } =>
+  o && typeof o === "object" && "sqlDirective" in o &&
+    typeof o.sqlDirective === "object"
     ? true
     : false;
 
-type DocCodeCellWithDirective<N extends SqlInfoDirective["nature"]> =
+type DocCodeCellWithDirective<N extends SqlDirective["nature"]> =
   & PlaybookCodeCell<string>
-  & { infoDirective: Extract<SqlInfoDirective, { nature: N }> };
+  & { sqlDirective: Extract<SqlDirective, { nature: N }> };
 
-function docCodeCellHasNature<N extends SqlInfoDirective["nature"]>(
-  cell: PlaybookCodeCell<string> & { infoDirective: SqlInfoDirective },
+function docCodeCellHasNature<N extends SqlDirective["nature"]>(
+  cell: PlaybookCodeCell<string> & { sqlDirective: SqlDirective },
   nature: N,
 ): cell is DocCodeCellWithDirective<N> {
-  return cell.infoDirective.nature === nature;
+  return cell.sqlDirective.nature === nature;
 }
 
 export class Layouts {
   readonly layouts: (PlaybookCodeCell<string> & {
-    infoDirective: Extract<SqlInfoDirective, { nature: "LAYOUT" }>;
+    sqlDirective: Extract<SqlDirective, { nature: "LAYOUT" }>;
   })[] = [];
   protected cached: {
     layout: PlaybookCodeCell<string> & {
-      infoDirective: Extract<SqlInfoDirective, { nature: "LAYOUT" }>;
+      sqlDirective: Extract<SqlDirective, { nature: "LAYOUT" }>;
     };
     glob: string;
     g: string;
@@ -73,8 +73,8 @@ export class Layouts {
   }[] = [];
 
   register(cell: PlaybookCodeCell<string>) {
-    // assume the enrichInfoDirective has already been run
-    if (isSqlInfoDirectiveSupplier(cell)) {
+    // assume the enrichSqlDirective has already been run
+    if (isSqlDirectiveSupplier(cell)) {
       if (docCodeCellHasNature(cell, "LAYOUT")) {
         this.layouts.push(cell);
         this.rebuildCaches();
@@ -110,7 +110,7 @@ export class Layouts {
     }
 
     this.cached = this.layouts.map((layout) => {
-      const { glob } = layout.infoDirective;
+      const { glob } = layout.sqlDirective;
       const gg = posix.normalize(glob);
       return {
         layout,
@@ -133,19 +133,19 @@ export class Layouts {
   }
 }
 
-export class InfoDirectiveCells {
+export class SqlDirectiveCells {
   readonly layouts = new Layouts();
   readonly heads: (PlaybookCodeCell<string> & {
-    infoDirective: Extract<SqlInfoDirective, { nature: "HEAD" }>;
+    sqlDirective: Extract<SqlDirective, { nature: "HEAD" }>;
   })[] = [];
   readonly tails: (PlaybookCodeCell<string> & {
-    infoDirective: Extract<SqlInfoDirective, { nature: "TAIL" }>;
+    sqlDirective: Extract<SqlDirective, { nature: "TAIL" }>;
   })[] = [];
 
   constructor(
     readonly partials: ReturnType<
       typeof fbPartialsCollection<
-        Extract<SqlInfoDirective, { nature: "PARTIAL" }>
+        Extract<SqlDirective, { nature: "PARTIAL" }>
       >
     >,
   ) {
@@ -155,8 +155,8 @@ export class InfoDirectiveCells {
     if (cell.language !== sqlCodeCellLang) return false;
     if (this.layouts.register(cell)) return true;
 
-    // assume the enrichInfoDirective has already been run
-    if (isSqlInfoDirectiveSupplier(cell)) {
+    // assume the enrichSqlDirective has already been run
+    if (isSqlDirectiveSupplier(cell)) {
       if (docCodeCellHasNature(cell, "HEAD")) {
         this.heads.push(cell);
         return true;
@@ -164,7 +164,7 @@ export class InfoDirectiveCells {
         this.tails.push(cell);
         return true;
       } else if (docCodeCellHasNature(cell, "PARTIAL")) {
-        this.partials.register(cell.infoDirective);
+        this.partials.register(cell.sqlDirective);
         return true;
       }
     }
@@ -177,17 +177,17 @@ export class InfoDirectiveCells {
 }
 
 /**
- * Transform that parses a Cell.info string into an InfoDirective.
+ * Transform that parses a Cell.info string into an SqlDirective.
  * - HEAD/TAIL → optional identity
  * - LAYOUT → glob defaults to "**\/*" if missing
  * - PARTIAL → requires identity
  * - unknown → defaults to { nature: "sqlpage_file", path: first token }
  */
-export const enrichInfoDirective: PlaybookCodeCellMutator<string> = (
+export const enrichSqlDirective: PlaybookCodeCellMutator<string> = (
   cell,
   { pb, registerIssue },
 ) => {
-  if (isSqlInfoDirectiveSupplier(cell)) return;
+  if (isSqlDirectiveSupplier(cell)) return;
   if (cell.language !== sqlCodeCellLang) return;
   if (!cell.info) return;
 
@@ -235,10 +235,10 @@ export const enrichInfoDirective: PlaybookCodeCellMutator<string> = (
       break;
   }
 
-  const parsed = z.safeParse(sqlInfoDirectiveSchema, candidate);
+  const parsed = z.safeParse(sqlDirectiveSchema, candidate);
   if (parsed.success) {
-    (cell as Any).infoDirective = parsed.data;
-    if (!isSqlInfoDirectiveSupplier(cell)) {
+    (cell as Any).sqlDirective = parsed.data;
+    if (!isSqlDirectiveSupplier(cell)) {
       throw Error("This should never happen");
     }
   } else {
