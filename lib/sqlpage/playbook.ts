@@ -362,7 +362,8 @@ export class SqlPagePlaybook {
       debug: `/* \${paginate("tableOrViewName")} not called yet*/`,
       limit: `/* \${paginate("tableOrViewName")} not called yet*/`,
       navigation: `/* \${paginate("tableOrViewName")} not called yet*/`,
-      navWithParams: (..._extraQueryParams: string[]) => `/* \${paginate("tableOrViewName")} not called yet*/`,
+      navWithParams: (..._extraQueryParams: string[]) =>
+        `/* \${paginate("tableOrViewName")} not called yet*/`,
     };
     return {
       directives,
