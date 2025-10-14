@@ -56,6 +56,26 @@ select 2;
 -- full context: ${JSON.stringify(ctx)}
 ```
 
+```sql pagination.sql { route: { caption: "Unpivoted" } }
+SELECT 'text' AS component, 'Pagination Example' AS title;
+
+${paginate("sqlpage_files")}
+SELECT 'table' AS component,
+       TRUE     AS sort,
+       TRUE     AS search;              
+SELECT * FROM "sqlpage_files"
+${pagination.limit}; -- needed as part of SELECT for pagination
+${pagination.navigation}
+
+${paginate("another_table")}
+SELECT 'table' AS component,
+       TRUE     AS sort,
+       TRUE     AS search;              
+SELECT * FROM "another_table"
+${pagination.limit}; -- needed as part of SELECT for pagination
+${pagination.navigation}
+```
+
 The following `LAYOUT` will be prefixed across every SQLPage page because no
 paths are provided (`sql LAYOUT` without path is same as `sql LAYOUT **/*`).
 

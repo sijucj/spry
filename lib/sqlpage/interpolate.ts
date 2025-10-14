@@ -58,6 +58,10 @@ export const pagination = (
           SET ${n("current_page")} = (${$("offset")} / ${$("limit")}) + 1;`;
     },
 
+    limit: () => {
+      return `LIMIT ${$("limit")} OFFSET ${$("offset")}`;
+    },
+
     debugVars: () => {
       return `
           SELECT 'text' AS component,
@@ -68,7 +72,7 @@ export const pagination = (
               '- Total Pages: ' || ${$("total_pages")} as contents_md;`;
     },
 
-    renderSimpleMarkdown: (...extraQueryParams: string[]) => {
+    navigation: (...extraQueryParams: string[]) => {
       const whereTabvalue =
         extraQueryParams.find((item) => item.startsWith("$tab='")) || null;
       const filteredParams = extraQueryParams.filter((item) =>

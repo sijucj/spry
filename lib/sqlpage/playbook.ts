@@ -4,6 +4,7 @@ import { z } from "jsr:@zod/zod@4";
 import { safeSourceText } from "../universal/content-acquisition.ts";
 import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { notebooks } from "../universal/md-notebook.ts";
+import { fbPartialsCollection } from "../universal/md-partial.ts";
 import {
   mutatePlaybookCodeCells,
   pipedPlaybookCodeCellMutators,
@@ -28,7 +29,6 @@ import {
   resolvedRoutes,
 } from "./route.ts";
 import { sqlPagePathsFactory } from "./spp.ts";
-import { fbPartialsCollection } from "../universal/md-partial.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -356,12 +356,27 @@ export class SqlPagePlaybook {
     state: ReturnType<SqlPagePlaybook["prepareState"]>,
   ) {
     const { directives, routes } = state;
+    const pagination = {
+      active: undefined as undefined | ReturnType<typeof interp.pagination>,
+      prepare: interp.pagination,
+      debug: `/* \${paginate("tableOrViewName")} not called yet*/`,
+      limit: `/* \${paginate("tableOrViewName")} not called yet*/`,
+      navigation: `/* \${paginate("tableOrViewName")} not called yet*/`,
+    };
     return {
       directives,
       routes,
-      pagination: interp.pagination,
+      pagination,
       absURL: interp.absURL,
       sitePrefixed: interp.absURL,
+      paginate: (tableOrViewName: string) => {
+        const pn = interp.pagination({ tableOrViewName });
+        pagination.active = pn;
+        pagination.debug = pn.debugVars();
+        pagination.limit = pn.limit();
+        pagination.navigation = pn.navigation();
+        return pagination.active.init();
+      },
     };
   }
 
@@ -387,6 +402,8 @@ export class SqlPagePlaybook {
           // NOTE: This is intentionally unsafe. Do not feed untrusted content.
           // Assume you're treating code cell blocks as fully trusted source code.
           const mutated = await unsafeInterp.interpolate(source, {
+            pagination: baseCtx.pagination,
+            paginate: baseCtx.paginate,
             ...spf.cell?.attrs,
             ...spf,
             partial: async (
