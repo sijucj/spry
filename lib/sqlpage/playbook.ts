@@ -369,8 +369,9 @@ export class SqlPagePlaybook {
       directives,
       routes,
       pagination,
-      absURL: interp.absURL,
-      sitePrefixed: interp.absURL,
+      absUrlQuoted: interp.absUrlQuoted,
+      absUrlUnquoted: interp.absUrlUnquoted,
+      sitePrefixed: interp.absUrlQuoted,
       paginate: (tableOrViewName: string) => {
         const pn = interp.pagination({ tableOrViewName });
         pagination.active = pn;

@@ -1,7 +1,10 @@
 import { SQL } from "../universal/sql-text.ts";
 import { SqlPagePath } from "./spp.ts";
 
-export const absURL = (path: string) =>
+export const absUrlUnquoted = (path: string) =>
+  `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
+
+export const absUrlQuoted = (path: string) =>
   `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
 
 /**
@@ -182,7 +185,7 @@ export const activePageSource = (spp: SqlPagePath) => {
     SELECT 'text' AS component, '[View ${
     spp.isRoute ? spp.route.caption : spp.path
   }](' || ${
-    absURL(`/console/sqlpage-files/sqlpage-file.sql?path=${spp.path}`)
+    absUrlQuoted(`/console/sqlpage-files/sqlpage-file.sql?path=${spp.path}`)
   } || ')' AS contents_md;
   `;
 };
