@@ -68,17 +68,21 @@ SELECT
   'card' AS component,
   '' AS title,
   2 AS columns;
-
-SELECT
-  title AS title,
-  description AS description_md,      
-  ${ctx.absUrlUnquoted("'/' || view_name || '.sql'")} as link
-  FROM scf_analytics_view;    
+  SELECT
+  json_extract(np.json, '$.caption') AS title,  
+  json_extract(np.json, '$.caption') AS description_md,
+  ${ctx.absUrlUnquoted("nn.path")} as link
+  FROM navigation_node AS nn
+  INNER JOIN navigation_payload AS np
+  ON nn.path = np.path
+  WHERE nn.is_index <> 1 
+  AND nn.virtual <> 1 
+  AND nn.basename not in('regime_control_unpivoted_details.sql','regime.sql');  /*TBI:refactor-avoid hardcoding*/
 
 ```
 Unpivoted page
 
-```sql scf_regime_control_unpivoted.sql { route: { caption: "Long form of SCF x Regime mappings" } }
+```sql scf/regime_control_unpivoted.sql { route: { caption: "Long form of SCF x Regime mappings" } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -90,9 +94,9 @@ SELECT 'table' AS component,
        'SCF #' as  markdown,
        'Regime' as  markdown,
        TRUE     AS search;              
-SELECT  
-  '[' || regime_label || '](' || sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || 'regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ')' AS "Regime",
-  '['|| scf_no || ']('|| sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/regime_control_unpivoted_detailes.sql?scf_no='||scf_no||')' as "SCF #",  
+SELECT    
+  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",  
+  '['|| scf_no || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime_control_unpivoted_details.sql?scf_no=' || replace(replace(replace(scf_no, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' as "SCF #",  
   scf_domain AS "SCF Domain",
   scf_control AS "SCF Control",
   scf_control_question AS "SCF Control Question",
@@ -106,7 +110,7 @@ ${pagination.navigation}
 
 Regime Controls page
 
-```sql scf_regime_control.sql { route: { caption: "Clean list of regime mappings" } }
+```sql scf/regime_control.sql { route: { caption: "Clean list of regime mappings" } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -129,7 +133,7 @@ ${pagination.navigation}
 
 Regime Count page
 
-```sql scf_regime_count.sql { route: { caption: "Controls per regime (totals)" } }
+```sql scf/regime_count.sql { route: { caption: "Controls per regime (totals)" } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -140,8 +144,8 @@ SELECT 'table' AS component,
        TRUE     AS sort,
        'Regime' as  markdown,
        TRUE     AS search;              
-SELECT
-  '[' || regime || ']('|| sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || 'regime.sql?regime=' || replace(replace(replace(regime, ' ', '%20'), '&', '%26'), '#', '%23') || ')' AS "Regime",
+SELECT  
+  '[' || regime || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime", 
   control_count AS "Controls"
 FROM "scf_regime_count"
 ORDER BY control_count DESC, regime
@@ -152,7 +156,7 @@ ${pagination.navigation}
 
 Domain Count page
 
-```sql scf_regime_domain_count.sql { route: { caption: "Domain x Regime counts" } }
+```sql scf/regime_domain_count.sql { route: { caption: "Domain x Regime counts" } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -174,7 +178,7 @@ ${pagination.navigation}
 
 Coverage page
 
-```sql scf_regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime" } }
+```sql scf/regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime" } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -186,8 +190,8 @@ SELECT 'table' AS component,
        'Regime' as  markdown,
        TRUE     AS search;              
 SELECT
-  scf_domain AS "Domain",
-  '[' || regime_label || ']('|| sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || 'regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ')' AS "Regime",
+  scf_domain AS "Domain",  
+  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",
   mapped_controls AS "Mapped Controls",
   domain_total_controls AS "Total Controls",
   coverage_pct AS "Coverage %"
@@ -200,7 +204,7 @@ ${pagination.navigation}
 
 Regime Rank page
 
-```sql scf_regime_domain_rank.sql { route: { caption: "Top regimes within each domain" } }
+```sql scf/regime_domain_rank.sql { route: { caption: "Top regimes within each domain" } }
 
 SELECT
   'text' AS component,
@@ -213,8 +217,8 @@ SELECT 'table' AS component,
        'Regime' as  markdown,
        TRUE     AS search;              
 SELECT
-  scf_domain AS "Domain",  
-  '[' || regime_label || ']('|| sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || 'regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ')' AS "Regime",
+  scf_domain AS "Domain", 
+  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",
   control_count AS "Controls",
   regime_rank_in_domain AS "Rank in Domain"
 FROM "scf_regime_domain_rank"
@@ -225,7 +229,7 @@ ${pagination.navigation}
 
 Jaccard page
 
-```sql scf_regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)" } }
+```sql scf/regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)" } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -237,9 +241,9 @@ SELECT 'table' AS component,
        'Regime A' as  markdown,
        'Regime B' as  markdown,
        TRUE     AS search;              
-SELECT
-  '[' || regime_a || ']('|| sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || 'regime.sql?regime=' || replace(replace(replace(regime_a, ' ', '%20'), '&', '%26'), '#', '%23') || ')' AS "Regime A",
-  '[' || regime_b || ']('|| sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || 'regime.sql?regime=' || replace(replace(replace(regime_b, ' ', '%20'), '&', '%26'), '#', '%23') || ')' AS "Regime B",
+SELECT  
+  '[' || regime_a || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_a, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime A",  
+  '[' || regime_b || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_b, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime B",    
   in_both AS "In Both",
   a_total AS "A Total",
   b_total AS "B Total",
@@ -250,7 +254,7 @@ ${pagination.limit};
 ${pagination.navigation}
 ```
 
-```sql regime_control_unpivoted_detailes.sql { route: { caption: "Long form of SCF x Regime mappings details" } }
+```sql scf/details/regime_control_unpivoted_details.sql { route: { caption: "Long form of SCF x Regime mappings details" } }
 SELECT
   'text' AS component,
  $page_title||' for SCF # '||$scf_no AS title;
@@ -277,7 +281,7 @@ ${pagination.navigation}
 ```
 Controls per regime (totals) details page
 
-```sql regime.sql { route: { caption: "Controls per regime (totals) details" } }
+```sql scf/details/regime.sql { route: { caption: "Controls per regime (totals) details" } }
 SELECT
   'text' AS component,
  $page_title||' for '||$regime AS title;
