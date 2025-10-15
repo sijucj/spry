@@ -86,7 +86,9 @@ export const pagination = (
               (SELECT CASE WHEN CAST($current_page AS INTEGER) > 1 THEN '[Previous](?limit=' || $limit || '&offset=' || ($offset - $limit)${
         filteredParams.length
           ? " || " + filteredParams.map((qp) =>
-            `COALESCE('&${n(qp)}=' || replace($${qp}, ' ', '%20'), '')`
+            `COALESCE('&${
+              n(qp)
+            }=' ||  replace(replace(replace($${qp}, ' ', '%20'), '&', '%26'), '#', '%23'), '')`
           ).join(" || ")
           : ""
       } || ')' ELSE '' END)
@@ -95,7 +97,9 @@ export const pagination = (
               || (SELECT CASE WHEN CAST($current_page AS INTEGER) < CAST($total_pages AS INTEGER) THEN '[Next](?limit=' || $limit || '&offset=' || ($offset + $limit)${
         filteredParams.length
           ? " || " + filteredParams.map((qp) =>
-            `COALESCE('&${n(qp)}=' || replace($${qp}, ' ', '%20'), '')`
+            `COALESCE('&${
+              n(qp)
+            }=' ||  replace(replace(replace($${qp}, ' ', '%20'), '&', '%26'), '#', '%23'), '')`
           ).join(" || ")
           : ""
       } || ')' ELSE '' END)
