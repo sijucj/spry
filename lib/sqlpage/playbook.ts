@@ -371,9 +371,11 @@ export class SqlPagePlaybook {
       pagination,
       absUrlQuoted: interp.absUrlQuoted,
       absUrlUnquoted: interp.absUrlUnquoted,
+      absUrlUnquotedEncoded: interp.absUrlUnquotedEncoded,
+      absUrlQuotedEncoded: interp.absUrlQuotedEncoded,
       sitePrefixed: interp.absUrlQuoted,
-      paginate: (tableOrViewName: string) => {
-        const pn = interp.pagination({ tableOrViewName });
+      paginate: (tableOrViewName: string, whereSQL?: string) => {
+        const pn = interp.pagination({ tableOrViewName, whereSQL });
         pagination.active = pn;
         pagination.debug = pn.debugVars();
         pagination.limit = pn.limit();
