@@ -7,6 +7,12 @@ export const absUrlUnquoted = (path: string) =>
 export const absUrlQuoted = (path: string) =>
   `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
 
+export const absUrlUnquotedEncoded = (path: string) =>
+  `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
+
+export const absUrlQuotedEncoded = (path: string) =>
+  `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
+
 /**
  * Generates SQL pagination logic including initialization, debugging variables,
  * and rendering pagination controls for SQLPage.
@@ -86,7 +92,7 @@ export const pagination = (
               (SELECT CASE WHEN CAST($current_page AS INTEGER) > 1 THEN '[Previous](?limit=' || $limit || '&offset=' || ($offset - $limit)${
         filteredParams.length
           ? " || " + filteredParams.map((qp) =>
-            `COALESCE('&${n(qp)}=' || replace($${qp}, ' ', '%20'), '')`
+            `COALESCE('&${n(qp)}=' ||  sqlpage.url_encode($${qp}), '')`
           ).join(" || ")
           : ""
       } || ')' ELSE '' END)
@@ -95,7 +101,7 @@ export const pagination = (
               || (SELECT CASE WHEN CAST($current_page AS INTEGER) < CAST($total_pages AS INTEGER) THEN '[Next](?limit=' || $limit || '&offset=' || ($offset + $limit)${
         filteredParams.length
           ? " || " + filteredParams.map((qp) =>
-            `COALESCE('&${n(qp)}=' || replace($${qp}, ' ', '%20'), '')`
+            `COALESCE('&${n(qp)}=' ||  sqlpage.url_encode($${qp}), '')`
           ).join(" || ")
           : ""
       } || ')' ELSE '' END)
