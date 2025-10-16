@@ -307,3 +307,19 @@ ${pagination.limit};
 ${pagination.navWithParams("regime")}
 
 ```
+## Threat Catalog Page
+
+```sql scf/threat_catalog.sql { route: { caption: "Threat Catalog" } }
+SELECT 'table' as component,
+       TRUE as sort,
+       TRUE as search;
+SELECT
+    "Threat Grouping",
+    "Threat #",
+    "Threat Description",
+    "≥ 5% of pre-tax income",
+    "≥ 0.5% of total assets",
+    "≥ 1% of total equity",
+    "≥ 0.5% of total revenue"
+FROM scf_threat_catalog;
+```
