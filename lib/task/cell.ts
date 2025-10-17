@@ -1,12 +1,13 @@
 import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
 import { z } from "jsr:@zod/zod@4";
-import { Issue } from "../universal/md-notebook.ts";
+import { Issue, parsedTextComponents } from "../universal/md-notebook.ts";
 import {
   fbPartialCandidate,
   fbPartialsCollection,
   mdFencedBlockPartialSchema,
 } from "../universal/md-partial.ts";
 import { Playbook, PlaybookCodeCell } from "../universal/md-playbook.ts";
+import { Task } from "../universal/task.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -58,7 +59,7 @@ export const isTaskDirectiveSupplier = (
     ? true
     : false;
 
-export type TaskCell<Provenance> = PlaybookCodeCell<Provenance> & {
+export type TaskCell<Provenance> = PlaybookCodeCell<Provenance> & Task & {
   taskDirective: Extract<TaskDirective, { nature: "TASK" }>;
 };
 
@@ -75,16 +76,18 @@ export type TaskDirectiveInspector<
   },
 ) => TaskDirective | false;
 
-function parsedInfo(candidate?: string) {
-  if (!candidate) return false;
-  const info = candidate?.trim();
-  if (info.length == 0) return false;
-  const [first, ...rest] = info.split(/\s+/);
-  const remainder = rest.join(" ").trim();
+export function parsedInfo(candidate?: string) {
+  const ptc = parsedTextComponents(candidate);
+  if (!ptc) return false;
+
   return {
-    first,
-    rest,
-    remainder,
+    ...ptc,
+    deps: () => {
+      const flags = ptc.flags();
+      return "dep" in flags
+        ? (typeof flags.dep === "string" ? [flags.dep] : flags.dep)
+        : undefined;
+    },
   };
 }
 
@@ -99,7 +102,7 @@ export function partialsInspector<
     if (pi && pi.first.toLocaleUpperCase() == "PARTIAL") {
       const fbc = {
         nature: "PARTIAL",
-        partial: fbPartialCandidate(pi.remainder, cell.source, cell.attrs, {
+        partial: fbPartialCandidate(pi.argsText, cell.source, cell.attrs, {
           registerIssue,
         }),
       };
@@ -151,6 +154,7 @@ export function spryParser<
         strategy: "Cliffy.Command",
         command: new Command(), // need `action` to perform task
       },
+      deps: pi.deps(),
     } satisfies TaskDirective;
   };
 }
@@ -177,6 +181,7 @@ export function denoTaskParser<
       identity: pi.first,
       source: cell.source,
       task: { strategy: "Deno.Task" },
+      deps: pi.deps(),
     };
   };
 }
@@ -211,6 +216,7 @@ export function spawnableParser<
         command: "bash",
         shebang,
       },
+      deps: pi.deps(),
     };
   };
 }
@@ -309,6 +315,10 @@ export class TaskDirectives<
 
           case "TASK": {
             (cell as Any).taskDirective = td;
+
+            const task = cell as unknown as Task;
+            task.taskId = () => td.identity;
+            task.taskDeps = () => td.deps;
             if (isTaskDirectiveSupplier(cell)) {
               this.tasks.push(cell as TaskCell<Provenance>);
             } else {

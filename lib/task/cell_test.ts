@@ -3,20 +3,23 @@ import { eventBus } from "../universal/event-bus.ts";
 import { fbPartialsCollection } from "../universal/md-partial.ts";
 import type { Playbook, PlaybookCodeCell } from "../universal/md-playbook.ts";
 import {
+  executeDAG,
+  executionPlan,
+  TaskExecEventMap,
+  TaskExecutionResult,
+} from "../universal/task.ts";
+import {
   bashCodeCellLang,
   denoTaskCodeCellLang,
   denoTaskParser,
-  executeDAG,
-  executionPlan,
   safeParseShebang,
   shCodeCellLang,
   spawnableParser,
   spryCodeCellLang,
   spryParser,
+  TaskCell,
   type TaskDirective,
   TaskDirectives,
-  TaskExecEventMap,
-  TaskExecutionResult,
 } from "./mod.ts";
 
 type Prov = string;
@@ -196,17 +199,17 @@ Deno.test("TaskDirectives.plan()", async (t) => {
     });
     const B = makeCell({
       language: denoTaskCodeCellLang,
-      info: "B",
+      info: "B --dep A", // B -> A
       source: "echo B",
     });
     const C = makeCell({
       language: denoTaskCodeCellLang,
-      info: "C",
+      info: "C --dep A", // C -> A
       source: "echo C",
     });
     const D = makeCell({
       language: denoTaskCodeCellLang,
-      info: "D",
+      info: "D --dep B --dep C", // D -> B, C
       source: "echo D",
     });
 
@@ -215,11 +218,11 @@ Deno.test("TaskDirectives.plan()", async (t) => {
     assert(td.register(C, pb));
     assert(td.register(D, pb));
 
-    td.tasks[1]!.taskDirective.deps = ["A"]; // B -> A
-    td.tasks[2]!.taskDirective.deps = ["A"]; // C -> A
-    td.tasks[3]!.taskDirective.deps = ["B", "C"]; // D -> B, C
+    assertEquals(td.tasks[1]!.taskDirective.deps, ["A"]); // B -> A
+    assertEquals(td.tasks[2]!.taskDirective.deps, ["A"]); // C -> A
+    assertEquals(td.tasks[3]!.taskDirective.deps, ["B", "C"]); // D -> B, C
 
-    const plan = executionPlan(td.tasks);
+    const plan = executionPlan<TaskCell<string>>(td.tasks);
     assertEquals(plan.layers, [["A"], ["B", "C"], ["D"]]);
     assertEquals(
       plan.dag.map((c) => c.taskDirective.identity),
@@ -235,12 +238,12 @@ Deno.test("TaskDirectives.plan()", async (t) => {
 
     const E = makeCell({
       language: denoTaskCodeCellLang,
-      info: "E",
+      info: "E --dep Z", // Z does not exist
       source: "echo E",
     });
     assert(td.register(E, pb));
 
-    td.tasks[0]!.taskDirective.deps = ["Z"]; // Z does not exist
+    assertEquals(td.tasks[0]!.taskDirective.deps, ["Z"]); // Z does not exist
 
     const plan = executionPlan(td.tasks);
     assertEquals(plan.missingDeps, { E: ["Z"] });
@@ -254,20 +257,20 @@ Deno.test("TaskDirectives.plan()", async (t) => {
 
     const A = makeCell({
       language: denoTaskCodeCellLang,
-      info: "A",
+      info: "A --dep B",
       source: "echo A",
     });
     const B = makeCell({
       language: denoTaskCodeCellLang,
-      info: "B",
+      info: "B --dep A",
       source: "echo B",
     });
 
     assert(td.register(A, pb));
     assert(td.register(B, pb));
 
-    td.tasks[0]!.taskDirective.deps = ["B"];
-    td.tasks[1]!.taskDirective.deps = ["A"];
+    assertEquals(td.tasks[0]!.taskDirective.deps, ["B"]);
+    assertEquals(td.tasks[1]!.taskDirective.deps, ["A"]);
 
     const plan = executionPlan(td.tasks);
     assertEquals(plan.layers.length, 0);
@@ -333,12 +336,12 @@ Deno.test("executeDAG", async (t) => {
     });
     const B = makeCell({
       language: denoTaskCodeCellLang,
-      info: "B",
+      info: "B --dep A", // B depends on A
       source: "echo B",
     });
     const C = makeCell({
       language: denoTaskCodeCellLang,
-      info: "C",
+      info: "C --dep B", // C depends on B
       source: "echo C",
     });
 
@@ -346,8 +349,8 @@ Deno.test("executeDAG", async (t) => {
     assert(td.register(B, pb));
     assert(td.register(C, pb));
 
-    td.tasks[1]!.taskDirective.deps = ["A"]; // B depends on A
-    td.tasks[2]!.taskDirective.deps = ["B"]; // C depends on B
+    assertEquals(td.tasks[1]!.taskDirective.deps, ["A"]); // B depends on A
+    assertEquals(td.tasks[2]!.taskDirective.deps, ["B"]); // C depends on B
 
     return executionPlan(td.tasks);
   }
@@ -358,7 +361,9 @@ Deno.test("executeDAG", async (t) => {
       const plan = makeDAGABC();
 
       // capture events
-      const bus = eventBus<TaskExecEventMap<string, { runId: string }>>();
+      const bus = eventBus<
+        TaskExecEventMap<TaskCell<string>, { runId: string }>
+      >();
       const starts: string[] = [];
       const ends: string[] = [];
       const releases: Array<{ from: string; to: string[] }> = [];
@@ -378,7 +383,7 @@ Deno.test("executeDAG", async (t) => {
       // capture section lengths observed inside execute()
       const seenLen = new Map<string, number>();
 
-      const summary = await executeDAG(
+      const summary = await executeDAG<TaskCell<string>>(
         plan,
         // deno-lint-ignore require-await
         async (task, section) => {
@@ -417,7 +422,9 @@ Deno.test("executeDAG", async (t) => {
   await t.step("terminates early when execute() requests it", async () => {
     const plan = makeDAGABC();
 
-    const bus = eventBus<TaskExecEventMap<string, { runId: string }>>();
+    const bus = eventBus<
+      TaskExecEventMap<TaskCell<string>, { runId: string }>
+    >();
     const starts: string[] = [];
     bus.on("task:start", (e) => {
       starts.push(e.id);
@@ -484,7 +491,9 @@ Deno.test("executeDAG", async (t) => {
 
       const plan = executionPlan(td.tasks);
 
-      const bus = eventBus<TaskExecEventMap<string, { runId: string }>>();
+      const bus = eventBus<
+        TaskExecEventMap<TaskCell<string>, { runId: string }>
+      >();
       const starts: string[] = [];
       bus.on("task:start", (e) => {
         starts.push(e.id);
