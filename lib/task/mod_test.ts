@@ -317,8 +317,6 @@ Deno.test("executeDAG", async (t) => {
     ctx,
     ok: true,
     exitCode: 0,
-    stdout: new Uint8Array(),
-    stderr: new Uint8Array(),
     startedAt: new Date(),
     endedAt: new Date(),
   } satisfies TaskExecutionResult<C>);
@@ -397,7 +395,7 @@ Deno.test("executeDAG", async (t) => {
       // Verify section frames
       assertEquals(summary.section.length, 3);
       assertEquals(
-        summary.section.map((f) => f.id),
+        summary.section.map((f) => f.taskId),
         ["A", "B", "C"],
       );
       for (const f of summary.section) assertEquals(f.result.ok, true);
@@ -446,7 +444,7 @@ Deno.test("executeDAG", async (t) => {
     assertEquals(summary.terminated, true);
 
     // Section contains frames for A and B only (B recorded as ok by the engine’s synthesized result)
-    assertEquals(summary.section.map((f) => f.id), ["A", "B"]);
+    assertEquals(summary.section.map((f) => f.taskId), ["A", "B"]);
 
     // Section lengths observed inside execute()
     assertEquals(seenLen.get("A"), 0);
@@ -503,7 +501,7 @@ Deno.test("executeDAG", async (t) => {
       assertEquals(summary.ran, ["X", "Y", "Z"]);
       assertEquals(starts, ["X", "Y", "Z"]);
       assertEquals(summary.terminated, false);
-      assertEquals(summary.section.map((f) => f.id), ["X", "Y", "Z"]);
+      assertEquals(summary.section.map((f) => f.taskId), ["X", "Y", "Z"]);
     },
   );
 });

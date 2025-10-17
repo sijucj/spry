@@ -6,17 +6,23 @@ import { eventBus } from "../universal/event-bus.ts";
  * Result & event types
  * ======================== */
 
-export type TaskExecutionResult<Context> =
+export type TaskExecutionResult<
+  Context,
+  StdOut = Uint8Array,
+  StdErr = Uint8Array,
+> =
   & {
     ctx: Context;
     ok: boolean;
     exitCode: number;
-    stdout: Uint8Array;
-    stderr: Uint8Array;
     startedAt: Date;
     endedAt: Date;
   }
-  & ({ ok: true } | { ok: false; error?: unknown });
+  & ({ ok: true; stdout?: () => StdOut } | {
+    ok: false;
+    stderr?: () => StdErr;
+    error?: unknown;
+  });
 
 export interface ExecError {
   message: string;
@@ -77,10 +83,11 @@ export type ContinueOrTerminate = "continue" | "terminate";
 
 /** One completed execution in the section stack. */
 export type SectionFrame<Provenance, Context> = {
-  id: string;
+  taskId: string;
   task: TaskCell<Provenance>;
   result: TaskExecutionResult<Context>;
 };
+
 /** Read-only view passed to the executor. */
 export type SectionStack<Provenance, Context> = readonly SectionFrame<
   Provenance,
@@ -100,7 +107,6 @@ export interface ExecuteSummary<Provenance, Context> {
 type MaybeBus<P, C> =
   | ReturnType<typeof eventBus<TaskExecEventMap<P, C>>>
   | undefined;
-const emptyU8 = new Uint8Array();
 
 function makeResult<Context>(
   ctx: Context,
@@ -114,8 +120,6 @@ function makeResult<Context>(
     ctx,
     ok,
     exitCode: ok ? 0 : (extra?.exitCode ?? 1),
-    stdout: extra?.stdout ?? emptyU8,
-    stderr: extra?.stderr ?? emptyU8,
     startedAt: extra?.startedAt ?? now,
     endedAt: extra?.endedAt ?? now,
     ...(ok ? {} : { error: extra?.error }),
@@ -205,7 +209,7 @@ export async function executeDAG<
       // Record + emit using the caller-provided result
       ran.push(id);
       bus?.emit("task:end", { ctx, id, result });
-      section.push({ id, task, result });
+      section.push({ taskId: id, task, result });
 
       if (disposition === "terminate") {
         terminated = true;
@@ -229,7 +233,7 @@ export async function executeDAG<
       // On throw, synthesize a failing result and terminate
       const result = makeResult(ctx, false, { error: cause });
       bus?.emit("task:end", { ctx, id, result });
-      section.push({ id, task, result });
+      section.push({ taskId: id, task, result });
 
       bus?.emit("error", {
         message: "Task threw during execution",
