@@ -8,7 +8,7 @@ export const absUrlQuoted = (path: string) =>
   `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
 
 export const absUrlUnquotedEncoded = (path: string) =>
-  `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
+  `sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || sqlpage.url_encode(${path})`;
 
 export const absUrlQuotedEncoded = (path: string) =>
   `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;

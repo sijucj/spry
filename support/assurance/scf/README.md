@@ -38,10 +38,16 @@ Instructions:
    ```bash
    ../../../lib/sqlpage/spry.ts --md README.md --package --conf sqlpage/sqlpage.json | sqlite3 scf-2025.3.sqlite.db
    ```
-
-4. Start the SQLPage server:
+4. Development:  
+    ```bash 
+    watchexec -e md -- bash -c '
+    deno run -A ../../../lib/sqlpage/spry.ts --md README.md --package --conf sqlpage/sqlpage.json | sqlite3 scf-2025.3.sqlite.db
+    '
+    ```
+5. Start the SQLPage server:
 
    - Linux (from repository root): `SQLPAGE_SITE_PREFIX="" sqlpage.bin`
+
 
 ## Layout
 
@@ -66,7 +72,7 @@ SET page_title  = json_extract($resource_json, '$.route.caption');
 
 ```sql index.sql { route: { caption: "Home" } }
 
-SELECT
+SELECT distinct
   'card' AS component,
   '' AS title,
   2 AS columns;
@@ -85,20 +91,26 @@ SELECT
 ```
 ## Unpivoted page
 
-```sql scf/regime_control_unpivoted.sql { route: { caption: "Long form of SCF x Regime mappings" } }
+```sql scf/regime_control_unpivoted.sql { route: { caption: "Long form of SCF x Regime mappings check" } }
 SELECT
   'text' AS component,
  $page_title AS title;
 
 ${paginate("scf_regime_control_unpivoted")}
 
+SET coalesced_post_id = COALESCE($regime_label_encoded, '');
+
 SELECT 'table' AS component,
        TRUE     AS sort,
        'SCF #' as  markdown,
+       'Regime2' as  markdown,
        'Regime' as  markdown,
        TRUE     AS search;              
-SELECT
-  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",  
+SELECT   
+  '[' || regime_label || '](' ||
+    ${ctx.absUrlUnquoted("'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') ")} || 
+  ')' AS "Regime",  
+  /* '[' || regime_label || '](' || ${ctx.absUrlUnquotedEncoded("'' || 'details/regime.sql?regime=' ||regime_label || ''")} || ')' AS "Regime", */
   '['|| scf_no || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime_control_unpivoted_details.sql?scf_no=' || replace(replace(replace(scf_no, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' as "SCF #",  
   scf_domain AS "SCF Domain",
   scf_control AS "SCF Control",
@@ -138,20 +150,6 @@ ${pagination.limit};
 ${pagination.navigation}
 ```
 
-Regime Controls page
-
-```sql scf/regime_control.sql { route: { caption: "Clean list of regime mappings" } }
-SELECT
-  scf_no AS "SCF #",
-  scf_control AS "SCF Control",
-  scf_control_question AS "SCF Control Question",
-  regime_raw_value AS "Regime Marker"
-FROM "scf_regime_control"
-ORDER BY scf_no
-${pagination.limit}; 
-${pagination.navigation}
-
-```
 
 ## Regime Count page
 
@@ -173,6 +171,84 @@ FROM "scf_regime_count"
 ORDER BY control_count DESC, regime
 ${pagination.limit}; 
 ${pagination.navigation}
+
+```
+## Regime Control Unpivoted details page
+
+```sql scf/details/regime_control_unpivoted_details.sql { route: { caption: "Long form of SCF x Regime mappings details" } }
+SELECT
+  'text' AS component,
+ $page_title||' for SCF # '||$scf_no AS title;
+
+${paginate("scf_regime_control_unpivoted", "WHERE scf_no = $scf_no")}
+
+SELECT 'table' AS component,
+       TRUE     AS sort,
+       'Regime Label' as  markdown,
+       TRUE     AS search;              
+SELECT 
+  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'regime_details.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || '&scf_no=' || $scf_no")} || ')' AS "Regime Label", 
+  scf_no AS "SCF #",
+  scf_domain AS "SCF Domain",
+  scf_control AS "SCF Control",
+  scf_control_question AS "SCF Control Question",
+  regime_raw_value AS "Regime Marker",
+  regime_column_ordinal AS "Regime Column Ordinal"
+FROM "scf_regime_control_unpivoted"
+WHERE scf_no = $scf_no
+ORDER BY scf_no, regime_column_ordinal
+${pagination.limit}; 
+${pagination.navigation}
+
+```
+## Regime details page
+
+```sql scf/details/regime_details.sql { route: { caption: "Control details" } }
+
+ SELECT 'card' AS component,
+           $page_title AS title,
+           1 AS columns;
+SELECT
+      $regime||' '||$scf_no AS title,
+      '**SCF Domain:** ' || scf_domain || '  
+
+' ||
+      '**SCF Control:** ' || scf_control || '  
+
+' ||
+      '**SCF Control Question:** ' || scf_control_question || '  
+
+' ||
+      '**Regime Marker:** ' || regime_raw_value 
+      AS description_md
+  FROM "scf_regime_control_unpivoted"
+WHERE scf_no = $scf_no
+AND regime_label = $regime;
+
+ ```
+
+## Controls per regime (totals) details page
+
+```sql scf/details/regime.sql { route: { caption: "Controls per regime (totals) details" } }
+SELECT
+  'text' AS component,
+ $page_title||' for '||$regime AS title;
+
+${paginate("scf_regime_control", "WHERE regime_label = $regime")}
+
+SELECT 'table' AS component,
+       TRUE     AS sort,
+       TRUE     AS search;              
+SELECT
+  scf_no AS "SCF #",
+  scf_control AS "SCF Control",
+  scf_control_question AS "SCF Control Question",
+  regime_raw_value AS "Regime Marker"
+FROM "scf_regime_control"
+WHERE regime_label = $regime
+ORDER BY scf_no
+${pagination.limit}; 
+${pagination.navWithParams("regime")}
 
 ```
 
@@ -276,182 +352,7 @@ ${pagination.limit};
 ${pagination.navigation}
 ```
 
-```sql scf/details/regime_control_unpivoted_details.sql { route: { caption: "Long form of SCF x Regime mappings details" } }
-SELECT
-  'text' AS component,
- $page_title||' for SCF # '||$scf_no AS title;
-
-${paginate("scf_regime_control_unpivoted", "WHERE scf_no = $scf_no")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       TRUE     AS search;              
-SELECT
-  regime_label AS "Regime Label",
-  scf_no AS "SCF #",
-  scf_domain AS "SCF Domain",
-  scf_control AS "SCF Control",
-  scf_control_question AS "SCF Control Question",
-  regime_raw_value AS "Regime Marker",
-  regime_column_ordinal AS "Regime Column Ordinal"
-FROM "scf_regime_control_unpivoted"
-WHERE scf_no = $scf_no
-ORDER BY scf_no, regime_column_ordinal
-${pagination.limit}; 
-${pagination.navigation}
-
-```
 ## Controls per regime (totals) details page
-
-```sql scf/details/regime.sql { route: { caption: "Controls per regime (totals) details" } }
-SELECT
-  'text' AS component,
- $page_title||' for '||$regime AS title;
-
-${paginate("scf_regime_control", "WHERE regime_label = $regime")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       TRUE     AS search;              
-SELECT
-  scf_no AS "SCF #",
-  scf_control AS "SCF Control",
-  scf_control_question AS "SCF Control Question",
-  regime_raw_value AS "Regime Marker"
-FROM "scf_regime_control"
-WHERE regime_label = $regime
-ORDER BY scf_no
-${pagination.limit}; 
-${pagination.navWithParams("regime")}
-
-```
-
-Domain Count page
-
-```sql scf/regime_domain_count.sql { route: { caption: "Domain x Regime counts" } }
-SELECT
-  'text' AS component,
- $page_title AS title;
-
-${paginate("scf_regime_domain_count")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       TRUE     AS search;              
-SELECT
-  domain AS "Domain",
-  control_count AS "Controls"
-FROM "scf_regime_domain_count"
-ORDER BY control_count DESC, domain
-${pagination.limit}; 
-${pagination.navigation}
-
-```
-
-Coverage page
-
-```sql scf/regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime" } }
-SELECT
-  'text' AS component,
- $page_title AS title;
-
- ${paginate("scf_regime_domain_coverage")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       'Regime' as  markdown,
-       TRUE     AS search;              
-SELECT
-  scf_domain AS "Domain",  
-  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",
-  mapped_controls AS "Mapped Controls",
-  domain_total_controls AS "Total Controls",
-  coverage_pct AS "Coverage %"
-FROM "scf_regime_domain_coverage"
-ORDER BY scf_domain, coverage_pct DESC, regime_label
-${pagination.limit}; 
-${pagination.navigation}
-
-```
-
-Regime Rank page
-
-```sql scf/regime_domain_rank.sql { route: { caption: "Top regimes within each domain" } }
-
-SELECT
-  'text' AS component,
- $page_title AS title;
- 
- ${paginate("scf_regime_domain_rank")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       'Regime' as  markdown,
-       TRUE     AS search;              
-SELECT
-  scf_domain AS "Domain", 
-  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",
-  control_count AS "Controls",
-  regime_rank_in_domain AS "Rank in Domain"
-FROM "scf_regime_domain_rank"
-ORDER BY scf_domain, regime_rank_in_domain, regime_label
-${pagination.limit}; 
-${pagination.navigation}
-```
-
-Jaccard page
-
-```sql scf/regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)" } }
-SELECT
-  'text' AS component,
- $page_title AS title;
-
-${paginate("scf_regime_overlap_jaccard")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       'Regime A' as  markdown,
-       'Regime B' as  markdown,
-       TRUE     AS search;              
-SELECT  
-  '[' || regime_a || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_a, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime A",  
-  '[' || regime_b || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_b, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime B",    
-  in_both AS "In Both",
-  a_total AS "A Total",
-  b_total AS "B Total",
-  jaccard AS "Jaccard"
-FROM "scf_regime_overlap_jaccard"
-ORDER BY jaccard DESC, in_both DESC, regime_a, regime_b
-${pagination.limit}; 
-${pagination.navigation}
-```
-
-```sql scf/details/regime_control_unpivoted_details.sql { route: { caption: "Long form of SCF x Regime mappings details" } }
-SELECT
-  'text' AS component,
- $page_title||' for SCF # '||$scf_no AS title;
-
-${paginate("scf_regime_control_unpivoted")}
-
-SELECT 'table' AS component,
-       TRUE     AS sort,
-       TRUE     AS search;              
-SELECT
-  regime_label AS "Regime Label",
-  scf_no AS "SCF #",
-  scf_domain AS "SCF Domain",
-  scf_control AS "SCF Control",
-  scf_control_question AS "SCF Control Question",
-  regime_raw_value AS "Regime Marker",
-  regime_column_ordinal AS "Regime Column Ordinal"
-FROM "scf_regime_control_unpivoted"
-WHERE scf_no = $scf_no
-ORDER BY scf_no, regime_column_ordinal
-${pagination.limit}; 
-${pagination.navigation}
-
-```
-Controls per regime (totals) details page
 
 ```sql scf/details/regime.sql { route: { caption: "Controls per regime (totals) details" } }
 SELECT
@@ -476,3 +377,77 @@ ${pagination.navWithParams("regime")}
 
 ```
 
+## Regime Count page embed
+
+```sql scf/details/regime_count_embed.sql { route: { caption: "Controls per regime (totals)" } }
+
+${paginate("scf_regime_count")}
+
+SELECT 'table' AS component,
+       TRUE     AS sort,
+       'Regime' as  markdown,
+       TRUE     AS search;              
+SELECT  
+  '[' || regime || '](' || ${ctx.absUrlUnquoted("'' || '/scf/details/regime.sql?regime=' || replace(replace(replace(regime, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime", 
+  control_count AS "Controls"
+FROM "scf_regime_count"
+ORDER BY control_count DESC, regime
+${pagination.limit}; 
+${pagination.navigation}
+
+```
+
+## Controls Library page
+
+```sql controls.sql { route: { caption: "Controls Library" } }
+SELECT
+  'text' AS component,
+ $page_title AS title;
+
+select 
+    'text'              as component,
+    'Discover and understand compliance controls across different regulatory frameworks. Select your applicable regimes to identify your control responsibilities.' as contents;
+
+    select 'tab' as component;
+    select 'Compliance Regimes' as title, $tab = 'Compliance Regimes' as active;
+    select 'Control Library'    as title, $tab = 'Control Library'    as active;   
+
+   /*${paginate("scf_regime_count")}
+
+    SELECT 'table' AS component,
+          TRUE     AS sort,
+          'Regime' as  markdown,
+          TRUE     AS search;              
+    SELECT  
+      '[' || regime || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime", 
+      control_count AS "Controls"
+    FROM "scf_regime_count"
+    WHERE $tab = 'Compliance Regimes'
+    ORDER BY control_count DESC, regime
+    ${pagination.limit}; 
+    ${pagination.navigation}*/
+
+    select 
+    'card' as component,    
+    1      as columns;
+
+
+SELECT 
+    'Available Compliance Regimes' AS title,
+    '/scf/details/regime_count_embed.sql?_sqlpage_embed'
+    || CASE 
+        WHEN :offset IS NOT NULL AND :limit IS NOT NULL THEN 
+            '?offset=' || :offset || '&limit=' || :limit
+        WHEN :offset IS NOT NULL THEN 
+            '?offset=' || :offset
+        WHEN :limit IS NOT NULL THEN 
+            '?limit=' || :limit
+        ELSE 
+            ''
+       END
+    || '&tab=' || COALESCE(NULLIF($tab, ''), 'Compliance%20Regimes') AS embed
+WHERE COALESCE(NULLIF($tab, ''), 'Compliance Regimes') = 'Compliance Regimes';
+
+
+
+``` 
