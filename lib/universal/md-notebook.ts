@@ -518,7 +518,8 @@ function parseDocument<
  *
  * Supports:
  * - Long flags: `--key value` or `--key=value`
- * - Short flags: `-k value` or `-k=value`
+ * - Long flags: `--key` (on/off)
+ * - Short flags: `-k value` or `-k=value or -k`
  *
  * Behavior:
  * - Flags not present in `base` are automatically added.
@@ -531,16 +532,18 @@ function parseDocument<
  * @returns A record with parsed flags and collected values.
  */
 export function parsedTextFlags<
-  T extends Record<string, string | string[]> = Record<
+  T extends Record<string, string | string[] | boolean> = Record<
     string,
-    string | string[]
+    string | string[] | boolean
   >,
 >(
   argv: readonly string[],
   base?: T,
 ): T {
-  const out: Record<string, string | string[]> = base ? { ...base } : {};
-  const seenFromArg = new Set<string>(); // tracks keys set from argv at least once
+  const out: Record<string, string | string[] | boolean> = base
+    ? { ...base }
+    : {};
+  const seenFromArg = new Set<string>();
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -553,26 +556,38 @@ export function parsedTextFlags<
     const key = eqIdx === -1
       ? token.slice(prefixLen)
       : token.slice(prefixLen, eqIdx);
+    if (!key) continue;
 
-    const val = eqIdx !== -1
-      ? token.slice(eqIdx + 1)
-      : i + 1 < argv.length && !argv[i + 1].startsWith("-")
-      ? argv[++i]
-      : undefined;
-
-    if (val === undefined) continue;
+    // value cases:
+    // 1) --k=v or -k=v  => string value after '='
+    // 2) --k v or -k v  => next token if not another flag
+    // 3) bare (--k or -k) => boolean true
+    let val: string | boolean | undefined;
+    if (eqIdx !== -1) {
+      val = token.slice(eqIdx + 1);
+    } else if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
+      val = argv[++i];
+    } else {
+      val = true;
+    }
 
     const current = out[key];
 
     if (Array.isArray(current)) {
-      // Already an array: append value
-      out[key] = [...current, val];
+      // already a string array: append stringified value
+      out[key] = [...current, String(val)];
     } else if (seenFromArg.has(key)) {
-      // We've set this key before from argv: promote string -> array
-      const first = typeof current === "string" ? current : undefined;
-      out[key] = first !== undefined ? [first, val] : [val];
+      // promote to array
+      if (typeof current === "string") {
+        out[key] = [current, String(val)];
+      } else if (current === true) {
+        out[key] = ["true", String(val)];
+      } else {
+        // base might have been undefined or non-string; start fresh
+        out[key] = [String(val)];
+      }
     } else {
-      // First time this key appears in argv: overwrite any base default
+      // first time set from argv
       out[key] = val;
     }
 

@@ -203,16 +203,13 @@ Deno.test("parsedTextFlags", async (t) => {
 
   await t.step("ignores flags without a value", () => {
     const out = parsedTextFlags(["--foo", "--bar", "x"]);
-    // "--foo" has no value; ignored. "--bar x" is set.
-    assertEquals(out, { bar: "x" });
-    // Ensure foo is not present
-    assertEquals(Object.hasOwn(out, "foo"), false);
+    // "--bar x" is set.
+    assertEquals(out, { bar: "x", foo: true });
   });
 
   await t.step("does not treat next flag as a value", () => {
     const out = parsedTextFlags(["--a", "--b", "val"]);
-    // "--a" has no value (next token is another flag), so it's ignored.
-    assertEquals(out, { b: "val" });
+    assertEquals(out, { a: true, b: "val" });
   });
 
   await t.step(

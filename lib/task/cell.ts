@@ -85,7 +85,11 @@ export function parsedInfo(candidate?: string) {
     deps: () => {
       const flags = ptc.flags();
       return "dep" in flags
-        ? (typeof flags.dep === "string" ? [flags.dep] : flags.dep)
+        ? (typeof flags.dep === "boolean"
+          ? undefined
+          : typeof flags.dep === "string"
+          ? [flags.dep]
+          : flags.dep)
         : undefined;
     },
   };
