@@ -18,7 +18,6 @@ import {
   spryCodeCellLang,
   spryParser,
   TaskCell,
-  type TaskDirective,
   TaskDirectives,
 } from "./mod.ts";
 
@@ -62,9 +61,7 @@ function makeCell(partial: {
 
 function makeTD() {
   // IMPORTANT: supply the generic, not a schema
-  const partials = fbPartialsCollection<
-    Extract<TaskDirective, { nature: "PARTIAL" }>
-  >();
+  const partials = fbPartialsCollection();
   return new TaskDirectives<Prov>(partials);
 }
 

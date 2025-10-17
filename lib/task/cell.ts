@@ -241,11 +241,7 @@ export class TaskDirectives<
   readonly tasks: TaskCell<Provenance>[] = [];
 
   constructor(
-    readonly partials: ReturnType<
-      typeof fbPartialsCollection<
-        Extract<TaskDirective, { nature: "PARTIAL" }>
-      >
-    >,
+    readonly partials: ReturnType<typeof fbPartialsCollection>,
     tdInspectors?: TaskDirectiveInspector<
       Provenance,
       Frontmatter,
@@ -277,7 +273,7 @@ export class TaskDirectives<
   }
 
   partial(name: string) {
-    return this.partials.partial(name);
+    return this.partials.get(name);
   }
 
   registerIssue(issue: I) {
@@ -314,7 +310,7 @@ export class TaskDirectives<
       if (td) {
         switch (td.nature) {
           case "PARTIAL":
-            this.partials.register(td);
+            this.partials.register(td.partial);
             return true;
 
           case "TASK": {

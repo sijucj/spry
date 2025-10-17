@@ -1,9 +1,10 @@
+// md-partial.ts (unified)
 import { globToRegExp, isGlob, normalize } from "jsr:@std/path@^1";
 import { z, ZodType } from "jsr:@zod/zod@4";
 import { parsedTextComponents } from "./md-notebook.ts";
 import { jsonToZod } from "./zod-aide.ts";
 
-// TS-only types for dev ergonomics
+/** Render function for partials */
 type InjectContentFn = (
   locals: Record<string, unknown>,
   onError?: (message: string, content: string, error?: unknown) => string,
@@ -15,45 +16,107 @@ type InjectContentFn = (
 
 export const mdFencedBlockPartialSchema = z.object({
   identity: z.string().min(1),
+  source: z.string().min(1),
+
+  // Optional argument validation for locals passed to .content()
   argsZodSchema: z.instanceof(ZodType).optional(),
   argsZodSchemaSpec: z.string().optional(),
 
-  // Zod v4: cannot embed parameter/return schemas for function *fields*.
-  // Use z.custom<InjectFn>(...) with a guard (and optional runtime checks).
+  // The renderer (typed & guarded)
   content: z.custom<InjectContentFn>(
     (v): v is InjectContentFn =>
       typeof v === "function" &&
-      // optional arity sanity-check: 1 or 2 params (locals[, onError])
       // deno-lint-ignore ban-types
       (v as Function).length >= 1 &&
       // deno-lint-ignore ban-types
       (v as Function).length <= 2,
     {
       message:
-        "inject must be a function (locals: Record<string, unknown>, onError?: (msg, content, err) => string) => string | Promise<string>",
+        "content must be a function (locals, onError?) => { content, interpolate, locals } | Promise<...>",
     },
   ),
+
+  // New: optional injection metadata
+  injection: z.object({
+    globs: z.array(z.string()).min(1),
+    mode: z.enum(["prepend", "append", "both"]),
+    wrap: z.custom<(content: string) => string>(),
+  }).optional(),
 }).strict();
 
 export type FencedBlockPartial = z.infer<typeof mdFencedBlockPartialSchema>;
 
-export type FencedBlockPartialSupplier = {
-  partial: FencedBlockPartial;
-};
-
+/**
+ * Build a (possibly injectable) Partial from the fenced block’s `info` and `content`.
+ *
+ * Flags parsed from `info` (via parsedTextComponents):
+ *   --inject <glob>   (repeatable; optional – if absent, the partial is "plain")
+ *   --prepend         (optional; if neither --prepend/--append given, default "prepend")
+ *   --append          (optional; --prepend + --append => "both")
+ *
+ * Examples:
+ *   fbPartial("report_wrapper --inject reports/**\/*.sql --prepend", "...text...");
+ *   fbPartial("footer --inject **\/*.sql --append", "-- footer");
+ *   fbPartial("enclose --inject **\/*.sql --prepend --append", "-- begin\n...\n-- end");
+ *   fbPartial("plain_partial", "no injection flags => plain partial");
+ */
 export function fbPartialCandidate(
   info: string,
-  content: string,
+  source: string,
   zodSchemaSpec?: Record<string, unknown>,
   init?: {
     registerIssue: (message: string, content: string, error?: unknown) => void;
   },
 ): FencedBlockPartial {
+  // Parse flags (safe default if parsing not available)
+  const ptc = parsedTextComponents(info);
+  const parsed = ptc ? ptc : {
+    first: info.trim(),
+    argv: [],
+    flags: () => ({}) as Record<string, unknown>,
+  };
+
+  const identity = (parsed.first ?? info).trim();
+  const flags = parsed.flags() as Record<string, unknown>;
+
+  // Collect optional injection globs
+  const injectGlobs = flags.inject === undefined
+    ? []
+    : Array.isArray(flags.inject)
+    ? (flags.inject as string[])
+    : [String(flags.inject)];
+
+  const hasFlag = (k: string) =>
+    k in flags && flags[k] !== false && flags[k] !== undefined;
+
+  let hasPrepend = hasFlag("prepend");
+  const hasAppend = hasFlag("append");
+  if (!hasPrepend && !hasAppend) hasPrepend = true;
+
+  const injection: FencedBlockPartial["injection"] = injectGlobs.length
+    ? {
+      globs: injectGlobs,
+      mode: hasPrepend && hasAppend ? "both" : hasAppend ? "append" : "prepend", // default if neither specified
+      wrap: (text: string) => {
+        let result = text;
+        if (hasPrepend) {
+          result = `${source}\n${result}`;
+        }
+        if (hasAppend) {
+          result = `${result}\n${source}`;
+        }
+        return result;
+      },
+    }
+    : undefined;
+
+  // Optional Zod schema for locals
   const argsZodSchemaSpec = JSON.stringify(
-    zodSchemaSpec
-      ? Object.keys(zodSchemaSpec).length > 0 ? zodSchemaSpec : undefined
+    zodSchemaSpec && Object.keys(zodSchemaSpec).length > 0
+      ? zodSchemaSpec
       : undefined,
   );
+
   let argsZodSchema: ZodType | undefined;
   if (argsZodSchemaSpec) {
     try {
@@ -66,192 +129,70 @@ export function fbPartialCandidate(
       argsZodSchema = undefined;
       init?.registerIssue(
         `Invalid Zod schema spec: ${argsZodSchemaSpec}`,
-        content,
+        source,
         error,
       );
     }
   }
 
-  const identity = info.trim();
-  return {
+  // The content renderer with runtime locals validation (if provided)
+  const content: InjectContentFn = (locals, onError) => {
+    if (argsZodSchema) {
+      const parsed = z.safeParse(argsZodSchema, locals);
+      if (!parsed.success) {
+        const message =
+          `Invalid arguments passed to partial '${identity}': ${
+            z.prettifyError(parsed.error)
+          }\n` +
+          `Partial '${identity}' expected arguments ${argsZodSchemaSpec}`;
+        return {
+          content: onError ? onError(message, source, parsed.error) : message,
+          interpolate: false,
+          locals,
+        };
+      }
+    }
+    return { content: source, interpolate: true, locals };
+  };
+
+  return mdFencedBlockPartialSchema.parse({
     identity,
     argsZodSchema,
     argsZodSchemaSpec,
-    content: (locals, onError) => {
-      if (argsZodSchema) {
-        const parsed = z.safeParse(
-          argsZodSchema,
-          locals,
-        );
-        if (!parsed.success) {
-          const message = `Invalid arguments passed to partial '${identity}': ${
-            z.prettifyError(parsed.error)
-          }\nPartial '${identity}' expected arguments ${argsZodSchemaSpec}`;
-          return {
-            content: onError
-              ? onError(message, content, parsed.error)
-              : message,
-            interpolate: false,
-            locals,
-          };
-        }
-      }
-      return { content, interpolate: true, locals };
-    },
-  };
+    source,
+    content,
+    injection,
+  });
 }
 
-export function fbPartialsCollection<
-  Supplier extends FencedBlockPartialSupplier,
->(
-  init?: { onDuplicate?: (fbps: Supplier) => "overwrite" | "throw" | "ignore" },
-) {
-  const catalog = new Map<string, Supplier>();
-  return {
-    catalog,
-    register: (fbps: Supplier) => {
-      const { identity } = fbps.partial;
-      const found = catalog.get(identity);
-      if (found && init?.onDuplicate) {
-        const onDupe = init.onDuplicate(fbps);
-        if (onDupe === "throw") {
-          throw new Deno.errors.AlreadyExists(
-            `Partial '${identity}' defined already, not creating duplicate in fbPartialsCollection`,
-          );
-        } else if (onDupe === "ignore") {
-          return;
-        }
-      } // else we overwrite by default
-      catalog.set(identity, fbps);
-    },
-    partialSupplier: (identity: string) => catalog.get(identity),
-    partial: (identity: string) => catalog.get(identity)?.partial,
-  };
-}
-
-// Render shape from a partial's content()
 type PartialRender = Awaited<ReturnType<InjectContentFn>>;
 
-export type FencedBlockInjectable = {
-  /** Identical to its underlying partial identity */
-  identity: string;
-  /** Glob patterns where this injectable applies */
-  globs: readonly string[];
-  /**
-   * Composition mode:
-   * - "prepend": wrapper content goes before the matched partial
-   * - "append":  wrapper content goes after the matched partial
-   * - "both":    wrapper content is added before and after
-   */
-  mode: "prepend" | "append" | "both";
-  /** The wrapper itself; an ordinary partial created via fbPartialCandidate */
-  partial: FencedBlockPartial;
-};
-
-export type FencedBlockInjectableSupplier = {
-  injectable: FencedBlockInjectable;
-};
-
 /**
- * Build an Injectable. The injectable's underlying wrapper is created as a normal Partial
- * via fbPartialCandidate — every injectable is a partial.
- *
- * Flags parsed from `info` (via parsedTextComponents):
- *   --inject <glob>   (repeatable; required to target files/paths)
- *   --prepend         (optional; if absent and --append absent, default is "prepend")
- *   --append          (optional; combine with --prepend for "both")
- *
- * Examples:
- *   fbInjectableCandidate("report_wrapper --inject reports/**\/*.sql --prepend", "...wrapper text...");
- *   fbInjectableCandidate("footer --inject **\/*.sql --append", "-- footer");
- *   fbInjectableCandidate("enclose --inject **\/*.sql --prepend --append", "-- begin\n...\n-- end");
+ * Unified collection of Partials. It also maintains an index for injectable
+ * matching (by glob) and exposes a `compose` helper to apply the best-match
+ * wrapper around a rendered content partial’s result.
  */
-export function fbInjectableCandidate(
-  info: string,
-  content: string,
-  zodSchemaSpec?: Record<string, unknown>,
-  init?: {
-    registerIssue: (message: string, content: string, error?: unknown) => void;
-  },
-): FencedBlockInjectable {
-  const parsed = parsedTextComponents(info) ||
-    {
-      first: info.trim(),
-      argv: [],
-      flags: () => ({}) as Record<string, unknown>,
-    };
+export function fbPartialsCollection() {
+  const catalog = new Map<string, FencedBlockPartial>();
 
-  const identity = parsed.first?.trim() ?? info.trim();
-  const flags = parsed.flags() as Record<string, unknown>;
-
-  const inject = flags.inject === undefined
-    ? []
-    : Array.isArray(flags.inject)
-    ? flags.inject as string[]
-    : [String(flags.inject)];
-
-  const hasFlag = (k: string) =>
-    k in flags && flags[k] !== false && flags[k] !== undefined;
-  const hasPrepend = hasFlag("prepend");
-  const hasAppend = hasFlag("append");
-
-  const mode: FencedBlockInjectable["mode"] = hasPrepend && hasAppend
-    ? "both"
-    : hasAppend
-    ? "append"
-    : "prepend"; // default if neither specified
-
-  // Ensure the wrapper itself is a proper Partial (typed & validated)
-  const wrapperPartial = fbPartialCandidate(
-    identity,
-    content,
-    zodSchemaSpec,
-    init,
-  );
-
-  return {
-    identity,
-    globs: inject,
-    mode,
-    partial: wrapperPartial,
-  };
-}
-
-/**
- * Collection/registry for Injectables that also uses an internal Partials collection.
- * When you register an injectable here, its underlying Partial is also registered
- * into the internal fbPartialsCollection to keep a single source of truth.
- */
-export function fbInjectablesCollection<
-  Supplier extends FencedBlockInjectableSupplier,
->(
-  partials = fbPartialsCollection<{ partial: FencedBlockPartial }>(),
-  init?: { onDuplicate?: (inj: Supplier) => "overwrite" | "throw" | "ignore" },
-) {
-  const injectablesCatalog = new Map<string, Supplier>();
-
+  // ---------- Injectable indexing ----------
   type IndexEntry = {
     identity: string;
     re: RegExp;
     wc: number;
     len: number;
-    supplier: Supplier;
   };
-
   let index: IndexEntry[] = [];
 
-  function wildcardCount(g: string): number {
+  const wildcardCount = (g: string): number => {
     const starStar = (g.match(/\*\*/g) ?? []).length * 2;
     const singles = (g.replace(/\*\*/g, "").match(/[*?]/g) ?? []).length;
     return starStar + singles;
-  }
+  };
 
-  function toRegex(glob: string): RegExp {
+  const toRegex = (glob: string): RegExp => {
     if (!isGlob(glob)) {
-      const exact = normalize(glob).replace(
-        /[.*+?^${}()|[\]\\]/g,
-        "\\$&",
-      );
+      const exact = normalize(glob).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return new RegExp(`^${exact}$`);
     }
     return globToRegExp(glob, {
@@ -259,121 +200,119 @@ export function fbInjectablesCollection<
       globstar: true,
       caseInsensitive: false,
     });
-  }
+    // If you prefer case-insensitive, flip the flag above.
+  };
 
-  function rebuildIndex() {
+  const rebuildIndex = () => {
     const entries: IndexEntry[] = [];
-    for (const supplier of injectablesCatalog.values()) {
-      const inj = supplier.injectable;
+    for (const p of catalog.values()) {
+      const inj = p.injection;
+      if (!inj) continue;
       for (const g of inj.globs) {
         const gg = normalize(g);
         entries.push({
-          identity: inj.identity,
+          identity: p.identity,
           re: toRegex(gg),
           wc: wildcardCount(gg),
           len: gg.length,
-          supplier,
         });
       }
     }
     index = entries;
-  }
+  };
 
-  function findInjectableForPath(path?: string): Supplier | undefined {
+  const findInjectableForPath = (
+    path?: string,
+  ): FencedBlockPartial | undefined => {
     if (!path) return;
     const p = normalize(path);
-    const hits = index.filter((c) => c.re.test(p));
+    const hits = index
+      .filter((c) => c.re.test(p))
+      .sort((a, b) => (a.wc - b.wc) || (b.len - a.len));
     if (!hits.length) return;
-    // Specificity: fewer wildcards first; then longer literal
-    hits.sort((a, b) => (a.wc - b.wc) || (b.len - a.len));
-    return hits[0].supplier;
-  }
-
-  async function compose(
-    // Render result from a content partial
-    result: PartialRender,
-    // Path for matching + optional onError hook
-    ctx?: {
-      path?: string;
-      onError?: (msg: string, content: string, err?: unknown) => string;
-    },
-  ): Promise<PartialRender> {
-    const supplier = findInjectableForPath(ctx?.path);
-    if (!supplier) return result;
-
-    const inj = supplier.injectable;
-
-    // Render the wrapper partial with the same locals
-    let wrapperText: string;
-    try {
-      const wr = await inj.partial.content(result.locals);
-
-      // NEW: if wrapper signals invalid via interpolate=false, treat as failure
-      if (!wr.interpolate) {
-        const msg = `Injectable '${inj.identity}' failed to render`;
-        const text = ctx?.onError
-          ? ctx.onError(msg, result.content)
-          : `${msg}: wrapper reported invalid arguments`;
-        return { content: text, interpolate: false, locals: result.locals };
-      }
-
-      wrapperText = wr.content;
-    } catch (err) {
-      const msg = `Injectable '${inj.identity}' failed to render`;
-      const text = ctx?.onError
-        ? ctx.onError(msg, result.content, err)
-        : `${msg}: ${String(err)}`;
-      return { content: text, interpolate: false, locals: result.locals };
-    }
-
-    // Compose based on mode
-    let merged = result.content;
-    if (inj.mode === "prepend" || inj.mode === "both") {
-      merged = `${wrapperText}\n${merged}`;
-    }
-    if (inj.mode === "append" || inj.mode === "both") {
-      merged = `${merged}\n${wrapperText}`;
-    }
-
-    return {
-      content: merged,
-      interpolate: result.interpolate,
-      locals: result.locals,
-    };
-  }
+    const chosenId = hits[0].identity;
+    return catalog.get(chosenId);
+  };
+  // ----------------------------------------
 
   return {
-    // expose the underlying partials registry for convenience / inspection
-    partials,
+    catalog,
 
-    // injectable registry
-    catalog: injectablesCatalog,
-    register: (inj: Supplier) => {
-      const id = inj.injectable.identity;
-      const found = injectablesCatalog.get(id);
-      if (found && init?.onDuplicate) {
-        const onDupe = init.onDuplicate(inj);
-        if (onDupe === "throw") {
+    register: (
+      partial: FencedBlockPartial,
+      onDuplicate?: (p: FencedBlockPartial) => "overwrite" | "throw" | "ignore",
+    ) => {
+      const found = catalog.get(partial.identity);
+      if (found && onDuplicate) {
+        const action = onDuplicate(partial);
+        if (action === "throw") {
           throw new Deno.errors.AlreadyExists(
-            `Injectable '${id}' defined already, not creating duplicate in fbInjectionsCollection`,
+            `Partial '${partial.identity}' already exists in fbPartialsCollection`,
           );
-        } else if (onDupe === "ignore") {
-          return;
         }
+        if (action === "ignore") return;
+        // overwrite on "overwrite"
       }
-      injectablesCatalog.set(id, inj);
-
-      // Ensure the injectable's underlying partial is also registered
-      partials.register({ partial: inj.injectable.partial });
-
+      catalog.set(partial.identity, partial);
       rebuildIndex();
     },
 
-    injectableSupplier: (identity: string) => injectablesCatalog.get(identity),
-    injectable: (identity: string) =>
-      injectablesCatalog.get(identity)?.injectable,
+    get: (identity: string) => catalog.get(identity),
 
+    /**
+     * Compose the best matching injectable (if any) around a prior render result.
+     * - Looks up the most specific injection by path (glob, fewer wildcards, longer literal).
+     * - Renders the wrapper with the same locals.
+     * - Prepends/appends/both according to the injection mode.
+     */
+    async compose(
+      result: PartialRender,
+      ctx?: {
+        path?: string;
+        onError?: (msg: string, content: string, err?: unknown) => string;
+      },
+    ): Promise<PartialRender> {
+      const wrapper = findInjectableForPath(ctx?.path);
+      if (!wrapper?.injection) return result;
+
+      // Render wrapper using same locals; fail closed if wrapper indicates invalid args.
+      let wrapperText: string;
+      try {
+        const wr = await wrapper.content(result.locals);
+        if (!wr.interpolate) {
+          const msg = `Injectable '${wrapper.identity}' failed to render`;
+          const text = ctx?.onError
+            ? ctx.onError(msg, result.content)
+            : `${msg}: wrapper reported invalid arguments`;
+          return { content: text, interpolate: false, locals: result.locals };
+        }
+        wrapperText = wr.content;
+      } catch (err) {
+        const msg = `Injectable '${wrapper.identity}' failed to render`;
+        const text = ctx?.onError
+          ? ctx.onError(msg, result.content, err)
+          : `${msg}: ${String(err)}`;
+        return { content: text, interpolate: false, locals: result.locals };
+      }
+
+      // Merge according to mode
+      const { mode } = wrapper.injection;
+      let merged = result.content;
+      if (mode === "prepend" || mode === "both") {
+        merged = `${wrapperText}\n${merged}`;
+      }
+      if (mode === "append" || mode === "both") {
+        merged = `${merged}\n${wrapperText}`;
+      }
+
+      return {
+        content: merged,
+        interpolate: result.interpolate,
+        locals: result.locals,
+      };
+    },
+
+    /** Utility: find the (injectable) partial chosen for a path */
     findInjectableForPath,
-    compose,
   };
 }

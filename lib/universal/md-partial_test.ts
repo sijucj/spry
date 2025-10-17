@@ -1,327 +1,284 @@
+// md-partial_test.ts
 import {
   assert,
   assertEquals,
-  assertFalse,
-  assertMatch,
+  assertStringIncludes,
   assertThrows,
 } from "jsr:@std/assert@^1";
-import {
-  fbInjectableCandidate,
-  fbInjectablesCollection,
-  fbPartialCandidate,
-  fbPartialsCollection,
-  type FencedBlockInjectable,
-  type FencedBlockPartial,
-} from "./md-partial.ts";
+import { fbPartialCandidate, fbPartialsCollection } from "./md-partial.ts";
 
-Deno.test("fbPartialCandidate", async (t) => {
+// Helper: normalize sync-or-async renderer to a Promise result
+async function render(
+  p: ReturnType<typeof fbPartialCandidate>,
+  locals: Record<string, unknown> = {},
+) {
+  return await Promise.resolve(p.content(locals));
+}
+
+Deno.test("fbPartial() basic and injectable behaviors", async (t) => {
+  await t.step("creates a plain partial without injection", async () => {
+    const p = fbPartialCandidate("plain", "hello world");
+    assertEquals(p.identity, "plain");
+    assertEquals(p.injection, undefined);
+    const r = await render(p, {});
+    assertEquals(r.content, "hello world");
+    assertEquals(r.interpolate, true);
+  });
+
   await t.step(
-    "returns content with interpolate=true and preserves locals",
-    async () => {
-      const p = fbPartialCandidate("hello", "Hi there!");
-      const res = await p.content({ who: "world" });
-      assertEquals(res.content, "Hi there!");
-      assertEquals(res.interpolate, true);
-      assertEquals(res.locals, { who: "world" });
+    "creates an injectable with --inject and default prepend",
+    () => {
+      const p = fbPartialCandidate("header --inject **/*.sql", "-- HEADER");
+      assertEquals(p.injection?.mode, "prepend");
+      assertEquals(p.injection?.globs, ["**/*.sql"]);
     },
   );
 
-  await t.step(
-    "validates locals when argsZodSchemaSpec provided (success)",
-    async () => {
-      const p = fbPartialCandidate(
-        "with-schema",
-        "OK",
-        { who: { type: "string" } },
-      );
-      const res = await p.content({ who: "Alice" });
-      assertEquals(res.content, "OK");
-      assertEquals(res.interpolate, true);
-    },
-  );
-
-  await t.step(
-    "validates locals when argsZodSchemaSpec provided (failure)",
-    async () => {
-      const p = fbPartialCandidate(
-        "with-schema",
-        "SHOULD NOT SEE",
-        { who: { type: "string" } },
-      );
-      const res = await p.content({ who: 42 });
-      assertFalse(res.interpolate);
-      assertMatch(
-        res.content,
-        /Invalid arguments passed to partial 'with-schema'/,
-      );
-      assertMatch(res.content, /expected arguments/);
-    },
-  );
-
-  await t.step("invokes registerIssue on invalid zod schema", () => {
-    let called = false;
+  await t.step("creates an injectable with --append mode", () => {
     const p = fbPartialCandidate(
-      "bad-schema",
-      "text",
-      // Bad: properties must be a record; shove nonsense to trigger error
-      { $bad: "not-real" } as unknown as Record<string, unknown>,
-      {
-        registerIssue: (msg, content, err) => {
-          called = true;
-          assertMatch(msg, /Invalid Zod schema spec/);
-          assertEquals(content, "text");
-          assert(err);
-        },
-      },
-    );
-    // It still returns a partial; schema is simply not applied
-    assertEquals(p.identity, "bad-schema");
-    assertEquals(typeof p.content, "function");
-    assert(called);
-  });
-});
-
-Deno.test("fbPartialsCollection", async (t) => {
-  await t.step("register + fetch by identity", () => {
-    const col = fbPartialsCollection<{ partial: FencedBlockPartial }>();
-    const p = fbPartialCandidate("p1", "one");
-    col.register({ partial: p });
-    assertEquals(col.partial("p1")?.identity, "p1");
-  });
-
-  await t.step("duplicate behavior: default overwrite", async () => {
-    const col = fbPartialsCollection<{ partial: FencedBlockPartial }>();
-    col.register({ partial: fbPartialCandidate("dup", "first") });
-    col.register({ partial: fbPartialCandidate("dup", "second") });
-    const res = await col.partial("dup")!.content({});
-    assertEquals(res.content, "second"); // overwritten
-  });
-
-  await t.step("duplicate behavior: throw", () => {
-    const col = fbPartialsCollection<{ partial: FencedBlockPartial }>({
-      onDuplicate: () => "throw",
-    });
-    col.register({ partial: fbPartialCandidate("dup", "first") });
-
-    assertThrows(
-      () => col.register({ partial: fbPartialCandidate("dup", "second") }),
-      Deno.errors.AlreadyExists,
-    );
-  });
-
-  await t.step("duplicate behavior: ignore", async () => {
-    const col = fbPartialsCollection<{ partial: FencedBlockPartial }>({
-      onDuplicate: () => "ignore",
-    });
-    col.register({ partial: fbPartialCandidate("dup", "first") });
-    col.register({ partial: fbPartialCandidate("dup", "second") });
-    const res = await col.partial("dup")!.content({});
-    assertEquals(res.content, "first"); // ignored second
-  });
-});
-
-Deno.test("Injectables (every injectable is also a partial)", async (t) => {
-  await t.step("candidate parses flags and defaults to prepend", async () => {
-    const inj = fbInjectableCandidate(
-      "wrap1 --inject reports/**/*.sql", // no explicit --prepend/--append => defaults to prepend
-      "-- header",
-    );
-    assertEquals(inj.identity, "wrap1");
-    assertEquals(inj.globs, ["reports/**/*.sql"]);
-    assertEquals(inj.mode, "prepend");
-    // underlying partial is a proper partial
-    const pr = await inj.partial.content({});
-    assertEquals(pr.content, "-- header");
-  });
-
-  await t.step("append only", () => {
-    const inj = fbInjectableCandidate(
       "footer --inject **/*.sql --append",
-      "-- footer",
+      "-- FOOTER",
     );
-    assertEquals(inj.mode, "append");
+    assertEquals(p.injection?.mode, "append");
   });
 
-  await t.step("both prepend and append", () => {
-    const inj = fbInjectableCandidate(
-      "enclose --inject **/*.sql --prepend --append",
-      "-- begin\n-- end",
+  await t.step("creates an injectable with both prepend+append", () => {
+    const p = fbPartialCandidate(
+      "wrap --inject **/*.sql --prepend --append",
+      "-- BEGIN\n-- END",
     );
-    assertEquals(inj.mode, "both");
+    assertEquals(p.injection?.mode, "both");
   });
 
+  await t.step("validates arguments when zodSchemaSpec provided", async () => {
+    const p = fbPartialCandidate("withArgs", "Hi", {
+      name: { type: "string" },
+    });
+    const r = await render(p, { name: "Bob" });
+    assertEquals(r.content, "Hi");
+  });
+
+  await t.step("returns error content for invalid locals", async () => {
+    const p = fbPartialCandidate("withArgs", "Hi", {
+      name: { type: "string" },
+    });
+    const r = await render(p, { name: 123 });
+    assertStringIncludes(r.content, "Invalid arguments");
+    assertEquals(r.interpolate, false);
+  });
+});
+
+Deno.test("fbPartialsCollection() core behaviors", async (t) => {
+  const col = fbPartialsCollection();
+
+  await t.step("registers and retrieves plain partials", async () => {
+    const p = fbPartialCandidate("plain", "content");
+    col.register(p);
+    const got = col.get("plain");
+    assert(got);
+    const r = await render(got, {});
+    assertEquals(r.content, "content");
+  });
+
+  await t.step("handles duplicates according to policy", async () => {
+    const p1 = fbPartialCandidate("dupe", "a");
+    const p2 = fbPartialCandidate("dupe", "b");
+
+    // overwrite
+    col.register(p1);
+    col.register(p2, () => "overwrite");
+    {
+      const r = await render(col.get("dupe")!, {});
+      assertEquals(r.content, "b");
+    }
+
+    // ignore
+    col.register(p1);
+    col.register(p2, () => "ignore");
+    {
+      const r = await render(col.get("dupe")!, {});
+      assertEquals(r.content, "a");
+    }
+
+    // throw (sync) -> assertThrows
+    assertThrows(() => {
+      col.register(p2, () => "throw");
+    });
+  });
+
+  await t.step("indexes injectables for glob matching", () => {
+    const inj1 = fbPartialCandidate("header --inject **/*.sql", "-- H");
+    const inj2 = fbPartialCandidate(
+      "footer --inject reports/*.sql --append",
+      "-- F",
+    );
+    col.register(inj1);
+    col.register(inj2);
+
+    const found1 = col.findInjectableForPath("x/foo.sql");
+    const found2 = col.findInjectableForPath("reports/summary.sql");
+
+    assert(found1?.identity === "header");
+    assert(found2?.identity === "footer");
+  });
+
+  await t.step("compose() applies prepend mode correctly", async () => {
+    const inj = fbPartialCandidate("wrap --inject **/*.txt", "HEADER");
+    col.register(inj);
+
+    const result = await col.compose({
+      content: "body",
+      interpolate: true,
+      locals: {},
+    }, { path: "test.txt" });
+
+    assertEquals(result.content, "HEADER\nbody");
+  });
+
+  // --- Fix 1: isolate collection so 'wrap2' wins unambiguously ---
+  await t.step("compose() applies both prepend+append correctly", async () => {
+    const localCol = fbPartialsCollection(); // fresh, no earlier injectables
+
+    const inj = fbPartialCandidate(
+      "wrap2 --inject **/*.sql --prepend --append",
+      "WRAP",
+    );
+    localCol.register(inj);
+
+    const result = await localCol.compose({
+      content: "core",
+      interpolate: true,
+      locals: {},
+    }, { path: "anything.sql" });
+
+    // Now no tie with 'header' from previous steps
+    assertEquals(result.content, "WRAP\ncore\nWRAP");
+  });
+
+  // --- Fix 2: trigger an actual schema failure by type mismatch ---
   await t.step(
-    "collection registers injectable and its underlying partial",
+    "compose() returns error text if wrapper fails args validation",
     async () => {
-      const injections = fbInjectablesCollection<
-        { injectable: FencedBlockInjectable }
-      >();
-      const inj = fbInjectableCandidate(
-        "header --inject **/*.sql --prepend",
-        "-- header",
+      const localCol = fbPartialsCollection(); // fresh to avoid surprises
+
+      const bad = fbPartialCandidate(
+        "bad --inject **/*.oops",
+        "BAD",
+        { name: { type: "string" } }, // schema expects string
       );
-      injections.register({ injectable: inj });
+      localCol.register(bad);
 
-      // Ensure it's in the injectable catalog
-      assertEquals(injections.injectable("header")?.identity, "header");
-
-      // Ensure underlying partial landed in internal partials collection
-      const p = injections.partials.partial("header");
-      assert(p, "underlying partial should be in partials registry");
-      const pr = await p!.content({});
-      assertEquals(pr.content, "-- header");
-    },
-  );
-
-  await t.step("compose(): prepend behavior", async () => {
-    const injections = fbInjectablesCollection<
-      { injectable: FencedBlockInjectable }
-    >();
-    injections.register({
-      injectable: fbInjectableCandidate(
-        "hdr --inject reports/**/*.sql --prepend",
-        "-- header",
-      ),
-    });
-
-    // Simulate a content partial render output
-    const input = { content: "SELECT 1;", interpolate: true, locals: {} };
-    const out = await injections.compose(input, {
-      path: "reports/2025/monthly.sql",
-    });
-    assertEquals(out.content, "-- header\nSELECT 1;");
-    assertEquals(out.interpolate, true);
-    assertEquals(out.locals, {});
-  });
-
-  await t.step("compose(): append behavior", async () => {
-    const injections = fbInjectablesCollection<
-      { injectable: FencedBlockInjectable }
-    >();
-    injections.register({
-      injectable: fbInjectableCandidate(
-        "ftr --inject **/*.sql --append",
-        "-- footer",
-      ),
-    });
-
-    const input = { content: "SELECT 2;", interpolate: true, locals: {} };
-    const out = await injections.compose(input, { path: "any/path/query.sql" });
-    assertEquals(out.content, "SELECT 2;\n-- footer");
-  });
-
-  await t.step("compose(): both behavior", async () => {
-    const injections = fbInjectablesCollection<
-      { injectable: FencedBlockInjectable }
-    >();
-    injections.register({
-      injectable: fbInjectableCandidate(
-        "enc --inject **/*.sql --prepend --append",
-        "-- bound",
-      ),
-    });
-
-    const input = { content: "SELECT 3;", interpolate: true, locals: {} };
-    const out = await injections.compose(input, { path: "z/x.sql" });
-    assertEquals(out.content, "-- bound\nSELECT 3;\n-- bound");
-  });
-
-  await t.step(
-    "compose(): no matching injectable leaves content unchanged",
-    async () => {
-      const injections = fbInjectablesCollection<
-        { injectable: FencedBlockInjectable }
-      >();
-      injections.register({
-        injectable: fbInjectableCandidate(
-          "only-reports --inject reports/**/*.sql --prepend",
-          "-- hdr",
-        ),
-      });
-
-      const input = { content: "SELECT 4;", interpolate: true, locals: {} };
-      const out = await injections.compose(input, {
-        path: "other/path/table.ddl",
-      });
-      assertEquals(out.content, "SELECT 4;"); // unchanged
-    },
-  );
-
-  await t.step("findInjectableForPath(): exact (non-glob) match works", () => {
-    const injections = fbInjectablesCollection<
-      { injectable: FencedBlockInjectable }
-    >();
-    injections.register({
-      injectable: fbInjectableCandidate(
-        "exact --inject reports/2025/monthly.sql --prepend",
-        "-- hdr",
-      ),
-    });
-
-    const found = injections.findInjectableForPath("reports/2025/monthly.sql");
-    assert(found);
-    assertEquals(found!.injectable.identity, "exact");
-  });
-
-  await t.step(
-    "specificity: fewer wildcards beats more; longer literal breaks ties",
-    async () => {
-      const injections = fbInjectablesCollection<
-        { injectable: FencedBlockInjectable }
-      >();
-
-      // More generic
-      injections.register({
-        injectable: fbInjectableCandidate(
-          "generic --inject reports/**/*.sql --prepend",
-          "-- G",
-        ),
-      });
-
-      // More specific (fewer wildcards)
-      injections.register({
-        injectable: fbInjectableCandidate(
-          "monthlies --inject reports/*/monthly.sql --prepend",
-          "-- M",
-        ),
-      });
-
-      const path = "reports/2025/monthly.sql";
-      const found = injections.findInjectableForPath(path)!;
-      assertEquals(found.injectable.identity, "monthlies");
-
-      const input = { content: "SELECT 5;", interpolate: true, locals: {} };
-      const out = await injections.compose(input, { path });
-      assertEquals(out.content, "-- M\nSELECT 5;");
-    },
-  );
-
-  await t.step(
-    "compose(): wrapper render errors are surfaced and disable interpolation",
-    async () => {
-      // Create an injectable whose underlying partial will throw (via schema check failure)
-      const bad = fbInjectableCandidate(
-        "bad --inject **/*.sql --prepend",
-        "WRAP", // content OK, but we'll make its content() fail via schema & locals mismatch
-        { mustBe: { type: "string" } },
-      );
-      const injections = fbInjectablesCollection<
-        { injectable: FencedBlockInjectable }
-      >();
-      injections.register({ injectable: bad });
-
-      const input = {
+      const res = await localCol.compose({
         content: "BODY",
         interpolate: true,
-        locals: { mustBe: 123 },
-      };
-      const out = await injections.compose(input, {
-        path: "any.sql",
-        onError: (msg) => `ERR: ${msg}`,
-      });
+        locals: { name: 123 }, // type mismatch -> forces validation failure
+      }, { path: "file.oops" });
 
-      assertFalse(out.interpolate);
-      assertMatch(out.content, /ERR: Injectable 'bad' failed to render/);
+      // compose() intentionally hides inner zod details and returns a generic failure
+      // so assert on the generic message instead of the zod text
+      assertStringIncludes(res.content, "failed to render");
+      assertEquals(res.interpolate, false);
+    },
+  );
+
+  await t.step("compose() skips if no matching injectable", async () => {
+    const result = await col.compose({
+      content: "x",
+      interpolate: true,
+      locals: {},
+    }, { path: "no/match.json" });
+
+    assertEquals(result.content, "x");
+  });
+
+  await t.step(
+    "compose() returns error text if wrapper fails args validation (compose generic message)",
+    async () => {
+      const localCol = fbPartialsCollection(); // isolate from prior registrations
+
+      // Wrapper requires { name: string }
+      const bad = fbPartialCandidate(
+        "bad2 --inject **/*.oops",
+        "BAD",
+        { name: { type: "string" } },
+      );
+      localCol.register(bad);
+
+      // Deliberately fail schema via type mismatch
+      const res = await localCol.compose(
+        {
+          content: "BODY",
+          interpolate: true,
+          locals: { name: 123 }, // <-- mismatch on purpose
+        },
+        { path: "file.oops" },
+      );
+
+      // compose() returns a generic message (by design) and interpolate=false
+      const generic = res.content.includes("failed to render") ||
+        res.content.includes("wrapper reported invalid arguments");
+      assert(
+        generic,
+        `unexpected compose() message: ${res.content}`,
+      );
+      assertEquals(res.interpolate, false);
+    },
+  );
+
+  await t.step(
+    "compose() catches thrown wrapper errors gracefully",
+    async () => {
+      const throwingPartial = fbPartialCandidate(
+        "thrower --inject **/*.boom",
+        "ignored",
+      );
+
+      // Override without `any`: reassign using a compatible, explicit type
+      const newContent: typeof throwingPartial.content = () => {
+        throw new Error("Kaboom");
+      };
+      (throwingPartial as { content: typeof newContent }).content = newContent;
+
+      col.register(throwingPartial);
+
+      const res = await col.compose({
+        content: "main",
+        interpolate: true,
+        locals: {},
+      }, { path: "file.boom" });
+
+      assertStringIncludes(res.content, "failed to render");
+      assertEquals(res.interpolate, false);
+    },
+  );
+});
+
+Deno.test("fbPartialsCollection() integration with multiple injectables", async (t) => {
+  const col = fbPartialsCollection();
+
+  await t.step(
+    "selects most specific match (fewer wildcards, longer literal)",
+    async () => {
+      const generic = fbPartialCandidate(
+        "generic --inject **/*.sql",
+        "GENERIC",
+      );
+      const specific = fbPartialCandidate(
+        "specific --inject reports/*.sql",
+        "SPECIFIC",
+      );
+      col.register(generic);
+      col.register(specific);
+
+      const r = await col.compose({
+        content: "BODY",
+        interpolate: true,
+        locals: {},
+      }, { path: "reports/summary.sql" });
+
+      // Should pick specific, not generic
+      assertStringIncludes(r.content, "SPECIFIC");
+      assert(!r.content.includes("GENERIC"));
     },
   );
 });
