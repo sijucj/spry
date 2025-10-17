@@ -315,7 +315,7 @@ Deno.test("executeDAG", async (t) => {
   // helper inside tests
   const ok = <C>(ctx: C) => ({
     ctx,
-    ok: true,
+    success: true,
     exitCode: 0,
     startedAt: new Date(),
     endedAt: new Date(),
@@ -398,7 +398,7 @@ Deno.test("executeDAG", async (t) => {
         summary.section.map((f) => f.taskId),
         ["A", "B", "C"],
       );
-      for (const f of summary.section) assertEquals(f.result.ok, true);
+      for (const f of summary.section) assertEquals(f.result.success, true);
 
       // Inside-execute section sizes before each task ran
       assertEquals(seenLen.get("A"), 0);

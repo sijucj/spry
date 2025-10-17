@@ -13,13 +13,13 @@ export type TaskExecutionResult<
 > =
   & {
     ctx: Context;
-    ok: boolean;
+    success: boolean;
     exitCode: number;
     startedAt: Date;
     endedAt: Date;
   }
-  & ({ ok: true; stdout?: () => StdOut } | {
-    ok: false;
+  & ({ success: true; stdout?: () => StdOut } | {
+    success: false;
     stderr?: () => StdErr;
     error?: unknown;
   });
@@ -118,7 +118,7 @@ function makeResult<Context>(
   const now = new Date();
   return {
     ctx,
-    ok,
+    success: ok,
     exitCode: ok ? 0 : (extra?.exitCode ?? 1),
     startedAt: extra?.startedAt ?? now,
     endedAt: extra?.endedAt ?? now,
@@ -247,7 +247,7 @@ export async function executeDAG<
   }
 
   const endedAt = new Date();
-  const failedCount = section.filter((f) => !f.result.ok).length;
+  const failedCount = section.filter((f) => !f.result.success).length;
 
   bus?.emit("run:end", {
     ctx,

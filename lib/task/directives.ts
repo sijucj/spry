@@ -308,8 +308,7 @@ export class TaskDirectives<
             return true;
 
           case "TASK": {
-            const unsafeCell = cell as Any;
-            unsafeCell.taskDirective = td;
+            (cell as Any).taskDirective = td;
             if (isTaskDirectiveSupplier(cell)) {
               this.tasks.push(cell as TaskCell<Provenance>);
             } else {
