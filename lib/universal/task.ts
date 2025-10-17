@@ -79,7 +79,10 @@
  */
 import { eventBus } from "../universal/event-bus.ts";
 
-export type Task = { taskId: () => string; taskDeps: () => string[] };
+export type Task = {
+  taskId: () => string;
+  taskDeps?: () => string[] | undefined;
+};
 
 export interface TaskExecutionPlan<T extends Task> {
   /** Tasks in the order they were defined in the notebook */
@@ -162,7 +165,7 @@ export function executionPlan<T extends Task>(
   const normDeps: Record<string, string[]> = {};
   for (const task of tasks) {
     const id = task.taskId();
-    const raw = task.taskDeps() ?? [];
+    const raw = task.taskDeps?.() ?? [];
     const seen = new Set<string>();
     const list: string[] = [];
     for (const d of raw) {
