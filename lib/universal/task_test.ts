@@ -542,3 +542,56 @@ Deno.test("executeDAG()", async (t) => {
     },
   );
 });
+
+// === More planning edge cases ===
+Deno.test("executionPlan()", async (t) => {
+  await t.step(
+    "mixed missing + existing deps only count existing in indegree",
+    () => {
+      // a exists; two others are missing
+      const tasks = [T("a"), T("t", ["a", "missing1", "missing2"])];
+      const plan = executionPlan(tasks);
+
+      assertEquals(plan.missingDeps, { t: ["missing1", "missing2"] });
+      assertEquals(plan.indegree["t"], 1); // only 'a' contributes
+      assertEquals(plan.edges, [["a", "t"]]);
+      assertEquals(plan.layers, [["a"], ["t"]]);
+      assertEquals(plan.unresolved, []);
+    },
+  );
+
+  await t.step(
+    "multiple disconnected components are stable by definition order",
+    () => {
+      // Component A: a1 -> a2
+      // Component B: b1 -> b2
+      // Interleaved definition order should control both layers and dag
+      const tasks = [T("a1"), T("b1"), T("a2", ["a1"]), T("b2", ["b1"])];
+      const plan = executionPlan(tasks);
+
+      assertEquals(plan.layers, [["a1", "b1"], ["a2", "b2"]]);
+      assertEquals(plan.dag.map((t) => t.taskId()), ["a1", "b1", "a2", "b2"]);
+      assertEquals(plan.edges, [
+        ["a1", "a2"],
+        ["b1", "b2"],
+      ]);
+    },
+  );
+
+  await t.step("very long chain plans correctly and remains stable", () => {
+    const N = 200;
+    const tasks = Array.from(
+      { length: N },
+      (_, i) => T(`n${i}`, i === 0 ? [] : [`n${i - 1}`]),
+    );
+    const plan = executionPlan(tasks);
+
+    // ids and dag should match exactly; each layer has a single node
+    assertEquals(plan.ids.length, N);
+    assertEquals(plan.dag.map((t) => t.taskId()), plan.ids);
+    assertEquals(plan.layers.length, N);
+    assertEquals(plan.layers[0], ["n0"]);
+    assertEquals(plan.layers[N - 1], [`n${N - 1}`]);
+    assertEquals(plan.unresolved, []);
+  });
+});
