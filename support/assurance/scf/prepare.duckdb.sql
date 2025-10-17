@@ -105,11 +105,11 @@ WITH sheets(sheet_name, table_name) AS (
     ('Authoritative Sources',      'scf_authoritative_source'),
     ('Assessment Objectives 2025.3','scf_assessment_objective'),
     ('Evidence Request List 2025.3','scf_evidence_request'),
-    ('Data Privacy Mgmt Principles','scf_data_privacy_mgmt_principle')
-    -- Optional / pending sheets:
-    -- ,('Threat Catalog',          'scf_threat_catalog')
-    -- ,('Risk Catalog',            'scf_risk_catalog')
-    -- ,('SCF Domains & Principles','scf_domain_principle')
+    ('Data Privacy Mgmt Principles','scf_data_privacy_mgmt_principle'),
+    ('SCF Domains & Principles','scf_domain_principle'),
+    ('Threat Catalog',          'scf_threat_catalog'),
+    ('Risk Catalog',            'scf_risk_catalog')
+    
 )
 SELECT
   getvariable('scf_xls_source') AS scf_xls_source,
@@ -145,6 +145,12 @@ CREATE TABLE "scf_data_privacy_mgmt_principle" AS
 SELECT getvariable('scf_xls_source') AS scf_xls_source, *
 FROM read_xlsx(getvariable('scf_xls_source'),
                sheet='Data Privacy Mgmt Principles',
+               all_varchar = true);
+              
+CREATE TABLE "scf_domain_principle" AS
+SELECT getvariable('scf_xls_source') AS scf_xls_source, *
+FROM read_xlsx(getvariable('scf_xls_source'),
+               sheet='SCF Domains & Principles',
                all_varchar = true);
 
 CREATE VIEW scf_compliance_regime_control_column AS
@@ -235,17 +241,75 @@ JOIN sc
   ON sc.rid = u.rid
 WHERE trim(coalesce(u.value, '')) <> '';
 
--- TODO: figure out why threat catalog does not load (the sheet seems to have lots of formatting)
--- CREATE TABLE "scf_threat_catalog" AS
---     SELECT * FROM read_xlsx(getvariable('scf_xls_source'), sheet='Threat Catalog', all_varchar = true);
+-- Correctly import "Threat Catalog" by skipping the complex header and renaming columns
+CREATE TABLE "scf_threat_catalog" AS
+WITH raw_threat_catalog AS (
+    SELECT
+        ROW_NUMBER() OVER () as row_num,
+        A AS "Threat Grouping",
+        B AS "Threat #",
+        C AS "Threat*",
+        D AS "Threat Description",
+        E AS "≥ 5% of pre-tax income",
+        F AS "≥ 0.5% of total assets",
+        G AS "≥ 1% of total equity",
+        H AS "≥ 0.5% of total revenue"
+    FROM read_xlsx(
+        getvariable('scf_xls_source'),
+        sheet='Threat Catalog',
+        range='A8:H',
+        header=false,
+        all_varchar=true
+    )
+)
+SELECT
+    getvariable('scf_xls_source') AS scf_xls_source,
+    LAST_VALUE("Threat Grouping" IGNORE NULLS) OVER (ORDER BY row_num) as "Threat Grouping",
+    "Threat #",
+    "Threat Description",
+    "≥ 5% of pre-tax income",
+    "≥ 0.5% of total assets",
+    "≥ 1% of total equity",
+    "≥ 0.5% of total revenue"
+FROM raw_threat_catalog
+WHERE trim(coalesce("Threat #", '')) <> '';
 
--- TODO: figure out why risk catalog does not load (the sheet seems to have lots of formatting)
--- CREATE TABLE "scf_risk_catalog" AS
---     SELECT * FROM read_xlsx(getvariable('scf_xls_source'), sheet='Risk Catalog', all_varchar = true);
+CREATE TABLE "scf_risk_catalog" AS
+WITH raw_risk_catalog AS (
+    SELECT
+        ROW_NUMBER() OVER () as row_num,
+        A AS "Risk Grouping",
+        B AS "Risk #",
+        C AS "Risk*",
+        D AS "Description of Possible Risk Due To Control Deficiency",
+        E AS "NIST CSF Function",
+        F AS "≥ 5% of pre-tax income",
+        G AS "≥ 0.5% of total assets",
+        H AS "≥ 1% of total equity",
+        I AS "≥ 0.5% of total revenue"
+    FROM read_xlsx(
+        getvariable('scf_xls_source'),
+        sheet='Risk Catalog',
+        range='A8:I',
+        header=false,
+        all_varchar=true
+    )
+)
+SELECT
+    getvariable('scf_xls_source') AS scf_xls_source,
+    LAST_VALUE("Risk Grouping" IGNORE NULLS) OVER (ORDER BY row_num) as "Risk Grouping",
+    "Risk #",
+    "Risk*",
+    "Description of Possible Risk Due To Control Deficiency",
+    "NIST CSF Function",
+    "≥ 5% of pre-tax income",
+    "≥ 0.5% of total assets",
+    "≥ 1% of total equity",
+    "≥ 0.5% of total revenue"
+FROM raw_risk_catalog
+WHERE trim(coalesce("Risk #", '')) <> '';
 
--- TODO: DuckDB errors out saying "SCF Domains &amp; Principles" not found which means it's encoding '&'
--- CREATE TABLE "scf_domain_principle" AS
---     SELECT * FROM read_xlsx(getvariable('scf_xls_source'), sheet='SCF Domains & Principles', all_varchar = true);
+
 
 INSTALL sqlite; LOAD sqlite;
 
@@ -261,14 +325,15 @@ DROP TABLE IF EXISTS scf."scf_evidence_request";
 DROP TABLE IF EXISTS scf."scf_data_privacy_mgmt_principle";
 DROP TABLE IF EXISTS scf."scf_xls_sheet";
 DROP TABLE IF EXISTS scf."scf_compliance_regime_control_column";
-DROP TABLE IF EXISTS scf."scf_regime_control";
+DROP VIEW IF EXISTS scf."scf_regime_control";
+DROP TABLE IF EXISTS scf."scf_regime_control_unpivoted";
 
 CREATE TABLE scf."scf_control" AS SELECT * FROM "scf_control";
--- CREATE TABLE scf."scf_domain_principle" AS SELECT * FROM "scf_domain_principle";
+CREATE TABLE scf."scf_domain_principle" AS SELECT * FROM "scf_domain_principle";
 CREATE TABLE scf."scf_authoritative_source" AS SELECT * FROM "scf_authoritative_source";
 CREATE TABLE scf."scf_assessment_objective" AS SELECT * FROM "scf_assessment_objective";
--- CREATE TABLE scf."scf_threat_catalog" AS SELECT * FROM "scf_threat_catalog";
--- CREATE TABLE scf."scf_risk_catalog" AS SELECT * FROM "scf_risk_catalog";
+CREATE TABLE scf."scf_threat_catalog" AS SELECT * FROM "scf_threat_catalog";
+CREATE TABLE scf."scf_risk_catalog" AS SELECT * FROM "scf_risk_catalog";
 CREATE TABLE scf."scf_evidence_request" AS SELECT * FROM "scf_evidence_request";
 CREATE TABLE scf."scf_data_privacy_mgmt_principle" AS SELECT * FROM "scf_data_privacy_mgmt_principle";
 CREATE TABLE scf."scf_xls_sheet" AS SELECT * FROM "scf_xls_sheet";

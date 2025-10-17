@@ -11,27 +11,10 @@ import { Playbook, PlaybookCodeCell } from "../universal/md-playbook.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-export const spryCodeCellLang = "spry" as const;
-
-// Supports https://docs.deno.com/runtime/reference/cli/task/
-export const denoTaskCodeCellLang = "deno-task" as const;
-
-// Supports any #! language
-export const shCodeCellLang = "sh" as const;
-export const bashCodeCellLang = "bash" as const;
-
 export const shebangSchema = z.union([
   z.object({ shebang: z.string(), source: z.string() }),
   z.literal(false),
 ]);
-
-export const safeParseShebang = (source: string) =>
-  (source.startsWith("#!")
-    ? {
-      shebang: source.split("\n", 1)[0],
-      source: source.slice(source.indexOf("\n") + 1),
-    }
-    : false) satisfies z.infer<typeof shebangSchema>;
 
 /** Schema for typed TaskDirective from `Cell.info?` property */
 export const taskSchema = z.discriminatedUnion("strategy", [
@@ -75,49 +58,177 @@ export const isTaskDirectiveSupplier = (
     ? true
     : false;
 
-// --- Add near other exports ---
 export type TaskCell<Provenance> = PlaybookCodeCell<Provenance> & {
   taskDirective: Extract<TaskDirective, { nature: "TASK" }>;
 };
 
-export interface TaskExecutionPlan<Provenance> {
-  /** Tasks in the order they were defined in the notebook */
-  readonly tasks: readonly TaskCell<Provenance>[];
-  /** Task identities in definition order (convenience) */
-  readonly ids: readonly string[];
-  /** Quick lookup by id */
-  readonly byId: Readonly<Record<string, TaskCell<Provenance>>>;
-  /** Declared deps that don’t exist as tasks (by task id) */
-  readonly missingDeps: Readonly<Record<string, string[]>>;
-  /** Adjacency: dep -> [tasks that depend on it] (existing deps only) */
-  readonly adjacency: Readonly<Record<string, string[]>>;
-  /** In-degree per node considering only existing deps */
-  readonly indegree: Readonly<Record<string, number>>;
-  /** All edges (dep -> task) for existing deps, definition-order stable */
-  readonly edges: readonly [string, string][];
-  /**
-   * Kahn “waves” (levels). Each inner array lists task ids that
-   * can run in parallel at that level (all prereqs satisfied).
-   */
-  readonly layers: readonly string[][];
-  /** Tasks in computed execution order (topological; respects deps) */
-  readonly dag: readonly TaskCell<Provenance>[];
-  /**
-   * Nodes left with in-degree > 0 after Kahn’s algorithm.
-   * Non-empty means a cycle or unmet dependency chain.
-   */
-  readonly unresolved: readonly string[];
+export type TaskDirectiveInspector<
+  Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
+  CellAttrs extends Record<string, unknown> = Record<string, unknown>,
+  I extends Issue<Provenance> = Issue<Provenance>,
+> = (
+  ctx: {
+    cell: PlaybookCodeCell<Provenance, CellAttrs>;
+    pb: Playbook<Provenance, Frontmatter, CellAttrs, I>;
+    registerIssue: (message: string, error?: unknown) => void;
+  },
+) => TaskDirective | false;
+
+function parsedInfo(candidate?: string) {
+  if (!candidate) return false;
+  const info = candidate?.trim();
+  if (info.length == 0) return false;
+  const [first, ...rest] = info.split(/\s+/);
+  const remainder = rest.join(" ").trim();
+  return {
+    first,
+    rest,
+    remainder,
+  };
+}
+
+export function partialsInspector<
+  Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
+  CellAttrs extends Record<string, unknown> = Record<string, unknown>,
+  I extends Issue<Provenance> = Issue<Provenance>,
+>(): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
+  return ({ cell, registerIssue }) => {
+    const pi = parsedInfo(cell.info);
+    if (pi && pi.first.toLocaleUpperCase() == "PARTIAL") {
+      const fbc = {
+        nature: "PARTIAL",
+        partial: fbPartialCandidate(pi.remainder, cell.source, cell.attrs, {
+          registerIssue,
+        }),
+      };
+      const parsed = taskDirectiveSchema.safeParse(fbc);
+      if (parsed.success) {
+        return parsed.data;
+      } else {
+        registerIssue(
+          `Zod error parsing task directive '${cell.info}': ${
+            z.prettifyError(parsed.error)
+          }`,
+          parsed.error,
+        );
+      }
+    }
+    return false;
+  };
+}
+
+export const safeParseShebang = (source: string) =>
+  (source.startsWith("#!")
+    ? {
+      shebang: source.split("\n", 1)[0],
+      source: source.slice(source.indexOf("\n") + 1),
+    }
+    : false) satisfies z.infer<typeof shebangSchema>;
+
+export const spryCodeCellLang = "spry" as const;
+export type SpryCodeCellLang = typeof spryCodeCellLang;
+
+export function spryParser<
+  Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
+  CellAttrs extends Record<string, unknown> = Record<string, unknown>,
+  I extends Issue<Provenance> = Issue<Provenance>,
+>(
+  isValidLanguage: (cell: PlaybookCodeCell<Provenance, CellAttrs>) => boolean =
+    (cell) => cell.language == spryCodeCellLang,
+): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
+  return ({ cell }) => {
+    if (!isValidLanguage(cell)) return false;
+    const pi = parsedInfo(cell.info);
+    if (!pi) return false; // TODO: should we warn about this or ignore it?
+    return {
+      nature: "TASK",
+      identity: pi.first,
+      source: cell.source,
+      task: {
+        strategy: "Cliffy.Command",
+        command: new Command(), // need `action` to perform task
+      },
+    } satisfies TaskDirective;
+  };
+}
+
+// Supports https://docs.deno.com/runtime/reference/cli/task/
+export const denoTaskCodeCellLang = "deno-task" as const;
+export type DenoTaskCodeCellLang = typeof denoTaskCodeCellLang;
+
+export function denoTaskParser<
+  Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
+  CellAttrs extends Record<string, unknown> = Record<string, unknown>,
+  I extends Issue<Provenance> = Issue<Provenance>,
+>(
+  isValidLanguage: (cell: PlaybookCodeCell<Provenance, CellAttrs>) => boolean =
+    (cell) => cell.language == denoTaskCodeCellLang,
+): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
+  return ({ cell }) => {
+    if (!isValidLanguage(cell)) return false;
+    const pi = parsedInfo(cell.info);
+    if (!pi) return false; // TODO: should we warn about this or ignore it?
+    return {
+      nature: "TASK",
+      identity: pi.first,
+      source: cell.source,
+      task: { strategy: "Deno.Task" },
+    };
+  };
+}
+
+// Supports any #! language
+export const bashCodeCellLang = "bash" as const;
+export const shCodeCellLang = "sh" as const;
+export const spawnableCellLangs = [shCodeCellLang, bashCodeCellLang] as const;
+export type SpawnableCellLang = typeof spawnableCellLangs[number];
+
+export function spawnableParser<
+  Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
+  CellAttrs extends Record<string, unknown> = Record<string, unknown>,
+  I extends Issue<Provenance> = Issue<Provenance>,
+>(
+  isValidLanguage: (cell: PlaybookCodeCell<Provenance, CellAttrs>) => boolean =
+    (cell) =>
+      spawnableCellLangs.find((lang) => lang == cell.language) ? true : false,
+): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
+  return ({ cell }) => {
+    if (!isValidLanguage(cell)) return false;
+    const pi = parsedInfo(cell.info);
+    if (!pi) return false; // TODO: should we warn about this or ignore it?
+    const shebang = safeParseShebang(cell.source);
+    return {
+      nature: "TASK",
+      identity: pi.first,
+      source: cell.source,
+      task: {
+        strategy: "Deno.Command",
+        command: "bash",
+        shebang,
+      },
+    };
+  };
 }
 
 export class TaskDirectives<
   Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
   CellAttrs extends Record<string, unknown> = Record<string, unknown>,
   I extends Issue<Provenance> = Issue<Provenance>,
 > {
+  readonly tdInspectors: TaskDirectiveInspector<
+    Provenance,
+    Frontmatter,
+    CellAttrs,
+    I
+  >[] = [];
   readonly issues: I[] = [];
-  readonly tasks: (PlaybookCodeCell<Provenance> & {
-    taskDirective: Extract<TaskDirective, { nature: "TASK" }>;
-  })[] = [];
+  readonly tasks: TaskCell<Provenance>[] = [];
 
   constructor(
     readonly partials: ReturnType<
@@ -125,7 +236,34 @@ export class TaskDirectives<
         Extract<TaskDirective, { nature: "PARTIAL" }>
       >
     >,
+    tdInspectors?: TaskDirectiveInspector<
+      Provenance,
+      Frontmatter,
+      CellAttrs,
+      I
+    >[],
   ) {
+    if (tdInspectors) this.use(...tdInspectors);
+    else {
+      this.use(
+        partialsInspector(), // put this first
+        denoTaskParser(),
+        spawnableParser(),
+        spryParser(),
+      );
+    }
+  }
+
+  use(
+    ...tdInspectors: TaskDirectiveInspector<
+      Provenance,
+      Frontmatter,
+      CellAttrs,
+      I
+    >[]
+  ) {
+    this.tdInspectors.push(...tdInspectors);
+    return this;
   }
 
   partial(name: string) {
@@ -138,229 +276,52 @@ export class TaskDirectives<
 
   register(
     cell: PlaybookCodeCell<Provenance, CellAttrs>,
-    pb: Playbook<Provenance, Record<string, unknown>, CellAttrs, I>,
-    opts: {
-      onEmptyInfo?: (cell: PlaybookCodeCell<Provenance, CellAttrs>) => void;
-      onUnknown?: (cell: PlaybookCodeCell<Provenance, CellAttrs>) => void;
+    pb: Playbook<Provenance, Frontmatter, CellAttrs, I>,
+    opts?: {
+      onUnknown?: (
+        cell: PlaybookCodeCell<Provenance, CellAttrs>,
+        pb: Playbook<Provenance, Frontmatter, CellAttrs, I>,
+      ) => void;
     },
   ) {
-    if (isTaskDirectiveSupplier(cell)) return true;
-
-    let info = cell.info;
-    info = info?.trim() ?? "";
-    if (info.length == 0) {
-      opts?.onEmptyInfo?.(cell);
-      return false;
-    }
-
-    const [first, ...rest] = info.split(/\s+/);
-    const remainder = rest.join(" ").trim();
-
-    let candidate: unknown;
-    switch (first.toLocaleUpperCase()) {
-      case "PARTIAL": {
-        candidate = {
-          nature: "PARTIAL",
-          partial: fbPartialCandidate(remainder, cell.source, cell.attrs, {
-            registerIssue: (message, error) =>
-              this.registerIssue({
-                kind: "fence-issue",
-                disposition: "error",
-                error,
-                message,
-                provenance: pb.notebook.provenance,
-                startLine: cell.startLine,
-                endLine: cell.endLine,
-              } as I),
-          }),
-        };
-        break;
-      }
-
-      default: {
-        const shebang = safeParseShebang(cell.source);
-        let cellLang = cell.language;
-        if (
-          (cellLang == shCodeCellLang || cellLang == bashCodeCellLang) &&
-          !shebang
-        ) cellLang = denoTaskCodeCellLang;
-
-        switch (cellLang) {
-          case spryCodeCellLang: {
-            candidate = {
-              nature: "TASK",
-              identity: first,
-              source: cell.source,
-              task: {
-                strategy: "Cliffy.Command",
-                command: new Command(), // need `action` to perform task
-              },
-            } satisfies TaskDirective;
-
-            break;
-          }
-
-          case denoTaskCodeCellLang: {
-            candidate = {
-              nature: "TASK",
-              identity: first,
-              source: cell.source,
-              task: { strategy: "Deno.Task" },
-            } satisfies TaskDirective;
-            break;
-          }
-
-          case shCodeCellLang:
-          case bashCodeCellLang: {
-            candidate = {
-              nature: "TASK",
-              identity: first,
-              source: cell.source,
-              task: {
-                strategy: "Deno.Command",
-                command: "bash",
-                shebang,
-              },
-            } satisfies TaskDirective;
-            break;
-          }
-
-          default: {
-            opts?.onUnknown?.(cell);
-            return false;
-          }
-        }
-        break;
-      }
-    }
-
-    const parsed = z.safeParse(taskDirectiveSchema, candidate);
-    if (parsed.success) {
-      (cell as Any).taskDirective = parsed.data;
-      if (isTaskDirectiveSupplier(cell)) {
-        if (cell.taskDirective.nature === "PARTIAL") {
-          this.partials.register(cell.taskDirective);
-        } else {
-          this.tasks.push(
-            cell as (PlaybookCodeCell<Provenance> & {
-              taskDirective: Extract<TaskDirective, { nature: "TASK" }>;
-            }),
-          );
-        }
-        return true;
-      } else {
-        throw Error("This should never happen, some compiler or typing error");
-      }
-    } else {
-      this.registerIssue({
-        kind: "fence-issue",
-        disposition: "error",
-        error: parsed.error,
-        message: `Zod error parsing task directive '${cell.info}': ${
-          z.prettifyError(parsed.error)
-        }`,
-        provenance: pb.notebook.provenance,
-        startLine: cell.startLine,
-        endLine: cell.endLine,
-      } as I);
-    }
-
-    return false;
-  }
-
-  plan(): TaskExecutionPlan<Provenance> {
-    // Snapshot in-definition order
-    const tasks = [...this.tasks] as const;
-
-    // Index, ids, and lookup
-    const ids = tasks.map((t) => t.taskDirective.identity);
-    const byId: Record<string, TaskCell<Provenance>> = Object.fromEntries(
-      tasks.map((t) => [t.taskDirective.identity, t as TaskCell<Provenance>]),
-    );
-
-    // Normalize deps per task (keep order, dedupe while preserving first occurrence)
-    const normDeps: Record<string, string[]> = {};
-    for (const t of tasks) {
-      const id = t.taskDirective.identity;
-      const raw = t.taskDirective.deps ?? [];
-      const seen = new Set<string>();
-      const list: string[] = [];
-      for (const d of raw) {
-        if (!seen.has(d)) {
-          seen.add(d);
-          list.push(d);
-        }
-      }
-      normDeps[id] = list;
-    }
-
-    // Missing deps (declared but not defined as tasks)
-    const missingDeps: Record<string, string[]> = {};
-    for (const id of ids) {
-      const miss = normDeps[id].filter((d) => !(d in byId));
-      if (miss.length) missingDeps[id] = miss;
-    }
-
-    // Build graph using only existing deps: edge (dep) -> (task)
-    const adjacency: Record<string, string[]> = {};
-    const indegree: Record<string, number> = {};
-    for (const id of ids) {
-      adjacency[id] = [];
-      indegree[id] = 0;
-    }
-
-    const edges: [string, string][] = [];
-    // Preserve definition-order stability: iterate tasks in order, deps in listed order
-    for (const taskId of ids) {
-      for (const dep of normDeps[taskId]) {
-        if (!(dep in byId)) continue; // skip missing
-        adjacency[dep].push(taskId);
-        indegree[taskId] += 1;
-        edges.push([dep, taskId]);
-      }
-    }
-
-    // Kahn’s algorithm with definition-order tie breaking
-    const zeroQueue: string[] = ids.filter((id) => indegree[id] === 0);
-    const layers: string[][] = [];
-    const topo: string[] = [];
-
-    // Process in “waves” to expose natural parallelism
-    while (zeroQueue.length) {
-      // Current wave is whatever is currently zero in queue (ordered)
-      const wave = [...zeroQueue];
-      layers.push(wave);
-      zeroQueue.length = 0;
-
-      for (const u of wave) {
-        topo.push(u);
-        for (const v of adjacency[u]) {
-          indegree[v] -= 1;
-          if (indegree[v] === 0) zeroQueue.push(v);
-        }
-        // Keep new zeros stable by original definition order
-        zeroQueue.sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
-      }
-    }
-
-    // Any node not in topo has unresolved in-degree (cycle or blocked chain)
-    const inTopo = new Set(topo);
-    const unresolved = ids.filter((id) => !inTopo.has(id));
-
-    // Map topological ids back to TaskCells (ignore unresolved)
-    const dag = topo.map((id) => byId[id]);
-
-    return {
-      tasks,
-      ids,
-      byId,
-      missingDeps,
-      adjacency,
-      indegree,
-      edges,
-      layers,
-      dag,
-      unresolved,
+    const tdiInit = {
+      cell,
+      pb,
+      registerIssue: (message: string, error?: unknown) =>
+        this.registerIssue({
+          kind: "fence-issue",
+          disposition: "error",
+          error: error,
+          message,
+          provenance: pb.notebook.provenance,
+          startLine: cell.startLine,
+          endLine: cell.endLine,
+        } as I),
     };
+
+    for (const tdi of this.tdInspectors) {
+      const td = tdi(tdiInit);
+      if (td) {
+        switch (td.nature) {
+          case "PARTIAL":
+            this.partials.register(td);
+            return true;
+
+          case "TASK": {
+            const unsafeCell = cell as Any;
+            unsafeCell.taskDirective = td;
+            if (isTaskDirectiveSupplier(cell)) {
+              this.tasks.push(cell as TaskCell<Provenance>);
+            } else {
+              throw new Error("This should never happen");
+            }
+            return true;
+          }
+        }
+      }
+    }
+
+    opts?.onUnknown?.(cell, pb);
+    return false;
   }
 }
