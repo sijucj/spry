@@ -1,3 +1,117 @@
+/**
+ * Create a strongly-typed event bus built directly on top of the standard
+ * Web/Deno `EventTarget`/`CustomEvent` primitives.
+ *
+ * Unlike many ad-hoc emitter utilities, this bus:
+ * - Uses the platform event loop via `EventTarget.dispatchEvent`, so it behaves
+ *   like native DOM/Deno events (bubble/capture aren’t used, but delivery and
+ *   microtask timing match platform semantics).
+ * - Emits `CustomEvent<Detail>` and adapts user listeners to/from DOM
+ *   `EventListener` functions, preserving interop with any code expecting a real
+ *   `EventTarget` (e.g., `addEventListener`, `AbortSignal`, `DOMException`).
+ * - Derives listener call signatures from a generic event map `M`. If an event
+ *   detail type is `void`, the listener is invoked with no arguments; otherwise
+ *   it receives exactly one argument of the mapped detail type.
+ *
+ * @template M extends Record<string, unknown | void>
+ * A map of event names to their payload ("detail") types. Keys must be `string`.
+ * For example:
+ *
+ * ```ts
+ * type BusEvents = {
+ *   "ready": void;                    // no payload
+ *   "log": { level: "info"|"warn"; message: string };
+ *   "progress": number;
+ * };
+ *
+ * const bus = eventBus<BusEvents>();
+ * ```
+ *
+ * ## Listener shapes
+ * A listener can be either a function or an object with a `handle` method:
+ *
+ * - Function form: `(detail) => void | Promise<void>`
+ * - Object form: `{ handle(detail) { … } }`
+ *
+ * The detail parameter is omitted entirely when the mapped type is `void`.
+ *
+ * ## Delivery modes
+ * - `emit(type, detail?)`: sync dispatch via `EventTarget.dispatchEvent(...)`.
+ *   Exceptions thrown by listeners will surface as usual (like DOM events).
+ * - `emitParallel(type, detail?)`: invoke current listeners concurrently and
+ *   await all of them; errors reject the returned promise.
+ * - `emitSerial(type, detail?)`: invoke current listeners in registration order
+ *   and await each one; errors reject the returned promise.
+ * - `emitSafe(type, detail?)`: like parallel, but collects and returns an array
+ *   of thrown errors instead of rejecting.
+ *
+ * ## Control utilities
+ * - `on(type, listener, opts?)` / `once(type, listener)`: add listeners
+ *   (de-duped per identity) and return an unsubscribe function.
+ * - `off(type, listener)`: remove a specific listener.
+ * - `removeAllListeners(type?)`: remove listeners for one event or all events.
+ * - `listenerCount(type)` / `hasListener(type)`: quick introspection.
+ * - `rawListeners(type)`: snapshot of the current listeners for an event.
+ * - `eventNames()`: list of event names with listeners.
+ * - `mute(type)` / `unmute(type)`: temporarily suppress emits for an event.
+ * - `suspend()` / `resume()`: globally suppress all emits.
+ * - `waitFor(type, { signal }?)`: promise that resolves with the next detail
+ *   (abortable via `AbortSignal`; rejects with `DOMException('AbortError')`).
+ * - `timeoutWaitFor(type, ms)`: like `waitFor` but rejects with
+ *   `DOMException('TimeoutError')` if not received in time.
+ * - `all(listener)`: register a catch-all `(type, detail) => …` observer.
+ * - `debugListeners()`: returns a `{ [eventName]: count }` snapshot.
+ *
+ * ## Interop notes (the “unobvious” bit)
+ * - The returned object exposes a real `target: EventTarget`. You can intermix
+ *   native listeners (`addEventListener`) with bus listeners (`on/once`).
+ * - Events are delivered as `CustomEvent<Detail>` where `detail` carries your
+ *   payload, so external code that inspects `event.detail` will work.
+ * - Because dispatch uses the platform, timing and error behaviors match what
+ *   you expect from web/Deno events instead of reinvented semantics.
+ *
+ * @returns An immutable API for registering, emitting, and observing events,
+ * including the underlying `target: EventTarget` for direct interop.
+ *
+ * @example Basic usage (no-arg event)
+ * ```ts
+ * type E = { ready: void };
+ * const bus = eventBus<E>();
+ *
+ * bus.once("ready", () => console.log("system ready"));
+ * bus.emit("ready"); // no payload required for void
+ * ```
+ *
+ * @example Typed payloads and parallel delivery
+ * ```ts
+ * type E = {
+ *   log: { level: "info"|"warn"; message: string };
+ *   progress: number;
+ * };
+ * const bus = eventBus<E>();
+ *
+ * const off = bus.on("log", ({ level, message }) => {
+ *   console[level](`[${level}] ${message}`);
+ * });
+ *
+ * await bus.emitParallel("log", { level: "info", message: "hello" });
+ * off();
+ * ```
+ *
+ * @example Interop with native EventTarget listeners
+ * ```ts
+ * type E = { tick: number };
+ * const bus = eventBus<E>();
+ *
+ * // Native listener sees a CustomEvent<number>
+ * bus.target.addEventListener("tick", (ev) => {
+ *   const n = (ev as CustomEvent<number>).detail;
+ *   // …
+ * });
+ *
+ * bus.emit("tick", 42);
+ * ```
+ */
 export function eventBus<M extends Record<string, unknown | void>>() {
   type Key = Extract<keyof M, string>;
   type Detail<K extends Key> = M[K];

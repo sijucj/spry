@@ -1,12 +1,4 @@
-// lib/universal/event-bus_test.ts
-// Deno 2.4+ / TS 5.x strict
-//
-// These tests double as living documentation for the tiny, type-safe wrapper
-// over EventTarget/CustomEvent. They exercise the public API in realistic
-// scenarios using one synthetic "AppEvents" map and subtests that focus on
-// specific behaviors.
-
-import { assert, assertEquals } from "jsr:@std/assert@1.0.8";
+import { assert, assertEquals } from "jsr:@std/assert@^1";
 
 // Import the factory under test
 import { eventBus } from "./event-bus.ts";
