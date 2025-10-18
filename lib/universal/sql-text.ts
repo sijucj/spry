@@ -521,3 +521,69 @@ export function sqlCat(
   if (parts.length === 1) return parts[0];
   return `(${parts.join(" || ")})`;
 }
+
+// ------------------------- Complex SQL generator example ---------------------
+
+/**
+ * Algebraic fragment type accepted by `anchor()`.
+ *
+ * Accepts:
+ * - `string`  → raw SQL / identifier / `sqlCat` result
+ * - `SQL`     → parameterized fragment; `.text()` will inline values
+ * - `sqlRaw`  → verbatim SQL (no quoting or params)
+ * - arrays    → any mix of the above, recursively flattened with ` || `
+ */
+export type SQLFrag =
+  | string
+  | SQL
+  | ReturnType<typeof sqlRaw>
+  | ReadonlyArray<SQLFrag>;
+
+/** Normalize any fragment (or nested array of fragments) into a raw SQL string. */
+function fragToSql(v: SQLFrag): string {
+  if (Array.isArray(v)) {
+    return v.map(fragToSql).filter(Boolean).join(" || ");
+  }
+  if (isRaw(v)) return v.text();
+  if (isSQL(v)) return v.text();
+  return String(v); // plain identifier/expression/sqlCat result
+}
+
+function stripOuterParens(s: string): string {
+  const t = s.trim();
+  if (t.startsWith("(") && t.endsWith(")")) {
+    const inner = t.slice(1, -1);
+    if (isBalancedParens(inner)) return inner.trim();
+  }
+  return s;
+}
+
+/** Avoid double-wrapping if caller already encoded the URL; also strip outer parens once. */
+function encodeOnce(expr: string): string {
+  const cleaned = stripOuterParens(expr);
+  return cleaned.includes("sqlpage.url_encode")
+    ? cleaned
+    : `(sqlpage.url_encode(${cleaned}))`;
+}
+
+/**
+ * markdownLink — build a Markdown `[text](url)` SQL expression.
+ *
+ * Accepts algebraic inputs (strings, `sqlCat` outputs, `sqlRaw` fragments, `SQL` fragments,
+ * or arrays of those) for both `textExpr` and `urlExpr`. The URL is automatically
+ * URL-encoded **exactly once** via `sqlpage.url_encode(...)`.
+ *
+ * Examples (see unit tests for more):
+ *   const text = sqlCat`${"label"}`;
+ *   const url  = sqlCat`/details?id=${"id"}`;
+ *   markdownLink(text, url);
+ *   // → ('[' || label || '](' || sqlpage.url_encode('/details?id=' || id) || ')')
+ *
+ *   // Using sqlRaw for identifiers/expressions:
+ *   markdownLink(sqlRaw`${"regime_label"}`, sqlRaw`'/r?x=' || ${"id"}`);
+ */
+export function markdownLink(textExpr: SQLFrag, urlExpr: SQLFrag): string {
+  const text = fragToSql(textExpr);
+  const url = encodeOnce(fragToSql(urlExpr));
+  return sqlCat`[${text}](${url})`;
+}
