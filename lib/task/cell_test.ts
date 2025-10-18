@@ -111,7 +111,7 @@ Deno.test("TaskDirectives.register()", async (t) => {
     assert(td.register(cell, pb));
     assertEquals(td.tasks.length, 1);
     const d = td.tasks[0]!.taskDirective;
-    assertEquals(d.nature, "TASK");
+    assert(d.nature === "TASK");
     assertEquals(d.identity, "build");
     assertEquals(d.task.strategy, "Cliffy.Command");
   });
@@ -131,6 +131,7 @@ Deno.test("TaskDirectives.register()", async (t) => {
       assert(td.register(cell, pb));
       assertEquals(td.tasks.length, 1);
       const d = td.tasks[0]!.taskDirective;
+      assert(d.nature === "TASK");
       assertEquals(d.identity, "fmt");
       assertEquals(d.task.strategy, "Deno.Command");
       if (d.task.strategy === "Deno.Command") {
@@ -154,6 +155,7 @@ Deno.test("TaskDirectives.register()", async (t) => {
     assert(td.register(cell, pb));
     assertEquals(td.tasks.length, 1);
     const d = td.tasks[0]!.taskDirective;
+    assert(d.nature === "TASK");
 
     assertEquals(d.identity, "hello");
     assertEquals(d.task.strategy, "Deno.Command");
@@ -215,6 +217,10 @@ Deno.test("TaskDirectives.plan()", async (t) => {
     assert(td.register(C, pb));
     assert(td.register(D, pb));
 
+    assert(td.tasks[1]!.taskDirective.nature === "TASK");
+    assert(td.tasks[2]!.taskDirective.nature === "TASK");
+    assert(td.tasks[3]!.taskDirective.nature === "TASK");
+
     assertEquals(td.tasks[1]!.taskDirective.deps, ["A"]); // B -> A
     assertEquals(td.tasks[2]!.taskDirective.deps, ["A"]); // C -> A
     assertEquals(td.tasks[3]!.taskDirective.deps, ["B", "C"]); // D -> B, C
@@ -240,6 +246,7 @@ Deno.test("TaskDirectives.plan()", async (t) => {
     });
     assert(td.register(E, pb));
 
+    assert(td.tasks[0]!.taskDirective.nature === "TASK");
     assertEquals(td.tasks[0]!.taskDirective.deps, ["Z"]); // Z does not exist
 
     const plan = executionPlan(td.tasks);
@@ -265,6 +272,9 @@ Deno.test("TaskDirectives.plan()", async (t) => {
 
     assert(td.register(A, pb));
     assert(td.register(B, pb));
+
+    assert(td.tasks[0]!.taskDirective.nature === "TASK");
+    assert(td.tasks[1]!.taskDirective.nature === "TASK");
 
     assertEquals(td.tasks[0]!.taskDirective.deps, ["B"]);
     assertEquals(td.tasks[1]!.taskDirective.deps, ["A"]);
@@ -345,6 +355,9 @@ Deno.test("executeDAG", async (t) => {
     assert(td.register(A, pb));
     assert(td.register(B, pb));
     assert(td.register(C, pb));
+
+    assert(td.tasks[1]!.taskDirective.nature === "TASK");
+    assert(td.tasks[2]!.taskDirective.nature === "TASK");
 
     assertEquals(td.tasks[1]!.taskDirective.deps, ["A"]); // B depends on A
     assertEquals(td.tasks[2]!.taskDirective.deps, ["B"]); // C depends on B

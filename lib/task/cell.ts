@@ -41,6 +41,9 @@ export const taskSchema = z.discriminatedUnion("strategy", [
   z.object({
     strategy: z.literal("Deno.Task"), // pass each line into cross platform `deno task --eval "X"`
   }).strict(),
+  z.object({
+    strategy: z.literal("TypeScript"), // a custom strategy in TypeScript
+  }).loose(),
 ]);
 
 /** Schema for typed TaskDirective from `Cell.info?` property */
@@ -53,23 +56,46 @@ export const taskDirectiveSchema = z.discriminatedUnion("nature", [
     deps: z.array(z.string()).optional(), // dependencies which allow DAGs to be created
   }).strict(),
   z.object({
+    nature: z.literal("CONTENT"),
+    identity: z.string().min(1), // required, names the task
+    content: z.object().loose(),
+    deps: z.array(z.string()).optional(), // dependencies which allow DAGs to be created
+  }).strict(),
+  z.object({
     nature: z.literal("PARTIAL"),
     partial: mdFencedBlockPartialSchema,
   }).strict(),
 ]);
 
+export type TaskStrategy = z.infer<typeof taskSchema>;
 export type TaskDirective = z.infer<typeof taskDirectiveSchema>;
 
 export const isTaskDirectiveSupplier = (
   o: unknown,
-): o is { taskDirective: TaskDirective } =>
+): o is {
+  taskDirective: Extract<TaskDirective, { nature: "TASK" | "CONTENT" }>;
+} =>
   o && typeof o === "object" && "taskDirective" in o &&
     typeof o.taskDirective === "object"
     ? true
     : false;
 
 export type TaskCell<Provenance> = PlaybookCodeCell<Provenance> & Task & {
-  taskDirective: Extract<TaskDirective, { nature: "TASK" }>;
+  taskDirective: Extract<TaskDirective, { nature: "TASK" | "CONTENT" }>;
+};
+
+export const isPartialDirectiveSupplier = (
+  o: unknown,
+): o is {
+  partialDirective: Extract<TaskDirective, { nature: "PARTIAL" }>;
+} =>
+  o && typeof o === "object" && "partialDirective" in o &&
+    typeof o.partialDirective === "object"
+    ? true
+    : false;
+
+export type PartialCell<Provenance> = PlaybookCodeCell<Provenance> & {
+  partialDirective: Extract<TaskDirective, { nature: "PARTIAL" }>;
 };
 
 export type TaskDirectiveInspector<
@@ -85,12 +111,16 @@ export type TaskDirectiveInspector<
   },
 ) => TaskDirective | false;
 
-export function parsedInfo(candidate?: string) {
+const parsedInfoCache = new Map<string, ReturnType<typeof parsedInfoPrime>>();
+
+export function parsedInfoPrime(candidate?: string) {
   const ptc = parsedTextComponents(candidate);
   if (!ptc) return false;
 
   return {
     ...ptc,
+    identity: (idIfMissing: string) =>
+      ptc.argv.length > 0 ? ptc.argv[0] : idIfMissing,
     deps: () => {
       const flags = ptc.flags();
       return "dep" in flags
@@ -102,6 +132,17 @@ export function parsedInfo(candidate?: string) {
         : undefined;
     },
   };
+}
+
+export function parsedInfo(candidate?: string) {
+  if (!candidate) return false;
+
+  let pi = parsedInfoCache.get(candidate);
+  if (typeof pi === "undefined") {
+    pi = parsedInfoPrime(candidate);
+    parsedInfoCache.set(candidate, pi);
+  }
+  return pi;
 }
 
 export function partialsInspector<
@@ -266,8 +307,10 @@ export class TaskDirectives<
     CellAttrs,
     I
   >[] = [];
+  readonly playbooks: Playbook<Provenance, Frontmatter, CellAttrs, I>[] = [];
   readonly issues: I[] = [];
   readonly tasks: TaskCell<Provenance>[] = [];
+  readonly partialDirectives: PartialCell<Provenance>[] = [];
 
   constructor(
     readonly partials: ReturnType<typeof fbPartialsCollection>,
@@ -372,9 +415,16 @@ export class TaskDirectives<
         switch (td.nature) {
           case "PARTIAL":
             this.partials.register(td.partial);
+            (cell as Any).partialDirective = td;
+            if (isPartialDirectiveSupplier(cell)) {
+              this.partialDirectives.push(cell as PartialCell<Provenance>);
+            } else {
+              throw new Error("This should never happen");
+            }
             return true;
 
-          case "TASK": {
+          case "TASK":
+          case "CONTENT": {
             (cell as Any).taskDirective = td;
             const task = cell as unknown as Task;
             task.taskId = () => td.identity;
@@ -491,12 +541,14 @@ export class TaskDirectives<
             }
             // if any issues were registered with the Notebook, populate them too
             registerIssue(...nb.issues);
+
             yield nb;
           }
         }(),
         { kind: "hr" },
       )
     ) {
+      this.playbooks.push(pb);
       for (const cell of pb.cells) {
         if (cell.kind === "code") {
           this.register(cell, pb, init);
