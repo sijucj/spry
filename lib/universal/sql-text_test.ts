@@ -14,6 +14,7 @@ import {
   raw,
   SQL,
   sqlCat,
+  sqlRaw,
 } from "./sql-text.ts"; // adjust path
 
 Deno.test("isSQL type guard", () => {
@@ -300,7 +301,7 @@ Deno.test("inlinedSQL", async (t) => {
 });
 
 Deno.test("sqlCat", async (t) => {
-  await t.step("handles single literal", () => {
+  await t.step("handles single literal (no parens)", () => {
     const result = sqlCat`hello`;
     assertEquals(result, `'hello'`);
   });
@@ -328,7 +329,7 @@ Deno.test("sqlCat", async (t) => {
     assertEquals(result, "''");
   });
 
-  await t.step("only SQL identifier interpolation", () => {
+  await t.step("only SQL identifier interpolation (no parens)", () => {
     const result = sqlCat`${"username"}`;
     assertEquals(result, "username");
   });
@@ -337,4 +338,38 @@ Deno.test("sqlCat", async (t) => {
     const result = sqlCat`User: ${"username"}!`;
     assertEquals(result, "('User: ' || username || '!')");
   });
+
+  await t.step("nesting: sqlCat result inside sqlCat", () => {
+    const url = sqlCat`/details?id=${"id"}`;
+    const anchor = sqlCat`[${"label"}](${url})`;
+    assertEquals(
+      anchor,
+      "('[' || label || '](' || '/details?id=' || id || ')')",
+    );
+  });
+
+  await t.step(
+    "arrays: flatten and join with || (no outer parens when single part)",
+    () => {
+      const result = sqlCat`${["'A'", "col", "'B'"]}`;
+      // Single interpolation becomes a single joined string without outer parentheses:
+      assertEquals(result, "'A' || col || 'B'");
+    },
+  );
+
+  await t.step("sqlRaw: splices verbatim trusted SQL", () => {
+    const upper = sqlRaw`upper(${"name"})`; // → "upper(name)"
+    const result = sqlCat`Hello, ${upper}!`;
+    assertEquals(result, "('Hello, ' || upper(name) || '!')");
+  });
+
+  await t.step(
+    "SQL fragments: splice .text() from SQL() (identifier via sqlRaw)",
+    () => {
+      // name should be an identifier, not a string literal
+      const frag = sqlRaw`coalesce(${"name"}, ${"'N/A'"})`;
+      const result = sqlCat`Hello, ${frag}!`;
+      assertEquals(result, "('Hello, ' || coalesce(name, 'N/A') || '!')");
+    },
+  );
 });

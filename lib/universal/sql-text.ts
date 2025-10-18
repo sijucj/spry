@@ -414,30 +414,198 @@ export function inlinedSQL(q: { sql: string; params: unknown[] }): string {
   return out + ";";
 }
 
+// ------------------------- SQL RAW -------------------------------------------
+
+type SqlRaw = {
+  readonly __raw: true;
+  /** Build the raw text by walking its template and interpolations (verbatim). */
+  text(options?: { ifDate?: (d: Date) => string }): string;
+};
+
+// Narrower guard (parallel to your existing isSQL)
+function isSqlRaw(x: unknown): x is SqlRaw {
+  // deno-lint-ignore no-explicit-any
+  return typeof x === "object" && x !== null && (x as any).__raw === true;
+}
+
 /**
- * sqlCat — lightweight tagged template for building SQLite string expressions
- * via `'literal' || column || 'literal'` concatenation.
+ * sqlRaw — template for **verbatim** SQL insertion (no parameterization, no quoting).
+ * Useful for trusted snippets like function calls, operators, dialect keywords, etc.
  *
- * Usage:
- *   sqlCat`/path?id=${"column"}`
- *   sqlCat`Hello ${"user_name"}!`
+ * NOTE: This is intentionally “unsafe” by design; use only for trusted SQL.
+ */
+export function sqlRaw(
+  strings: TemplateStringsArray,
+  ...exprs: unknown[]
+): SqlRaw {
+  const buildText = (options?: { ifDate?: (d: Date) => string }) => {
+    let out = "";
+
+    const toRawText = (v: unknown): string => {
+      if (isSQL(v)) return v.text(options); // splice nested SQL’s .text()
+      if (isSqlRaw(v)) return v.text(options);
+      if (Array.isArray(v)) return v.map(toRawText).join(", ");
+      return String(v); // verbatim, no escaping
+    };
+
+    for (let i = 0; i < strings.length; i++) {
+      out += strings[i];
+      if (i < exprs.length) out += toRawText(exprs[i]);
+    }
+
+    return dedentIfFirstLineBlank(out);
+  };
+
+  return Object.freeze({
+    __raw: true as const,
+    text: buildText,
+  });
+}
+
+// ------------------------- SQL CONCAT (sqlCat) --------------------------------
+
+function isBalancedParens(s: string): boolean {
+  let d = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "(") d++;
+    else if (c === ")") {
+      d--;
+      if (d < 0) return false;
+    }
+  }
+  return d === 0;
+}
+
+function stripConcatParens(s: string): string {
+  const t = s.trim();
+  if (t.startsWith("(") && t.endsWith(")")) {
+    const inner = t.slice(1, -1).trim();
+    if (inner.includes("||") && isBalancedParens(inner)) return inner;
+  }
+  return s;
+}
+
+/**
+ * sqlCat — composable tagged template for building SQLite-style string
+ * concatenation expressions of the form `'literal' || column || 'literal'`.
  *
- * - Literal text chunks are SQL-quoted automatically.
- * - Interpolated `${"..."}` strings are inserted verbatim (treated as SQL code).
- * - Produces a single SQL text expression (parenthesized) such as:
- *     ('/path?id=' || column)
+ * It provides a **developer-friendly DX** for constructing SQL expressions
+ * that concatenate literals, columns, and nested fragments, without ever
+ * typing the `||` operator by hand.
+ *
+ * Usage examples:
+ *
+ * ```ts
+ * // Basic concatenation
+ * sqlCat`Hello ${"username"}!`
+ * // → ('Hello ' || username || '!')
+ *
+ * // Literal-only (no parentheses when only one piece)
+ * sqlCat`world`
+ * // → 'world'
+ *
+ * // Escaped single quotes are doubled automatically
+ * sqlCat`O'Hara-${"last_name"}`
+ * // → ('O''Hara-' || last_name)
+ *
+ * // Nesting (composable fragments)
+ * const url = sqlCat`/details?id=${"id"}`;
+ * sqlCat`[${"label"}](${url})`
+ * // → ('[' || label || '](' || '/details?id=' || id || ')')
+ *
+ * // Using sqlRaw for identifiers or SQL expressions
+ * const frag = sqlRaw`coalesce(${"name"}, ${"'N/A'"})`;
+ * sqlCat`Hello, ${frag}!`
+ * // → ('Hello, ' || coalesce(name, 'N/A') || '!')
+ *
+ * // Array flattening (joins items with " || ")
+ * sqlCat`${["'A'", "col", "'B'"]}`
+ * // → 'A' || col || 'B'
+ * ```
+ *
+ * Behavior:
+ *
+ * - Literals
+ *   Template text between interpolations is automatically single-quoted
+ *   (`'...'`) and any internal `'` characters are escaped as `''`.
+ *
+ * - Interpolations
+ *   - `string`: inserted verbatim (treated as SQL identifier or expression).
+ *   - `sqlRaw`: spliced directly using its `.text()` output (no quoting).
+ *   - `SQL`: spliced using its `.text()` output (parameters inlined);
+ *     use `sqlRaw` for identifiers to avoid quoting.
+ *   - `Array`: recursively flattened with `" || "` between elements.
+ *   - Other primitive values are stringified and inserted verbatim.
+ *
+ * - Nesting
+ *   Nested `sqlCat` expressions work transparently. When another `sqlCat`
+ *   result is interpolated, it’s treated as a raw SQL string.
+ *   The function automatically **strips a single pair of outer parentheses**
+ *   around nested concatenations to avoid producing redundant wrapping such as:
+ *   ```
+ *   ('[' || label || '](' || ('/details?id=' || id) || ')')
+ *   ```
+ *   which becomes:
+ *   ```
+ *   ('[' || label || '](' || '/details?id=' || id || ')')
+ *   ```
+ *
+ * - Output form
+ *   - 0 parts → `"''"`
+ *   - 1 part → that single fragment (no outer parentheses)
+ *   - >1 parts → parentheses wrapped, joined by `" || "`
+ *
+ * Best practices:
+ *
+ * - Use `sqlCat` for textual concatenation in views, computed columns,
+ *   or Markdown/HTML generation within SQLPage or Spry.
+ * - Use `sqlRaw` to safely embed identifiers, function calls, or other
+ *   expressions you don’t want quoted.
+ * - Avoid manual `||` unless you need exotic precedence control.
+ *
+ * Summary
+ *
+ * | Input type         | Handling                | Example result |
+ * |--------------------|-------------------------|----------------|
+ * | Literal text       | Quoted + escaped        | `'Hello'` |
+ * | Identifier string  | Inserted verbatim       | `username` |
+ * | sqlRaw fragment    | Spliced verbatim        | `upper(name)` |
+ * | SQL fragment       | `.text()` inserted      | `coalesce(name, 'N/A')` |
+ * | Array              | Flattened with \|\|     | `'A' \|\| col \|\| 'B'` |
+ * | Nested sqlCat      | Inner parens stripped   | `'[' \|\| label \|\| '](' \|\| '/x?id=' \|\| id \|\| ')'` |
+ *
+ * @returns A plain SQL string expression that can be safely interpolated into
+ * larger SQL statements or views. Designed for *readability, composability,*
+ * and *zero boilerplate string handling* in Deno/TypeScript.
  */
 export function sqlCat(
   strings: TemplateStringsArray,
-  ...values: Array<string>
+  ...values: unknown[]
 ): string {
-  const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const quote = (s: string): string => `'${s.replace(/'/g, "''")}'`;
+
+  const toFrag = (v: unknown): string => {
+    if (Array.isArray(v)) {
+      const flat = (v as unknown[]).map(toFrag).filter((s) => s.length > 0);
+      return flat.length ? flat.join(" || ") : "";
+    }
+    if (isSqlRaw(v)) return v.text();
+    if (isSQL(v)) return v.text();
+    if (typeof v === "string") return v; // raw SQL token/expression
+    return String(v ?? "");
+  };
+
   const parts: string[] = [];
 
   for (let i = 0; i < strings.length; i++) {
-    const text = strings[i];
-    if (text) parts.push(quote(text)); // quote literal part
-    if (i < values.length) parts.push(values[i]); // raw SQL fragment
+    const lit = String(strings[i] ?? "");
+    if (lit.length) parts.push(quote(lit));
+    if (i < values.length) {
+      const frag: string = toFrag(values[i]);
+      const norm: string = stripConcatParens(frag);
+      if (norm.length) parts.push(norm);
+    }
   }
 
   if (parts.length === 0) return "''";
