@@ -646,6 +646,49 @@ export function parsedTextComponents(candidate?: string) {
   };
 }
 
+/**
+ * Consumes an entire async generator and collects:
+ *   1. all items it yields, and
+ *   2. the final value it returns.
+ *
+ * This is useful when you need both the stream of yielded results
+ * and the generator’s eventual return (which `for await...of` discards).
+ *
+ * @template T,R
+ * @param {AsyncGenerator<T, R, unknown>} gen
+ *   The async generator to fully iterate.
+ *
+ * @returns {Promise<{ items: T[]; result: R }>}
+ *   A promise resolving to an object with:
+ *   - `items`: array of all yielded values
+ *   - `result`: the final return value from the generator
+ *
+ * @example
+ * async function* makeNumbers() {
+ *   yield 1; yield 2; return 3;
+ * }
+ *
+ * const { items, result } = await collectAsyncGenerator(makeNumbers());
+ * // items = [1, 2]
+ * // result = 3
+ *
+ * @example
+ * const gen = this.sqlPageFiles({ mdSources, srcRelTo, state });
+ * const { items: files, result: prepared } = await collectAsyncGenerator(gen);
+ * // `files` are all yielded SqlPageFile objects
+ * // `prepared` is the final state returned by sqlPageFiles()
+ */
+export async function collectAsyncGenerated<T, R>(
+  gen: AsyncGenerator<T, R, unknown>,
+): Promise<{ items: T[]; result: R }> {
+  const items: T[] = [];
+  while (true) {
+    const { value, done } = await gen.next();
+    if (done) return { items, result: value as R };
+    items.push(value);
+  }
+}
+
 /* =========================== Tiny Runtime & Type Guards ============== */
 
 /** mdast position helper shapes (kept local, no `any`) */
@@ -690,11 +733,11 @@ function posEndLine(n: unknown): number | undefined {
   return typeof p === "number" ? p : undefined;
 }
 
-function isAsyncIterator(x: unknown): x is AsyncIterator<unknown> {
+export function isAsyncIterator(x: unknown): x is AsyncIterator<unknown> {
   return !!x && typeof (x as { next?: unknown }).next === "function";
 }
 
-function isReadableStream(x: unknown): x is ReadableStream<Uint8Array> {
+export function isReadableStream(x: unknown): x is ReadableStream<Uint8Array> {
   return typeof ReadableStream !== "undefined" && x instanceof ReadableStream;
 }
 
