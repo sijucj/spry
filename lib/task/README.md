@@ -328,6 +328,128 @@ spry plan release
 spry show lint
 ```
 
+## Core Lifecycle Pipeline
+
+### `NotebookCodeCell` — raw parsed unit
+
+**Origin:** `md-notebook.ts`
+
+- A **Notebook** represents one Markdown file.
+- The **Notebook parser** scans all fenced code blocks (`` ```lang … ``` ``).
+- Each block is represented as a **`NotebookCodeCell`**, which contains:
+
+  - `language`: the code fence label (e.g., `bash`, `spry`, `deno-task`).
+  - `info`: optional trailing info string after the language.
+  - `source`: the raw code inside the fence.
+  - `attrs`: key/value pairs parsed from attributes (if any).
+  - `startLine` and `endLine`: for provenance and diagnostics.
+  - A `provenance` reference (e.g., file path or ID).
+
+At this stage, it’s purely **syntactic** — no semantic meaning (no task type, no
+validation).
+
+### `PlaybookCodeCell` — contextualized cell inside a playbook
+
+**Origin:** `md-playbook.ts`
+
+- Multiple notebooks can be grouped into a **Playbook**, which provides:
+
+  - Combined frontmatter (metadata, schema validation).
+  - Structured ordering of cells (text + code).
+  - A context for dependency and issue tracking.
+
+Each `NotebookCodeCell` becomes a **`PlaybookCodeCell`**, which adds:
+
+- A `pb` (playbook) reference for context.
+- The potential to be inspected by task parsers.
+- Shared issue registration capabilities.
+
+Still, at this stage, the cell isn’t executable — it’s just part of a
+higher-level document that can contain executable or documentation code.
+
+### `TaskDirective` — semantic recognition and type binding
+
+**Origin:** `cell.ts` (via a `TaskDirectiveInspector`)
+
+- The `TaskDirectives.register()` method runs every **`TaskDirectiveInspector`**
+  in order.
+- Each inspector recognizes specific patterns:
+
+  - `partialsInspector()` → converts `PARTIAL` fences into reusable code
+    snippets.
+  - `spryParser()` → recognizes `` ```spry `` cells → wraps as `Cliffy.Command`
+    tasks.
+  - `denoTaskParser()` → recognizes `` ```deno-task `` → wraps as Deno tasks.
+  - `spawnableParser()` → recognizes `` ```bash `` or `` ```sh `` → wraps as
+    spawnable commands with optional `#!` shebang detection.
+
+Each inspector returns a typed **`TaskDirective`**, which encodes:
+
+- `nature`: `"TASK"` or `"PARTIAL"`
+- For `"TASK"`:
+
+  - `identity`: task ID / name.
+  - `source`: the code.
+  - `task.strategy`: execution strategy (`Cliffy.Command`, `Deno.Command`, or
+    `Deno.Task`).
+  - `deps`: dependencies (from `info` flags, e.g. `--dep=a,b,c`).
+- For `"PARTIAL"`:
+
+  - Partial metadata and content for later composition.
+
+Zod schemas (`taskSchema`, `taskDirectiveSchema`) ensure the directive is valid,
+enforcing strong runtime typing.
+
+### `Task` — executable instance with identity and dependencies
+
+**Origin:** `task.ts` (core universal model)
+
+Once a cell’s directive is recognized as a `"TASK"`,
+`TaskDirectives.register()`:
+
+1. **Augments the `PlaybookCodeCell`:**
+
+   - Adds `cell.taskDirective = td`.
+   - Implements `taskId()` returning the directive’s identity.
+   - Implements `taskDeps()` returning its declared dependencies.
+
+2. **Pushes the cell into** `this.tasks` — it’s now a `TaskCell<Provenance>`,
+   meaning:
+
+   - It is both a `PlaybookCodeCell` and a `Task` (executable node).
+   - It’s ready for graph-based scheduling, dependency resolution, or actual
+     execution.
+
+3. **Optionally handled downstream by**:
+
+   - `TaskDirectives.plan()` (in `plan.ts`), which builds dependency graphs
+     (DAGs) and topological layers.
+   - A `TaskRunner` or `Executor` (not shown here) that interprets the
+     `strategy` and executes accordingly.
+
+### End-to-End Flow
+
+| Phase   | Type                | Responsibility                                             | Example                                                                  |
+| ------- | ------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Parse   | `NotebookCodeCell`  | Raw fenced block parsed from Markdown                      | `bash echo "Hi"`                                                         |
+| Group   | `PlaybookCodeCell`  | Contextualized inside a Playbook (frontmatter, provenance) | Same cell but now part of structured Playbook                            |
+| Inspect | `TaskDirective`     | Semantic recognition via inspector (strategy + deps)       | `{ nature: "TASK", task: { strategy: "Deno.Command", command: "bash" }}` |
+| Execute | `Task` / `TaskCell` | Executable unit with identity + dependencies               | `taskId() === "my-task"; taskDeps() === ["setup"]`                       |
+
+### Conceptually:
+
+```
+Markdown Fence
+   ↓
+   NotebookCodeCell (syntactic)
+       ↓
+       PlaybookCodeCell (contextual)
+           ↓
+           TaskDirective (semantic)
+               ↓
+               Task / TaskCell (executable)
+```
+
 ## TODO: Advanced features for intermediate engineers
 
 Up to this point, you can think of Spry as a friendlier `justfile` written in

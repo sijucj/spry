@@ -94,7 +94,7 @@ Deno.test("TaskDirectives.register()", async (t) => {
 
     assert(td.register(cell, pb));
     assertEquals(td.tasks.length, 0);
-    const got = td.partial("myPartial");
+    const got = td.partials.get("myPartial");
     assert(got !== undefined);
   });
 
