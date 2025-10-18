@@ -219,7 +219,7 @@ Deno.test("inlinedSQL", async (t) => {
       sql: "values(?, ?, ?)",
       params: [3.14, NaN, Infinity],
     });
-    assertEquals(out, "values(3.14, null, null);");
+    assertEquals(out, "values(3.14, NULL, NULL);");
   });
 
   await t.step("bigint literal", () => {
@@ -274,7 +274,7 @@ Deno.test("inlinedSQL", async (t) => {
       sql: "values(?, ?)",
       params: [null, undefined],
     });
-    assertEquals(out, "values(null, null);");
+    assertEquals(out, "values(NULL, NULL);");
   });
 
   await t.step("extra placeholders vs extra params", () => {
