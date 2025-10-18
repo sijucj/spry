@@ -413,3 +413,34 @@ export function inlinedSQL(q: { sql: string; params: unknown[] }): string {
 
   return out + ";";
 }
+
+/**
+ * sqlCat — lightweight tagged template for building SQLite string expressions
+ * via `'literal' || column || 'literal'` concatenation.
+ *
+ * Usage:
+ *   sqlCat`/path?id=${"column"}`
+ *   sqlCat`Hello ${"user_name"}!`
+ *
+ * - Literal text chunks are SQL-quoted automatically.
+ * - Interpolated `${"..."}` strings are inserted verbatim (treated as SQL code).
+ * - Produces a single SQL text expression (parenthesized) such as:
+ *     ('/path?id=' || column)
+ */
+export function sqlCat(
+  strings: TemplateStringsArray,
+  ...values: Array<string>
+): string {
+  const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const parts: string[] = [];
+
+  for (let i = 0; i < strings.length; i++) {
+    const text = strings[i];
+    if (text) parts.push(quote(text)); // quote literal part
+    if (i < values.length) parts.push(values[i]); // raw SQL fragment
+  }
+
+  if (parts.length === 0) return "''";
+  if (parts.length === 1) return parts[0];
+  return `(${parts.join(" || ")})`;
+}

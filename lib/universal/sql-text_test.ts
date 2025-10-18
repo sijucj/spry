@@ -7,13 +7,13 @@ import {
   assertNotStrictEquals,
   assertStrictEquals,
 } from "jsr:@std/assert@1";
-
 import {
   ensureTrailingSemicolon,
   inlinedSQL,
   isSQL,
   raw,
   SQL,
+  sqlCat,
 } from "./sql-text.ts"; // adjust path
 
 Deno.test("isSQL type guard", () => {
@@ -296,5 +296,45 @@ Deno.test("inlinedSQL", async (t) => {
       params: [10, 20],
     });
     assertEquals(out, "where a='?''?' and b=10 and c='x?y' and d=20;");
+  });
+});
+
+Deno.test("sqlCat", async (t) => {
+  await t.step("handles single literal", () => {
+    const result = sqlCat`hello`;
+    assertEquals(result, `'hello'`);
+  });
+
+  await t.step("joins literal and SQL identifier", () => {
+    const result = sqlCat`/details?id=${"user_id"}`;
+    assertEquals(result, "('/details?id=' || user_id)");
+  });
+
+  await t.step("multiple interpolations and text parts", () => {
+    const result = sqlCat`prefix-${"col"}-mid-${"other"}-suffix`;
+    assertEquals(
+      result,
+      "('prefix-' || col || '-mid-' || other || '-suffix')",
+    );
+  });
+
+  await t.step("escapes single quotes in literal text", () => {
+    const result = sqlCat`O'Hara-${"name"}`;
+    assertEquals(result, "('O''Hara-' || name)");
+  });
+
+  await t.step("empty template returns empty SQL string", () => {
+    const result = sqlCat``;
+    assertEquals(result, "''");
+  });
+
+  await t.step("only SQL identifier interpolation", () => {
+    const result = sqlCat`${"username"}`;
+    assertEquals(result, "username");
+  });
+
+  await t.step("literal before and after SQL expression", () => {
+    const result = sqlCat`User: ${"username"}!`;
+    assertEquals(result, "('User: ' || username || '!')");
   });
 });
