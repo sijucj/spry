@@ -3,11 +3,11 @@ import {
   fbPartialCandidate,
   fbPartialsCollection,
   mdFencedBlockPartialSchema,
-} from "../universal/md-partial.ts";
+} from "../markdown/notebook/partial.ts";
 import {
   PlaybookCodeCell,
   PlaybookCodeCellMutator,
-} from "../universal/md-playbook.ts";
+} from "../markdown/notebook/playbook.ts";
 
 export const sqlCodeCellLang = "sql" as const;
 

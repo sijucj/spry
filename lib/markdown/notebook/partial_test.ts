@@ -1,11 +1,10 @@
-// md-partial_test.ts
 import {
   assert,
   assertEquals,
   assertStringIncludes,
   assertThrows,
 } from "jsr:@std/assert@^1";
-import { fbPartialCandidate, fbPartialsCollection } from "./md-partial.ts";
+import { fbPartialCandidate, fbPartialsCollection } from "./partial.ts";
 
 // Helper: normalize sync-or-async renderer to a Promise result
 async function render(

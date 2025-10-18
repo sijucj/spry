@@ -1,10 +1,8 @@
 import { ensureDir } from "jsr:@std/fs@^1";
 import { dirname, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
-import { safeSourceText } from "../universal/content-acquisition.ts";
-import { unsafeInterpolator } from "../universal/interpolate.ts";
-import { notebooks } from "../universal/md-notebook.ts";
-import { fbPartialsCollection } from "../universal/md-partial.ts";
+import { notebooks } from "../markdown/notebook/mod.ts";
+import { fbPartialsCollection } from "../markdown/notebook/partial.ts";
 import {
   mutatePlaybookCodeCells,
   pipedPlaybookCodeCellMutators,
@@ -12,7 +10,9 @@ import {
   PlaybookCodeCellMutator,
   playbooks,
   safeFrontmatter,
-} from "../universal/md-playbook.ts";
+} from "../markdown/notebook/playbook.ts";
+import { safeSourceText } from "../universal/content-acquisition.ts";
+import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { forestToStatelessViews } from "../universal/path-tree-tabular.ts";
 import { sqlPageConfSchema } from "./conf.ts";
 import { enrichSqlDirective, SqlDirectiveCells } from "./directives.ts";

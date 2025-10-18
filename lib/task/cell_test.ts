@@ -1,7 +1,10 @@
 import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1";
+import {
+  fbPartialsCollection,
+  Playbook,
+  PlaybookCodeCell,
+} from "../markdown/notebook/mod.ts";
 import { eventBus } from "../universal/event-bus.ts";
-import { fbPartialsCollection } from "../universal/md-partial.ts";
-import type { Playbook, PlaybookCodeCell } from "../universal/md-playbook.ts";
 import {
   executeDAG,
   executionPlan,

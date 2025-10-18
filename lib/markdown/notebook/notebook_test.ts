@@ -5,7 +5,10 @@ import {
   assertGreater,
   assertMatch,
 } from "jsr:@std/assert@^1";
-import { safeSourceText, SourceRelativeTo } from "./content-acquisition.ts";
+import {
+  safeSourceText,
+  SourceRelativeTo,
+} from "../../universal/content-acquisition.ts";
 import {
   type Cell,
   type CodeCell,
@@ -14,7 +17,7 @@ import {
   notebooks,
   parsedTextComponents,
   parsedTextFlags,
-} from "./md-notebook.ts";
+} from "./notebook.ts";
 
 // Generic, attrs-preserving type guards
 function isCode<T extends Record<string, unknown>>(
@@ -31,7 +34,7 @@ function isMarkdown<T extends Record<string, unknown>>(
 
 async function loadFixture(): Promise<string> {
   const safeText = await safeSourceText(
-    new URL("./md-notebook_test-fixture-01.md", import.meta.url),
+    new URL("./notebook_test-fixture-01.md", import.meta.url),
     SourceRelativeTo.Module,
   );
   if (safeText.nature === "error") {

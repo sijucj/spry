@@ -27,8 +27,8 @@ import {
   SqlPageContent,
   sqlPageFilesUpsertDML,
 } from "./content.ts";
-import { collectAsyncGenerated } from "../universal/md-notebook.ts";
 import { sqlPageConf } from "./conf.ts";
+import { collectAsyncGenerated } from "../universal/collectable.ts";
 
 export type LsCommandRow = SqlPageContent & {
   name: string;

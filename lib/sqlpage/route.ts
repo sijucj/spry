@@ -1,6 +1,6 @@
 import { basename, dirname, join } from "jsr:@std/path@^1";
 import { z } from "jsr:@zod/zod@4";
-import { PlaybookCodeCellMutator } from "../universal/md-playbook.ts";
+import { PlaybookCodeCellMutator } from "../markdown/notebook/playbook.ts";
 import {
   forestToEdges,
   pathTree,

@@ -4,13 +4,16 @@ import {
   assertGreater,
   assertMatch,
 } from "jsr:@std/assert@^1";
-import { safeSourceText, SourceRelativeTo } from "./content-acquisition.ts";
-import { Issue, type Notebook, notebooks } from "./md-notebook.ts";
-import { Playbook, PlaybookCodeCell, playbooks } from "./md-playbook.ts";
+import {
+  safeSourceText,
+  SourceRelativeTo,
+} from "../../universal/content-acquisition.ts";
+import { Issue, type Notebook, notebooks } from "./notebook.ts";
+import { Playbook, PlaybookCodeCell, playbooks } from "./playbook.ts";
 
 async function loadFixture(): Promise<string> {
   const safeText = await safeSourceText(
-    new URL("./md-notebook_test-fixture-01.md", import.meta.url),
+    new URL("./notebook_test-fixture-01.md", import.meta.url),
     SourceRelativeTo.Module,
   );
   if (safeText.nature === "error") {

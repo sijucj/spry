@@ -1,21 +1,17 @@
 import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
 import { z } from "jsr:@zod/zod@4";
 import {
-  Issue,
-  notebooks,
-  parsedTextComponents,
-  Source,
-} from "../universal/md-notebook.ts";
-import {
   fbPartialCandidate,
   fbPartialsCollection,
+  Issue,
   mdFencedBlockPartialSchema,
-} from "../universal/md-partial.ts";
-import {
+  notebooks,
+  parsedTextComponents,
   Playbook,
   PlaybookCodeCell,
   playbooks,
-} from "../universal/md-playbook.ts";
+  Source,
+} from "../markdown/notebook/mod.ts";
 import { Task } from "../universal/task.ts";
 
 // deno-lint-ignore no-explicit-any

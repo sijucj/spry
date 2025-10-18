@@ -1,11 +1,11 @@
 /**
- * md-playbook.ts — higher-level orchestration over md-notebook.ts
+ * playbook.ts — higher-level orchestration over notebook.ts
  *
  * This module defines the **Playbook** abstraction — a structured, executable layer
- * built on top of the lower-level **Notebook** model from `md-notebook.ts`.
+ * built on top of the lower-level **Notebook** model from `notebook.ts`.
  *
- * Whereas `md-notebook.ts` focuses on parsing Markdown into discrete *cells*
- * (code vs. prose) and preserving the syntactic structure, `md-playbook.ts`
+ * Whereas `notebook.ts` focuses on parsing Markdown into discrete *cells*
+ * (code vs. prose) and preserving the syntactic structure, `playbook.ts`
  * focuses on **semantic enrichment** and **orchestration**:
  *
  * - It attaches contextual **instructions** (documentation, comments, markdown regions)
@@ -20,7 +20,7 @@
  *   “executable documents.”
  *
  * Conceptually:
- * - `Notebook` (from md-notebook.ts) = raw parsed Markdown + cells + provenance.
+ * - `Notebook` (from notebook.ts) = raw parsed Markdown + cells + provenance.
  * - `Playbook` (from this module)    = Notebook + instructions + executable semantics.
  *
  * Together, they form the foundation for programmable, human-readable documents that
@@ -59,7 +59,7 @@
  * Why this layer exists
  * ----------------------------------------------------------
  *
- * `md-playbook.ts` bridges the gap between **structured Markdown parsing**
+ * `playbook.ts` bridges the gap between **structured Markdown parsing**
  * and **AI/analyst-facing execution frameworks**:
  * - Converts static prose into typed, machine-readable “instructions.”
  * - Makes each code cell an explainable, auditable unit.
@@ -82,8 +82,8 @@
  * ----------------------------------------------------------
  *
  * ```ts
- * import { notebooks } from "./md-notebook.ts";
- * import { playbooks, safeFrontmatter } from "./md-playbook.ts";
+ * import { notebooks } from "./notebook.ts";
+ * import { playbooks, safeFrontmatter } from "./playbook.ts";
  * import { z } from "jsr:@zod/zod@4";
  *
  * // Define frontmatter schema
@@ -109,18 +109,22 @@
  * Layer summary
  * ----------------------------------------------------------
  *
- * - **md-notebook.ts** — parses Markdown into syntactic cells with provenance.
- * - **md-playbook.ts** — enriches notebooks with semantic structure and
+ * - **notebook.ts** — parses Markdown into syntactic cells with provenance.
+ * - **playbook.ts** — enriches notebooks with semantic structure and
  *   documentation-awareness for execution and automation.
  *
  * This separation mirrors a compiler pipeline:
- * - md-notebook.ts = parser / AST builder
- * - md-playbook.ts = semantic analyzer / enricher
+ * - notebook.ts = parser / AST builder
+ * - playbook.ts = semantic analyzer / enricher
  */
 import { z } from "jsr:@zod/zod@4";
 import { Root, RootContent } from "npm:@types/mdast@4";
 import { toString as mdToString } from "npm:mdast-util-to-string@^4";
-import { Asyncish, isAsyncIterable, toAsync } from "./collectable.ts";
+import {
+  Asyncish,
+  isAsyncIterable,
+  toAsync,
+} from "../../universal/collectable.ts";
 import {
   Cell,
   CodeCell,
@@ -128,7 +132,7 @@ import {
   MarkdownCell,
   Notebook,
   remarkProcessor,
-} from "./md-notebook.ts";
+} from "./notebook.ts";
 
 /** Instructions delimiter configuration */
 export type InstructionsDelimiter =

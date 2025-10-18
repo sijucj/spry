@@ -332,7 +332,7 @@ spry show lint
 
 ### `NotebookCodeCell` — raw parsed unit
 
-**Origin:** `md-notebook.ts`
+**Origin:** `notebook.ts`
 
 - A **Notebook** represents one Markdown file.
 - The **Notebook parser** scans all fenced code blocks (`` ```lang … ``` ``).
@@ -350,7 +350,7 @@ validation).
 
 ### `PlaybookCodeCell` — contextualized cell inside a playbook
 
-**Origin:** `md-playbook.ts`
+**Origin:** `playbook.ts`
 
 - Multiple notebooks can be grouped into a **Playbook**, which provides:
 

@@ -1,8 +1,7 @@
-// md-partial.ts (unified)
 import { globToRegExp, isGlob, normalize } from "jsr:@std/path@^1";
 import { z, ZodType } from "jsr:@zod/zod@4";
-import { parsedTextComponents } from "./md-notebook.ts";
-import { jsonToZod } from "./zod-aide.ts";
+import { parsedTextComponents } from "./notebook.ts";
+import { jsonToZod } from "../../universal/zod-aide.ts";
 
 /** Render function for partials */
 type InjectContentFn = (

@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@1";
-import { MarkdownDoc } from "./md-doc-gen.ts";
+import { MarkdownDoc } from "./fluent-doc.ts";
 
 const unit: typeof Deno.test =
   (Reflect.get(Deno, "unit") as typeof Deno.test) ?? Deno.test;
@@ -78,7 +78,8 @@ unit(
 
     const actual = md.write();
     const expected = await Deno.readTextFile(
-      new URL("md-doc-gen_test-golden-fixture.md", import.meta.url),
+      // this doesn't end in `.md` because Deno tries to format *.md
+      new URL("fluent-doc_test-golden.fixture", import.meta.url),
     );
     assertEquals(actual, expected);
   },
