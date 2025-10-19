@@ -395,7 +395,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
     const label = sqlCat`${"label"}`; // → label (verbatim)
     const url = sqlCat`/details?id=${"id"}`; // → '/details?id=' || id
 
-    const got = markdownLink(label, url);
+    const got = markdownLink(label, url, false);
     const expect =
       // ('[' || label || '](' || sqlpage.url_encode('/details?id=' || id) || ')')
       "('[' || label || '](' || sqlpage.url_encode('/details?id=' || id) || ')')";
@@ -411,7 +411,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
       const encodedUrl =
         sqlRaw`sqlpage.url_encode('/x/' || ${sqlRaw`${"id"}`})`;
 
-      const got = markdownLink(text, encodedUrl);
+      const got = markdownLink(text, encodedUrl, false);
       const expect =
         "('[' || title || '](' || sqlpage.url_encode('/x/' || id) || ')')";
 
@@ -426,7 +426,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
 
     const got = markdownLink(text, url);
     const expect =
-      "('[' || regime_label || '](' || sqlpage.url_encode('/r?x=' || id) || ')')";
+      "('[' || regime_label || '](' || sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/r?x=' || id) || ')')";
 
     assertEquals(got, expect);
   });
@@ -439,7 +439,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
       // textFrag.text() → "coalesce(name, 'N/A')" (quotes handled by SQL.text())
 
       const urlFrag = SQL`'/u?id=' || ${sqlRaw`${"id"}`}`; // .text() → "'/u?id=' || id"
-      const got = markdownLink(textFrag, urlFrag);
+      const got = markdownLink(textFrag, urlFrag, false);
 
       const expect =
         "('[' || coalesce(name, 'N/A') || '](' || sqlpage.url_encode('/u?id=' || id) || ')')";
@@ -461,7 +461,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
       sqlRaw`${"person_id"}`,
     ]; // → '/p?id=' || person_id
 
-    const got = markdownLink(textParts, urlParts);
+    const got = markdownLink(textParts, urlParts, false);
     const expect =
       "('[' || first_name || ' ' || last_name || '](' || sqlpage.url_encode('/p?id=' || person_id) || ')')";
 
@@ -480,7 +480,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
       sqlRaw`'&d='`,
       sqlRaw`${"dept_id"}`,
     ];
-    const got = markdownLink(text, url);
+    const got = markdownLink(text, url, false);
     const expect =
       "('[' || org_name || ' — ' || dept || '/' || team || '](' || sqlpage.url_encode('/org?o=' || org_id || '&d=' || dept_id) || ')')";
 
@@ -500,7 +500,7 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
     const label = sqlCat`${"label"}`;
     const got = markdownLink(label, sqlRaw`'/z?id=' || ${sqlRaw`${"zid"}`}`);
     const expect =
-      "('[' || label || '](' || sqlpage.url_encode('/z?id=' || zid) || ')')";
+      "('[' || label || '](' || sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/z?id=' || zid) || ')')";
     assertEquals(got, expect);
   });
 });

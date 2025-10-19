@@ -567,23 +567,58 @@ function encodeOnce(expr: string): string {
 }
 
 /**
- * markdownLink — build a Markdown `[text](url)` SQL expression.
+ * markdownLink — build a Markdown `[text](url)` SQL expression with optional or skipped base URL.
  *
- * Accepts algebraic inputs (strings, `sqlCat` outputs, `sqlRaw` fragments, `SQL` fragments,
- * or arrays of those) for both `textExpr` and `urlExpr`. The URL is automatically
- * URL-encoded **exactly once** via `sqlpage.url_encode(...)`.
+ * Works like `anchor()` but allows an optional base URL prefix.
+ *
+ * Behavior:
+ * - All arguments accept algebraic fragments (`string` | `SQL` | `sqlRaw` | arrays of those).
+ * - If `baseUrlExpr` is:
+ *   - **undefined** → defaults to `sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')`
+ *   - **false** → skips the base URL entirely (just uses `urlExpr`)
+ *   - **any other SQLFrag** → prepends that before `urlExpr` using `" || "`
+ * - The final URL is URL-encoded **exactly once** via `sqlpage.url_encode(...)`.
  *
  * Examples (see unit tests for more):
- *   const text = sqlCat`${"label"}`;
- *   const url  = sqlCat`/details?id=${"id"}`;
- *   markdownLink(text, url);
- *   // → ('[' || label || '](' || sqlpage.url_encode('/details?id=' || id) || ')')
+ * ```ts
+ * // Default base URL (environment variable)
+ * markdownLink(sqlCat`${"label"}`, sqlCat`/details?id=${"id"}`)
+ * // → ('[' || label || '](' || sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/details?id=' || id) || ')')
  *
- *   // Using sqlRaw for identifiers/expressions:
- *   markdownLink(sqlRaw`${"regime_label"}`, sqlRaw`'/r?x=' || ${"id"}`);
+ * // Custom base URL
+ * markdownLink(
+ *   sqlCat`${"label"}`,
+ *   sqlCat`/x?id=${"id"}`,
+ *   sqlRaw`'https://example.org'`
+ * )
+ * // → ('[' || label || '](' || sqlpage.url_encode('https://example.org' || '/x?id=' || id) || ')')
+ *
+ * // Explicitly skip base URL
+ * markdownLink(sqlCat`${"label"}`, sqlCat`/y?id=${"id"}`, false)
+ * // → ('[' || label || '](' || sqlpage.url_encode('/y?id=' || id) || ')')
+ * ```
  */
-export function markdownLink(textExpr: SQLFrag, urlExpr: SQLFrag): string {
+export function markdownLink(
+  textExpr: SQLFrag,
+  urlExpr: SQLFrag,
+  baseUrlExpr?: SQLFrag | false | undefined,
+): string {
   const text = fragToSql(textExpr);
-  const url = encodeOnce(fragToSql(urlExpr));
-  return sqlCat`[${text}](${url})`;
+  const urlPart = fragToSql(urlExpr);
+
+  // Resolve base URL:
+  // - undefined → default env variable
+  // - false → skip entirely
+  // - otherwise → use provided fragment
+  const base = baseUrlExpr === false
+    ? ""
+    : baseUrlExpr === undefined
+    ? "sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')"
+    : fragToSql(baseUrlExpr);
+
+  // Concatenate only when both sides are non-empty
+  const fullUrl = base && urlPart ? `${base} || ${urlPart}` : base || urlPart;
+
+  const encoded = encodeOnce(fullUrl);
+  return sqlCat`[${text}](${encoded})`;
 }
