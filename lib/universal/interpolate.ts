@@ -59,45 +59,109 @@ export function unsafeInterpolator<Context extends Record<string, unknown>>(
     >
   >();
 
+  function splitTemplateIntoParts(
+    src: string,
+  ): Array<{ type: "lit" | "expr"; value: string }> {
+    const parts: Array<{ type: "lit" | "expr"; value: string }> = [];
+    let i = 0, litStart = 0;
+
+    while (i < src.length) {
+      if (src[i] === "$" && src[i + 1] === "{") {
+        // push preceding literal
+        if (i > litStart) {
+          parts.push({ type: "lit", value: src.slice(litStart, i) });
+        }
+        // scan balanced ${ ... }
+        i += 2;
+        let depth = 1;
+        const exprStart = i;
+        while (i < src.length && depth > 0) {
+          const ch = src[i];
+          if (ch === "{") depth++;
+          else if (ch === "}") depth--;
+          else if (ch === '"' || ch === "'" || ch === "`") {
+            // skip quoted/template strings to avoid premature brace counting
+            const quote = ch;
+            i++;
+            while (i < src.length) {
+              const c = src[i];
+              if (c === "\\") {
+                i += 2;
+                continue;
+              }
+              if (c === quote) {
+                i++;
+                break;
+              }
+              // Handle template literal ${...} correctly by nesting
+              if (quote === "`" && c === "$" && src[i + 1] === "{") {
+                // enter nested ${ in template literal
+                i += 2;
+                let d = 1;
+                while (i < src.length && d > 0) {
+                  const cc = src[i];
+                  if (cc === "\\") {
+                    i += 2;
+                    continue;
+                  }
+                  if (cc === "{") d++;
+                  else if (cc === "}") d--;
+                  else if (cc === "`") {
+                    /* keep going; still inside template */
+                  }
+                  i++;
+                }
+                continue;
+              }
+              i++;
+            }
+            continue;
+          }
+          i++;
+        }
+        const expr = src.slice(exprStart, i - 1);
+        parts.push({ type: "expr", value: expr });
+        litStart = i;
+        continue;
+      }
+      i++;
+    }
+    if (litStart < src.length) {
+      parts.push({ type: "lit", value: src.slice(litStart) });
+    }
+    return parts;
+  }
+
   function compile(source: string, keys: readonly string[]) {
-    // Guard against local keys colliding with ctxName.
     if (keys.includes(ctxName)) {
       throw new Error(
         `Local key "${ctxName}" conflicts with ctxName. Rename the local or choose a different ctxName.`,
       );
     }
-
-    // Validate local identifiers (we promote them to top-level consts).
     for (const k of keys) assertValidIdentifier(k, `local key`);
 
-    // Escape for embedding within a backticked template in generated code.
-    const safe = source.replace(/\\/g, "\\\\").replace(/`/g, "\\`");
-
-    // Promote locals as real identifiers.
-    const decls = keys
-      .map((k) => `const ${k} = __l[${JSON.stringify(k)}];`)
+    const decls = keys.map((k) => `const ${k} = __l[${JSON.stringify(k)}];`)
       .join("\n");
-
-    // Expose the context under the chosen name.
     const ctxDecl = `const ${ctxName} = __ctx;`;
+
+    const parts = splitTemplateIntoParts(source);
+    const js = parts.map((p) =>
+      p.type === "lit" ? JSON.stringify(p.value) : `(${p.value})`
+    ).join(" + ");
 
     const body = [
       `"use strict";`,
       decls,
       ctxDecl,
-      `return \`${safe}\`;`,
+      `return ${js};`,
     ].join("\n");
 
-    // 👇 Create the AsyncFunction constructor once
-    const AsyncFunction =
-      Object.getPrototypeOf(async function () {}).constructor;
-
-    // 👇 Use it instead of new Function
-    return new AsyncFunction(
-      "__ctx",
-      "__l",
-      body,
-    ) as (c: Context, l: Record<string, unknown>) => Promise<string>;
+    const AsyncFunction = Object.getPrototypeOf(async function () {})
+      .constructor as FunctionConstructor;
+    return new AsyncFunction("__ctx", "__l", body) as (
+      c: Context,
+      l: Record<string, unknown>,
+    ) => Promise<string>;
   }
 
   async function interpolate<LocalContext extends Record<string, unknown>>(
