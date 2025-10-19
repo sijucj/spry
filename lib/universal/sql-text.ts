@@ -89,9 +89,9 @@ export function isSQL(v: unknown): v is SQL {
   );
 }
 
-const isSingleQuoted = (s: string) => /^\s*'[\s\S]*'\s*$/.test(s);
+export const isSingleQuoted = (s: string) => /^\s*'[\s\S]*'\s*$/.test(s);
 
-const hexOfUint8 = (bytes: Uint8Array): string =>
+export const hexOfUint8 = (bytes: Uint8Array): string =>
   "X'" +
   Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -540,7 +540,7 @@ export type SQLFrag =
   | ReadonlyArray<SQLFrag>;
 
 /** Normalize any fragment (or nested array of fragments) into a raw SQL string. */
-function fragToSql(v: SQLFrag): string {
+export function fragToSql(v: SQLFrag): string {
   if (Array.isArray(v)) {
     return v.map(fragToSql).filter(Boolean).join(" || ");
   }
@@ -549,7 +549,7 @@ function fragToSql(v: SQLFrag): string {
   return String(v); // plain identifier/expression/sqlCat result
 }
 
-function stripOuterParens(s: string): string {
+export function stripOuterParens(s: string): string {
   const t = s.trim();
   if (t.startsWith("(") && t.endsWith(")")) {
     const inner = t.slice(1, -1);
@@ -558,74 +558,7 @@ function stripOuterParens(s: string): string {
   return s;
 }
 
-/** Avoid double-wrapping if caller already encoded the URL; also strip outer parens once. */
-function encodeOnce(expr: string): string {
-  const cleaned = stripOuterParens(expr);
-  return cleaned.includes("sqlpage.url_encode")
-    ? cleaned
-    : `(sqlpage.url_encode(${cleaned}))`;
-}
-
-/**
- * markdownLink — build a Markdown `[text](url)` SQL expression with optional or skipped base URL.
- *
- * Works like `anchor()` but allows an optional base URL prefix.
- *
- * Behavior:
- * - All arguments accept algebraic fragments (`string` | `SQL` | `sqlRaw` | arrays of those).
- * - If `baseUrlExpr` is:
- *   - **undefined** → defaults to `sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')`
- *   - **false** → skips the base URL entirely (just uses `urlExpr`)
- *   - **any other SQLFrag** → prepends that before `urlExpr` using `" || "`
- * - The final URL is URL-encoded **exactly once** via `sqlpage.url_encode(...)`.
- *
- * Examples (see unit tests for more):
- * ```ts
- * // Default base URL (environment variable)
- * markdownLink(sqlCat`${"label"}`, sqlCat`/details?id=${"id"}`)
- * // → ('[' || label || '](' || sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/details?id=' || id) || ')')
- *
- * // Custom base URL
- * markdownLink(
- *   sqlCat`${"label"}`,
- *   sqlCat`/x?id=${"id"}`,
- *   sqlRaw`'https://example.org'`
- * )
- * // → ('[' || label || '](' || sqlpage.url_encode('https://example.org' || '/x?id=' || id) || ')')
- *
- * // Explicitly skip base URL
- * markdownLink(sqlCat`${"label"}`, sqlCat`/y?id=${"id"}`, false)
- * // → ('[' || label || '](' || sqlpage.url_encode('/y?id=' || id) || ')')
- * ```
- */
-export function markdownLink(
-  textExpr: SQLFrag,
-  urlExpr: SQLFrag,
-  baseUrlExpr?: SQLFrag | false | undefined,
-): string {
-  const text = fragToSql(textExpr);
-  const urlPart = fragToSql(urlExpr);
-
-  // Resolve base URL:
-  // - undefined → default env variable
-  // - false → skip entirely
-  // - otherwise → use provided fragment
-  const base = baseUrlExpr === false
-    ? ""
-    : baseUrlExpr === undefined
-    ? "sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')"
-    : fragToSql(baseUrlExpr);
-
-  // Concatenate only when both sides are non-empty
-  const fullUrl = base && urlPart ? `${base} || ${urlPart}` : base || urlPart;
-
-  const encoded = encodeOnce(fullUrl);
-  return sqlCat`[${text}](${encoded})`;
-}
-
 // ------------------------- SQL HELPERS for templating systems ----------------
-
-// Add near your helpers:
 
 export function looksLikeSqlExpr(s: string): boolean {
   const t = s.trim();
