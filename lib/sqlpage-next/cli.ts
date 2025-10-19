@@ -1,5 +1,3 @@
-#!/usr/bin/env -S deno run -A
-
 import { Command, EnumType } from "jsr:@cliffy/command@1.0.0-rc.8";
 import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
 import {
@@ -166,14 +164,6 @@ export class CLI {
     };
   }
 
-  preparePlaybook(opts: { md: string[]; srcRelTo: SourceRelativeTo }) {
-    return this.spn.prepare({
-      mdSources: opts.md,
-      srcRelTo: opts.srcRelTo,
-      state: sqlPagePlaybookState(),
-    });
-  }
-
   async ls(
     opts: {
       md: string[];
@@ -293,12 +283,28 @@ export class CLI {
     }
   }
 
-  async run(argv: string[] = Deno.args) {
+  command(name = "spry.ts") {
     // Enum type with enum.
     const srcRelTo = new EnumType(SourceRelativeTo);
+    const mdOpt = [
+      "-m, --md <mdPath:string>",
+      "Use the given Markdown source(s), multiple allowed",
+      {
+        required: true,
+        collect: true,
+        default: ["Spryfile.md"],
+      },
+    ] as const;
+    const srcRelToOpt = [
+      "--src-rel-to <relative-to:sourceRelTo>",
+      "When relative paths are used, what are they relative to?",
+      {
+        default: SourceRelativeTo.LocalFs,
+      },
+    ] as const;
 
-    await new Command()
-      .name("codebook.ts")
+    return new Command()
+      .name(name)
       .version("0.1.0")
       .description(
         "SQLPage Markdown Notebook: emit SQL package, write sqlpage.json, or materialize filesystem.",
@@ -309,17 +315,8 @@ export class CLI {
         new Command() // Emit SQL package (sqlite) to stdout; accepts md path
           .description("SQLPage Content (spc) CLI")
           .type("sourceRelTo", srcRelTo)
-          .option("-m, --md <mdPath:string>", "Use the given Markdown source", {
-            required: true,
-            collect: true,
-          })
-          .option(
-            "--src-rel-to <relative-to:sourceRelTo>",
-            "When relative paths are used, what are they relative to?",
-            {
-              default: SourceRelativeTo.LocalFs,
-            },
-          )
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
           .option(
             "-p, --package",
             "Emit SQL package (sqlite) to stdout from the given markdown path.",
@@ -334,16 +331,21 @@ export class CLI {
             "-c, --conf <confPath:string>",
             "Write sqlpage.json to this path (generated from frontmatter sqlpage-conf).",
           )
+          .option("--verbose", "Emit information messages")
           .action(async (opts) => {
             // If --fs is present, materialize files under that root
             if (typeof opts.fs === "string" && opts.fs.length > 0) {
-              (await Array.fromAsync(
+              const generated = await Array.fromAsync(
                 this.materializeFs({
-                  md: opts.md,
+                  // not sure why this mapping is needed, Cliffy seems to not type `default` for `collect`ed arrays properly?
+                  md: opts.md.map((f) => String(f)),
                   srcRelTo: opts.srcRelTo,
                   fs: opts.fs,
                 }),
-              )).forEach((f) => console.log(f.absPath));
+              );
+              if (opts.verbose) {
+                generated.forEach((f) => console.log(f.absPath));
+              }
             }
 
             // If -p/--package is present (i.e., user requested SQL package), emit to stdout
@@ -351,7 +353,7 @@ export class CLI {
               for (
                 const chunk of await sqlPageFilesUpsertDML(
                   this.spn.sqlPageFiles({
-                    mdSources: opts.md,
+                    mdSources: opts.md.map((f) => String(f)),
                     srcRelTo: opts.srcRelTo,
                     state: sqlPagePlaybookState(),
                   }),
@@ -367,8 +369,14 @@ export class CLI {
 
             // If --conf is present, write sqlpage.json
             if (opts.conf) {
-              const pp = await this.preparePlaybook(opts);
+              let emitted = 0, encountered = 0;
+              const pp = await this.spn.prepare({
+                mdSources: opts.md.map((f) => String(f)),
+                srcRelTo: opts.srcRelTo,
+                state: sqlPagePlaybookState(),
+              });
               for (const pb of pp.state.directives.playbooks) {
+                encountered++;
                 const { notebook: nb } = pb;
                 if (nb.fm["sqlpage-conf"]) {
                   const json = sqlPageConf(nb.fm["sqlpage-conf"]);
@@ -377,53 +385,53 @@ export class CLI {
                     opts.conf,
                     JSON.stringify(json, null, 2),
                   );
+                  if (opts.verbose) {
+                    console.log(opts.conf);
+                  }
+                  emitted++;
                   break; // only pick from the first file
                 }
+              }
+              if (emitted == 0) {
+                console.warn(
+                  `Encountered ${encountered} playbook(s) but no "sqlpage-conf" found in any frontmatter.`,
+                );
               }
             }
           })
           .command("ls", "List SQLPage file entries")
           .type("sourceRelTo", srcRelTo)
-          .option("-m, --md <mdPath:string>", "Use the given Markdown source", {
-            required: true,
-            collect: true,
-          })
-          .option(
-            "--src-rel-to <relative-to:sourceRelTo>",
-            "When relative paths are used, what are they relative to?",
-            {
-              default: SourceRelativeTo.LocalFs,
-            },
-          )
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
           .option("-t, --tree", "Show as tree")
-          .action((opts) => this.ls(opts))
+          .action((opts) =>
+            this.ls({
+              ...opts,
+              md: opts.md.map((f) => String(f)),
+            })
+          )
           .command("cat", "Concatenate SQLPage file contents")
           .type("sourceRelTo", srcRelTo)
-          .option("-m, --md <mdPath:string>", "Use the given Markdown source", {
-            required: true,
-            collect: true,
-          })
-          .option(
-            "--src-rel-to <relative-to:sourceRelTo>",
-            "When relative paths are used, what are they relative to?",
-            {
-              default: SourceRelativeTo.LocalFs,
-            },
-          )
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
           .option("-g, --glob <path:string>", "Path glob(s) to target", {
             required: true,
             collect: true,
           })
-          .action((opts) => this.cat(opts)),
-      )
-      .parse(argv);
+          .action((opts) =>
+            this.cat({
+              ...opts,
+              md: opts.md.map((f) => String(f)),
+            })
+          ),
+      );
+  }
+
+  async run(argv: string[] = Deno.args, name = "spry.ts") {
+    await this.command(name).parse(argv);
   }
 
   static instance() {
     return new CLI();
   }
-}
-
-if (import.meta.main) {
-  CLI.instance().run();
 }
