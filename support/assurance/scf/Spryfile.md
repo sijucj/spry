@@ -1,7 +1,7 @@
 ---
 sqlpage-conf:
   database_url: "sqlite://scf-2025.3.sqlite.db?mode=rwc"
-  web_root: "./dev.auto"
+  web_root: "./dev-src.auto"
   allow_exec: true
   port: 9227
 ---
@@ -28,18 +28,18 @@ cat prepare.duckdb.sql | duckdb ":memory:"  # DuckDB processes in memory but cre
 
 ## SQLPage Dev / Watch mode
 
-While you're developing Spry's `dev.auto` generator should be used:
+While you're developing Spry's `dev-src.auto` generator should be used:
 
-```bash prepare-sqlpage-dev --descr "Generate the dev.auto directory to work in SQLPage dev mode"
-rm -rf dev.auto && ./spry.ts spc --fs dev.auto --conf sqlpage/sqlpage.json
+```bash prepare-sqlpage-dev --descr "Generate the dev-src.auto directory to work in SQLPage dev mode"
+rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
 ```
 
 In development mode, here’s the `watchexec` convenience you can use so that
-whenever you update `Spryfile.md` it regenerates the SQLPage `dev.auto` which
-then is picked up automatically by SQLPage server:
+whenever you update `Spryfile.md` it regenerates the SQLPage `dev-src.auto`
+which then is picked up automatically by SQLPage server:
 
 ```bash
-watchexec -e md -w Spryfile.md -- rm -rf dev.auto && ./spry.ts spc --fs dev.auto --conf sqlpage/sqlpage.json
+watchexec -e md -w Spryfile.md -- rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
 ```
 
 - `-e md` — watch only Markdown files.
@@ -51,16 +51,16 @@ in another terminal. If you want to do both in one terminal:
 
 ```bash
 watchexec --shell=bash --restart -e md -w Spryfile.md -- \
-  'set -Eeuo pipefail; rm -rf dev.auto && deno run -A ./spry.ts spc --fs dev.auto --conf sqlpage/sqlpage.json && SQLPAGE_SITE_PREFIX="" sqlpage'
+  'set -Eeuo pipefail; rm -rf dev-src.auto && deno run -A ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json && SQLPAGE_SITE_PREFIX="" sqlpage'
 ```
 
 ## SQLPage single database deployment mode
 
-After development is complete, the `dev.auto` can be removed and single-database
-deployment can be used:
+After development is complete, the `dev-src.auto` can be removed and
+single-database deployment can be used:
 
 ```bash deploy
-rm -rf dev.auto
+rm -rf dev-src.auto
 ./spry.ts spc --package --conf sqlpage/sqlpage.json | sqlite3 scf-2025.3.sqlite.db
 ```
 

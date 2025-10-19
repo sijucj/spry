@@ -320,11 +320,13 @@ export class CLI {
           .option(
             "-p, --package",
             "Emit SQL package (sqlite) to stdout from the given markdown path.",
+            { conflicts: ["fs"] },
           )
           // Materialize files to a target directory
           .option(
             "--fs <srcHome:string>",
             "Materialize SQL files under this directory.",
+            { conflicts: ["package"] },
           )
           // Write sqlpage.json to the given path
           .option(
@@ -380,6 +382,9 @@ export class CLI {
                 const { notebook: nb } = pb;
                 if (nb.fm["sqlpage-conf"]) {
                   const json = sqlPageConf(nb.fm["sqlpage-conf"]);
+                  // "web_root" should only be specified for `--fs`
+                  // otherwise the directory won't exist
+                  if (opts.package) delete json["web_root"];
                   await ensureDir(dirname(opts.conf));
                   await Deno.writeTextFile(
                     opts.conf,
