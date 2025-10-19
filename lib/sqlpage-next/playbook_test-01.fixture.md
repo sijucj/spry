@@ -47,7 +47,9 @@ select 2;
 ```
 
 ```sql debug.sql
--- site prefixed: ${ctx.sitePrefixed("'test'")}
+-- markdown link (mdLink): ${mdLink("simpleText", "simpleURL")}
+-- sqlCat: ${sqlCat`prefix-${"col"}-mid-${"other"}-suffix`}
+-- site prefixed: ${ctx.sitePrefixed("test")}
 
 -- partial 1 (error): ${await partial("non-existent")}
 

@@ -14,6 +14,12 @@ import {
 import { safeSourceText } from "../universal/content-acquisition.ts";
 import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { forestToStatelessViews } from "../universal/path-tree-tabular.ts";
+import {
+  markdownLink,
+  raw as rawSQL,
+  SQL,
+  sqlCat,
+} from "../universal/sql-text.ts";
 import { executionPlan } from "../universal/task.ts";
 import { dropUndef } from "./conf.ts";
 import {
@@ -202,6 +208,10 @@ export function sqlPageInterpolator() {
       absUrlUnquotedEncoded: interp.absUrlUnquotedEncoded,
       absUrlQuotedEncoded: interp.absUrlQuotedEncoded,
       sitePrefixed: interp.absUrlQuoted,
+      mdLink: markdownLink,
+      rawSQL,
+      sqlCat,
+      SQL,
       paginate: (tableOrViewName: string, whereSQL?: string) => {
         const pn = interp.pagination({ tableOrViewName, whereSQL });
         pagination.active = pn;
@@ -237,6 +247,10 @@ export function sqlPageInterpolator() {
           pagination: ctx.pagination,
           paginate: ctx.paginate,
           safeJsonStringify,
+          SQL,
+          sqlCat,
+          mdLink: markdownLink,
+          rawSQL,
           ...spfu.cell?.attrs,
           ...spfu,
           partial: async (
