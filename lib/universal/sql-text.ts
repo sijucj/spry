@@ -622,3 +622,194 @@ export function markdownLink(
   const encoded = encodeOnce(fullUrl);
   return sqlCat`[${text}](${encoded})`;
 }
+
+// ------------------------- SQL HELPERS for templating systems ----------------
+
+// Add near your helpers:
+
+export function looksLikeSqlExpr(s: string): boolean {
+  const t = s.trim();
+  if (t.includes("||")) return true; // sqlCat-style concat
+  if (t.startsWith("(") && t.endsWith(")")) return true; // grouped expr
+  return false;
+}
+
+/** Internal: coerce a value into a SQL expression. SQLFrag → sql; other → literal(). */
+function toExpr(v: SQLFrag | unknown): string {
+  if (Array.isArray(v)) return fragToSql(v as SQLFrag);
+  if (isSQL(v) || isRaw(v)) return fragToSql(v as SQLFrag);
+  if (typeof v === "string") {
+    // If caller already supplied a single-quoted literal, keep it verbatim.
+    if (isSingleQuoted(v)) return v;
+    // Heuristic: sqlCat/result-like or grouped SQL → treat as expression.
+    if (looksLikeSqlExpr(v)) return v.trim();
+    // Otherwise, it's a plain JS string → literalize safely.
+    return literal(v);
+  }
+  return literal(v);
+}
+
+/**
+ * Quote/escape SQL identifiers, supporting dotted paths like schema.table or t.col.
+ * Bare identifiers pass through; others are "quoted" with doubled internal quotes.
+ *
+ * Examples:
+ *  sqlIdent("users")         -> users
+ *  sqlIdent("order items")   -> "order items"
+ *  sqlIdent("public.users")  -> public.users
+ *  sqlIdent('t."weird col"') -> t."weird col"
+ */
+export function sqlIdent(id: string): string {
+  const parts: string[] = [];
+  let cur = "", inQuote = false;
+  for (let i = 0; i < id.length; i++) {
+    const ch = id[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      cur += ch;
+      continue;
+    }
+    if (ch === "." && !inQuote) {
+      parts.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) parts.push(cur);
+
+  return parts.map((p) => {
+    const bare = /^[_a-zA-Z][_a-zA-Z0-9]*$/.test(p);
+    if (bare) return p;
+    if (p.startsWith('"') && p.endsWith('"')) return p; // already quoted
+    return `"${p.replaceAll('"', '""')}"`;
+  }).join(".");
+}
+
+/** Comma-joined, identifier-escaped column list. */
+export function colList(cols: readonly string[]): string {
+  return cols.map(sqlIdent).join(", ");
+}
+
+/** Render a list of values/expressions as a SQL IN (...) list. */
+export function sqlIn(values: readonly (SQLFrag | unknown)[]): string {
+  return `(${values.map((v) => toExpr(v)).join(", ")})`;
+}
+
+/**
+ * name = value, name2 = value2 from a record
+ * Keys are identifiers; values are SQLFrag (expr) or plain JS (literal).
+ */
+export function assignments(obj: Record<string, SQLFrag | unknown>): string {
+  return Object.entries(obj)
+    .map(([k, v]) => `${sqlIdent(k)} = ${toExpr(v)}`)
+    .join(", ");
+}
+
+/** Pair list: expr AS alias, with alias quoted via sqlIdent. */
+export function selectAs(
+  pairs: readonly { expr: SQLFrag | unknown; as: string }[],
+): string {
+  return pairs.map((p) => `${toExpr(p.expr)} AS ${sqlIdent(p.as)}`).join(", ");
+}
+
+/**
+ * VALUES (...) tuples for INSERT using ordered column names and row records.
+ * Row values can be SQL fragments (used verbatim) or plain JS (literalized).
+ */
+export function valuesTuples(
+  rows: readonly Record<string, SQLFrag | unknown>[],
+  cols: readonly string[],
+): string {
+  return rows
+    .map((r) => `(${cols.map((c) => toExpr(r[c])).join(", ")})`)
+    .join(",\n");
+}
+
+/** CASE WHEN builder. Supply WHEN/THEN as SQLFrag/JS; ELSE as SQLFrag/JS. */
+export function caseWhen(
+  rules: readonly { when: SQLFrag | unknown; then: SQLFrag | unknown }[],
+  elseExpr: SQLFrag | unknown,
+): string {
+  const body = rules
+    .map((r) => `WHEN ${toExpr(r.when)} THEN ${toExpr(r.then)}`)
+    .join("\n    ");
+  return `CASE\n    ${body}\n    ELSE ${toExpr(elseExpr)}\nEND`;
+}
+
+// Replace the helper(s) inside withCTE section:
+
+// Normalize a multi-line SQL block: trim outer whitespace and left-trim each line.
+function normalizeBlock(s: string): string {
+  return s.trim().split("\n").map((l) => l.trim()).join("\n");
+}
+
+// Indent each non-empty line by n spaces (after normalization).
+function indentBlock(s: string, n = 2): string {
+  return normalizeBlock(s)
+    .split("\n")
+    .map((l) => (l.length ? " ".repeat(n) + l : l))
+    .join("\n");
+}
+
+export function withCTE(
+  ctes: readonly { name: string; sql: SQLFrag | unknown }[],
+  finalSql: SQLFrag | unknown,
+): string {
+  const head = ctes
+    .map((c) => {
+      const body = fragToSql(c.sql as SQLFrag);
+      return `${sqlIdent(c.name)} AS (\n${indentBlock(body)}\n)`;
+    })
+    .join(",\n");
+
+  const tail = normalizeBlock(fragToSql(finalSql as SQLFrag));
+  return `WITH ${head}\n${tail}`;
+}
+
+/** UNION ALL join with block trimming. Accepts SQLFrag or JS (literal). */
+export function unionAll(chunks: readonly (SQLFrag | unknown)[]): string {
+  return chunks.map((c) => fragToSql(c as SQLFrag).trim()).join(
+    "\nUNION ALL\n",
+  );
+}
+
+/**
+ * Convenience for ON CONFLICT ... DO UPDATE SET ... (Postgres/SQLite).
+ * If updateCols not supplied, defaults to non-PK columns (see upsertFromStage()).
+ */
+export function onConflictSet(cols: readonly string[]): string {
+  return cols.map((c) => `${sqlIdent(c)} = EXCLUDED.${sqlIdent(c)}`).join(", ");
+}
+
+/**
+ * dbt-like helper: stage -> target UPSERT with ON CONFLICT semantics.
+ * `target` and `stage` are identifier paths; columns are identifier names.
+ * Useful with `valuesTuples()`/`selectAs()` when composing larger statements.
+ */
+export function upsertFromStage(args: {
+  target: string;
+  stage: string;
+  cols: readonly string[];
+  pk: readonly string[];
+  updateCols?: readonly string[];
+}): string {
+  const { target, stage, cols, pk, updateCols } = args;
+  const upd = updateCols ?? cols.filter((c) => !pk.includes(c));
+  const selectCols = cols.map((c) => `${sqlIdent("s")}.${sqlIdent(c)}`).join(
+    ", ",
+  );
+  return `
+INSERT INTO ${sqlIdent(target)} (${colList(cols)})
+SELECT ${selectCols}
+FROM ${sqlIdent(stage)} AS ${sqlIdent("s")}
+ON CONFLICT (${colList(pk)}) DO UPDATE SET ${onConflictSet(upd)}
+`.trim();
+}
+
+/** Prefix-qualified columns as `prefix.col AS col` for projection cloning. */
+export function cols(prefix: string, names: readonly string[]): string {
+  return names
+    .map((n) => `${sqlIdent(prefix)}.${sqlIdent(n)} AS ${sqlIdent(n)}`)
+    .join(", ");
+}

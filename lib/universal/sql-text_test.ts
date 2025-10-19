@@ -16,6 +16,7 @@ import {
   SQL,
   sqlCat,
   sqlRaw,
+  withCTE,
 } from "./sql-text.ts"; // adjust path
 
 Deno.test("isSQL type guard", () => {
@@ -502,5 +503,212 @@ Deno.test("markdownLink() — complex examples & usage", async (t) => {
     const expect =
       "('[' || label || '](' || sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '/z?id=' || zid) || ')')";
     assertEquals(got, expect);
+  });
+});
+
+// ------------------------- Template helpers — cookbook -------------------------
+
+import {
+  assignments,
+  caseWhen,
+  colList,
+  cols,
+  onConflictSet,
+  selectAs,
+  sqlIdent,
+  sqlIn,
+  unionAll,
+  upsertFromStage,
+  valuesTuples,
+} from "./sql-text.ts"; // adjust path if needed
+
+Deno.test("Template helpers — cookbook", async (t) => {
+  await t.step(
+    "sqlIdent(): dotted paths, spaces, and pre-quoted pieces",
+    () => {
+      assertEquals(sqlIdent("users"), "users");
+      assertEquals(sqlIdent("order items"), `"order items"`);
+      assertEquals(sqlIdent("public.users"), "public.users");
+      assertEquals(sqlIdent(`t."weird col"`), `t."weird col"`);
+      assertEquals(sqlIdent(`MixedCase`), `MixedCase`);
+      assertEquals(sqlIdent(`needs-quote`), `"needs-quote"`);
+    },
+  );
+
+  await t.step("colList(): identifier-escaped join", () => {
+    assertEquals(
+      colList(["id", "first name", "email"]),
+      `id, "first name", email`,
+    );
+  });
+
+  await t.step("sqlIn(): mix plain JS (literal) and SQL fragments", () => {
+    // Plain JS → literal(); sqlRaw/sqlCat/SQL → spliced as expressions.
+    const frag = SQL`lower(${sqlRaw`${"email"}`})`;
+    const cat = sqlCat`/u/${"id"}`; // → ('/u/' || id)
+    const out = sqlIn([1, "O'Hara", true, null, sqlRaw`${"name"}`, frag, cat]);
+    assertEquals(
+      out,
+      `(` +
+        `1, 'O''Hara', TRUE, NULL, name, lower(email), ('/u/' || id)` +
+        `)`,
+    );
+  });
+
+  await t.step("assignments(): safe key=expr with mixed value types", () => {
+    const out = assignments({
+      id: 7, // literal
+      name: sqlRaw`${"full_name"}`, // identifier expr
+      updated_at: SQL`${new Date("2025-01-01T00:00:00Z")}`, // literalized by .text()
+      path: sqlCat`/p/${"id"}`, // ('/p/' || id)
+      "odd key": "O'Hara", // key quoted, value literal
+    });
+    assertEquals(
+      out,
+      [
+        `id = 7`,
+        `name = full_name`,
+        `updated_at = '2025-01-01T00:00:00.000Z'`,
+        `path = ('/p/' || id)`,
+        `"odd key" = 'O''Hara'`,
+      ].join(", "),
+    );
+  });
+
+  await t.step("selectAs(): expression AS quoted alias", () => {
+    const pairs = [
+      { expr: sqlRaw`count(*)`, as: "total" },
+      { expr: sqlRaw`${"dept"}`, as: "department name" },
+      { expr: SQL`coalesce(${sqlRaw`${"note"}`}, ${"N/A"})`, as: "note" },
+    ] as const;
+    assertEquals(
+      selectAs(pairs),
+      `count(*) AS total, dept AS "department name", coalesce(note, 'N/A') AS note`,
+    );
+  });
+
+  await t.step(
+    "valuesTuples(): INSERT VALUES rows (JS values + SQL frags)",
+    () => {
+      const rows = [
+        { id: 1, name: "Alice", slug: sqlCat`/u/${"id"}` },
+        { id: 2, name: "O'Hara", slug: sqlRaw`'/u/' || ${sqlRaw`${"id"}`}` },
+      ] as const;
+      const out = valuesTuples(rows, ["id", "name", "slug"]);
+      assertEquals(
+        out,
+        [
+          `(1, 'Alice', ('/u/' || id))`,
+          `(2, 'O''Hara', '/u/' || id)`,
+        ].join(",\n"),
+      );
+    },
+  );
+
+  await t.step("caseWhen(): readable CASE blocks with mixed inputs", () => {
+    const out = caseWhen(
+      [
+        { when: sqlRaw`${"score"} >= 90`, then: "'A'" },
+        { when: sqlRaw`${"score"} >= 80`, then: "'B'" },
+        { when: sqlRaw`${"score"} >= 70`, then: "'C'" },
+      ],
+      sqlRaw`'F'`,
+    );
+    assertEquals(
+      out,
+      [
+        `CASE`,
+        `    WHEN score >= 90 THEN 'A'`,
+        `    WHEN score >= 80 THEN 'B'`,
+        `    WHEN score >= 70 THEN 'C'`,
+        `    ELSE 'F'`,
+        `END`,
+      ].join("\n"),
+    );
+  });
+
+  await t.step("withCTE(): tidy CTE header + final SQL", () => {
+    const ctes = [
+      {
+        name: "base users",
+        sql: `
+          select id, name
+          from ${sqlIdent("public.users")}
+          where active = TRUE
+        `,
+      },
+      {
+        name: "named",
+        sql:
+          SQL`select id, upper(${sqlRaw`${"name"}`}) as name from ${sqlRaw`"base users"`}`,
+      },
+    ] as const;
+    const finalSql = `
+      select *
+      from "named"
+      where name like 'A%'
+    `;
+    const out = withCTE(ctes, finalSql);
+    assertEquals(
+      out,
+      [
+        `WITH "base users" AS (`,
+        `  select id, name`,
+        `  from public.users`,
+        `  where active = TRUE`,
+        `),`,
+        `named AS (`,
+        `  select id, upper(name) as name from "base users"`,
+        `)`,
+        `select *`,
+        `from "named"`,
+        `where name like 'A%'`,
+      ].join("\n"),
+    );
+  });
+
+  await t.step("unionAll(): clean join with trimming", () => {
+    const out = unionAll([
+      ` select 1 as n `,
+      `select 2 as n`,
+      SQL` select ${3} as n `,
+    ]);
+    assertEquals(
+      out,
+      ["select 1 as n", "select 2 as n", "select 3 as n"].join("\nUNION ALL\n"),
+    );
+  });
+
+  await t.step("onConflictSet(): projection for EXCLUDED.* updates", () => {
+    assertEquals(
+      onConflictSet(["name", "email", "updated_at"]),
+      `name = EXCLUDED.name, email = EXCLUDED.email, updated_at = EXCLUDED.updated_at`,
+    );
+  });
+
+  await t.step("upsertFromStage(): dbt-like stage→target UPSERT", () => {
+    const out = upsertFromStage({
+      target: "public.users",
+      stage: "stg_users",
+      cols: ["id", "name", "email", "updated_at"],
+      pk: ["id"],
+      updateCols: ["name", "email", "updated_at"],
+    });
+    assertEquals(
+      out,
+      [
+        `INSERT INTO public.users (id, name, email, updated_at)`,
+        `SELECT s.id, s.name, s.email, s.updated_at`,
+        `FROM stg_users AS s`,
+        `ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = EXCLUDED.updated_at`,
+      ].join("\n"),
+    );
+  });
+
+  await t.step("cols(): prefix-qualified projection cloning", () => {
+    assertEquals(
+      cols("u", ["id", "full name", "email"]),
+      `u.id AS id, u."full name" AS "full name", u.email AS email`,
+    );
   });
 });
