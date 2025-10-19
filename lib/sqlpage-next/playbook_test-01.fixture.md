@@ -40,14 +40,18 @@ select 2;
 -- this is the frontmatter in the cell's notebook: ${safeJsonStringify(cell.frontmatter)}
 ```
 
+The following cell demonstrates how to partials can use type-safe arguments for
+replacement.
+
 ```sql PARTIAL test-partial { newLocal: { type: "string", required: true } }
+-- this is the ${cell.info} cell on line ${cell.startLine}
 -- this is the path in test-partial: ${path}
 -- this is the cell in test-partial: ${cell?.kind}
 -- this is the newLocal in test-partial: ${newLocal}
 ```
 
 ```sql debug.sql
--- markdown link (mdLink): ${mdLink("simpleText", "simpleURL")}
+-- markdown link (mdLink): ${md.link("simpleText", "simpleURL")}
 -- sqlCat: ${sqlCat`prefix-${"col"}-mid-${"other"}-suffix`}
 -- site prefixed: ${ctx.sitePrefixed("test")}
 
@@ -59,7 +63,7 @@ select 2;
 
 -- partial 4 (without await): ${partial("test-partial", { newLocal: "passed from debug.sql without await"})}
 
--- full context: ${safeJsonStringify(ctx)}
+-- full context: add `$` to see... {safeJsonStringify(ctx)}
 ```
 
 ```sql pagination.sql { route: { caption: "Unpivoted" } }
@@ -94,6 +98,7 @@ page variables are like `${page}`, `${route}`, `${cell}`, etc.
 -- global LAYOUT (partial)
 SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${path}.auto.json');
 -- add shell, etc. here
+-- this is the `${cell.info}` cell on line ${cell.startLine}
 ```
 
 The following `PARTIAL` will be prepended (injected) only for the admin paths:

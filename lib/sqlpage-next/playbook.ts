@@ -14,12 +14,7 @@ import {
 import { safeSourceText } from "../universal/content-acquisition.ts";
 import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { forestToStatelessViews } from "../universal/path-tree-tabular.ts";
-import {
-  markdownLink,
-  raw as rawSQL,
-  SQL,
-  sqlCat,
-} from "../universal/sql-text.ts";
+import { raw as rawSQL, SQL, sqlCat } from "../universal/sql-text.ts";
 import { executionPlan } from "../universal/task.ts";
 import { dropUndef } from "./conf.ts";
 import {
@@ -30,6 +25,7 @@ import {
   sqlPagePathsFactory,
 } from "./content.ts";
 import * as interp from "./interpolate.ts";
+import { markdownLinkFactory } from "./interpolate.ts";
 import {
   isRouteSupplier,
   PageRoute,
@@ -208,7 +204,7 @@ export function sqlPageInterpolator() {
       absUrlUnquotedEncoded: interp.absUrlUnquotedEncoded,
       absUrlQuotedEncoded: interp.absUrlQuotedEncoded,
       sitePrefixed: interp.absUrlQuoted,
-      mdLink: markdownLink,
+      md: markdownLinkFactory({ url_encode: "replace" }),
       rawSQL,
       sqlCat,
       SQL,
@@ -232,6 +228,7 @@ export function sqlPageInterpolator() {
     const { state: { directives } } = ctx;
     const { path } = spfu;
 
+    let errSource: string | undefined;
     try {
       // "ic" is basically a "layout"
       const ic = spfu.isInjectableCandidate
@@ -240,6 +237,7 @@ export function sqlPageInterpolator() {
 
       if (spfu.isUnsafeInterpolatable) {
         const source = ic?.injection?.wrap(spfu.contents) ?? spfu.contents;
+        errSource = source;
 
         // NOTE: This is intentionally unsafe. Do not feed untrusted content.
         // Assume you're treating code cell blocks as fully trusted source code.
@@ -248,9 +246,9 @@ export function sqlPageInterpolator() {
           paginate: ctx.paginate,
           safeJsonStringify,
           SQL,
-          sqlCat,
-          mdLink: markdownLink,
-          rawSQL,
+          cat: sqlCat,
+          md: ctx.md,
+          raw: rawSQL,
           ...spfu.cell?.attrs,
           ...spfu,
           partial: async (
@@ -290,7 +288,9 @@ export function sqlPageInterpolator() {
       return {
         ...spfu,
         contents: spfu.asErrorContents(
-          `finalSqlPageFileEntries error: ${String(error)}\n*****\n${
+          `finalSqlPageFileEntries error: ${
+            String(error)
+          }\n*****\nSOURCE:\n${errSource}\n${
             safeJsonStringify({ ctx: unsafeInterp.ctx, spf: spfu }, 2)
           }`,
           error,
