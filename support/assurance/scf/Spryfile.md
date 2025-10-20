@@ -31,7 +31,7 @@ cat prepare.duckdb.sql | duckdb ":memory:"  # DuckDB processes in memory but cre
 While you're developing Spry's `dev-src.auto` generator should be used:
 
 ```bash prepare-sqlpage-dev --descr "Generate the dev-src.auto directory to work in SQLPage dev mode"
-rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
+rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json 
 ```
 
 In development mode, here’s the `watchexec` convenience you can use so that
@@ -120,7 +120,7 @@ WHERE IFNULL(json_extract(c.value,'$.virtual'), 0) <> 1;
 
 ## Unpivoted page
 
-```sql scf/regime_control_unpivoted.sql { route: { caption: "Regime mappings", description: "Long form of SCF x Regime mappings" } }
+```sql scf/regime_control_unpivoted.sql { route: { caption: "Regime mappings", description: "One row per (SCF control, regime column) with the raw cell value and regime column ordinal. Use this as the base long-form dataset." } }
 SELECT 'text' AS component, $page_title AS title;
 
 ${paginate("scf_regime_control_unpivoted")}
@@ -146,7 +146,7 @@ ${pagination.navigation}
 
 ## Regime Controls page
 
-```sql scf/regime_control.sql { route: { caption: "Clean list of regime mappings" } }
+```sql scf/regime_control.sql { route: { caption: "Clean list of regime mappings", description: "Filtered projection of the unpivoted data. One row per (SCF control, regime) keeping key control fields and the regime's raw marker." } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -169,7 +169,7 @@ ${pagination.navigation}
 
 ## Regime Count page
 
-```sql scf/regime_count.sql { route: { caption: "Controls per regime (totals)" } }
+```sql scf/regime_count.sql { route: { caption: "Controls per regime (totals)", description: "Filtered projection of the unpivoted data. One row per (SCF control, regime) keeping key control fields and the regime's raw marker." } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -180,8 +180,8 @@ SELECT 'table' AS component,
        TRUE     AS sort,
        'Regime' as  markdown,
        TRUE     AS search;              
-SELECT  
-  '[' || regime || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime", 
+SELECT 
+  ${md.link("regime", [`'details/regime.sql?regime='`, "regime"])} as Regime,
   control_count AS "Controls"
 FROM "scf_regime_count"
 ORDER BY control_count DESC, regime
@@ -191,7 +191,7 @@ ${pagination.navigation}
 
 ## Domain Count page
 
-```sql scf/regime_domain_count.sql { route: { caption: "Domain x Regime counts" } }
+```sql scf/regime_domain_count.sql { route: { caption: "Domain x Regime counts", description: "Counts of controls grouped by SCF domain and regime. Useful for heatmaps showing domain coverage by regime." } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -212,7 +212,7 @@ ${pagination.navigation}
 
 ## Coverage page
 
-```sql scf/regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime" } }
+```sql scf/regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime", description: "For each SCF domain and regime, shows mapped control count, total controls in the domain, and the percent coverage." } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -224,8 +224,8 @@ SELECT 'table' AS component,
        'Regime' as  markdown,
        TRUE     AS search;              
 SELECT
-  scf_domain AS "Domain",  
-  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",
+  scf_domain AS "Domain", 
+  ${md.link("regime_label", [`'details/regime.sql?regime='`, "regime_label"])} as Regime,
   mapped_controls AS "Mapped Controls",
   domain_total_controls AS "Total Controls",
   coverage_pct AS "Coverage %"
@@ -237,7 +237,7 @@ ${pagination.navigation}
 
 ## Regime Rank page
 
-```sql scf/regime_domain_rank.sql { route: { caption: "Top regimes within each domain" } }
+```sql scf/regime_domain_rank.sql { route: { caption: "Top regimes within each domain", description: "Ranks regimes inside each SCF domain by count of mapped controls (ties broken by regime name)." } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -249,8 +249,8 @@ SELECT 'table' AS component,
        'Regime' as  markdown,
        TRUE     AS search;              
 SELECT
-  scf_domain AS "Domain", 
-  '[' || regime_label || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_label, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime",
+  scf_domain AS "Domain",   
+  ${md.link("regime_label", [`'details/regime.sql?regime='`, "regime_label"])} as Regime,
   control_count AS "Controls",
   regime_rank_in_domain AS "Rank in Domain"
 FROM "scf_regime_domain_rank"
@@ -261,7 +261,7 @@ ${pagination.navigation}
 
 ## Jaccard page
 
-```sql scf/regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)" } }
+```sql scf/regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)", description:"Pairwise overlap of regimes based on shared SCF controls, including each regime's total and the Jaccard similarity score." } }
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -273,9 +273,9 @@ SELECT 'table' AS component,
        'Regime A' as  markdown,
        'Regime B' as  markdown,
        TRUE     AS search;              
-SELECT  
-  '[' || regime_a || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_a, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime A",  
-  '[' || regime_b || '](' || ${ctx.absUrlUnquoted("'' || 'details/regime.sql?regime=' || replace(replace(replace(regime_b, ' ', '%20'), '&', '%26'), '#', '%23') || ''")} || ')' AS "Regime B",    
+SELECT 
+  ${md.link("regime_a", [`'details/regime.sql?regime='`, "regime_a"])} as "Regime A",
+  ${md.link("regime_b", [`'details/regime.sql?regime='`, "regime_b"])} as "Regime B",   
   in_both AS "In Both",
   a_total AS "A Total",
   b_total AS "B Total",
@@ -337,7 +337,7 @@ ${pagination.navWithParams("regime")}
 
 ## Threat Catalog Page
 
-```sql scf/threat_catalog.sql { route: { caption: "Threat Catalog" } }
+```sql scf/threat_catalog.sql { route: { caption: "Threat Catalog", description: "Threat Catalog" } }
 SELECT 'table' as component,
        TRUE as sort,
        TRUE as search;
@@ -351,3 +351,26 @@ SELECT
     "≥ 0.5% of total revenue"
 FROM scf_threat_catalog;
 ```
+## Controls Library page
+
+```sql scf/controls.sql { route: { caption: "Controls Library", description: "Discover and understand compliance controls across different regulatory frameworks. Select your applicable regimes to identify your control responsibilities." } }
+SELECT
+  'text' AS component,
+ $page_title AS title;
+
+
+ ${paginate("scf_regime_count")}
+
+    SELECT 'table' AS component,
+          TRUE     AS sort,
+          'Regime' as  markdown,
+          TRUE     AS search;              
+    SELECT  
+      ${md.link("regime", [`'details/regime.sql?regime='`, "regime"])} as Regime,
+      control_count AS "Controls"
+    FROM "scf_regime_count"
+    ORDER BY control_count DESC, regime
+    ${pagination.limit}; 
+    ${pagination.navigation}
+
+ ```
