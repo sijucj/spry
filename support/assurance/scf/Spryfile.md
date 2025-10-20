@@ -295,9 +295,10 @@ ${paginate("scf_regime_control_unpivoted", "WHERE scf_no = $scf_no")}
 
 SELECT 'table' AS component,
        TRUE     AS sort,
+       "regime_label" as  markdown,
        TRUE     AS search;              
 SELECT
-  regime_label AS "Regime Label",
+  ${md.link("regime_label", [`'regime.sql?regime='`, "regime_label"])} as "regime_label",  
   scf_no AS "SCF #",
   scf_domain AS "SCF Domain",
   scf_control AS "SCF Control",
@@ -372,5 +373,31 @@ SELECT
     ORDER BY control_count DESC, regime
     ${pagination.limit}; 
     ${pagination.navigation}
+
+ ```
+
+ ## Regime details page
+
+```sql scf/details/regime_details.sql { route: { caption: "Control details" } }
+
+ SELECT 'card' AS component,
+           $page_title AS title,
+           1 AS columns;
+SELECT
+      $regime||' '||$scf_no AS title,
+      '**SCF Domain:** ' || scf_domain || '  
+
+' ||
+      '**SCF Control:** ' || scf_control || '  
+
+' ||
+      '**SCF Control Question:** ' || scf_control_question || '  
+
+' ||
+      '**Regime Marker:** ' || regime_raw_value 
+      AS description_md
+  FROM "scf_regime_control_unpivoted"
+WHERE scf_no = $scf_no
+AND regime_label = $regime;
 
  ```
