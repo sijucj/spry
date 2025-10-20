@@ -399,7 +399,7 @@ Deno.test("executeDAG", async (t) => {
       const summary = await executeDAG<TaskCell<string>>(
         plan,
         // deno-lint-ignore require-await
-        async (task, section) => {
+        async (task, _ctx, section) => {
           // section is the stack of already-completed tasks (readonly)
           seenLen.set(task.taskDirective.identity, section.length);
           return { ...ok({ runId: "t1" }), disposition: "continue" };
@@ -448,7 +448,7 @@ Deno.test("executeDAG", async (t) => {
     const summary = await executeDAG(
       plan,
       // deno-lint-ignore require-await
-      async (task, section) => {
+      async (task, _ctx, section) => {
         const id = task.taskDirective.identity;
         seenLen.set(id, section.length);
         if (id === "B") {
