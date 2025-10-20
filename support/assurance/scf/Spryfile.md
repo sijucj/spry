@@ -13,7 +13,7 @@ This script automates the conversion of the latest Secure Controls Framework
 [official SCF GitHub repository](https://github.com/securecontrolsframework/securecontrolsframework)
 into a structured SQLite database.
 
-- Uses Spry to manage tasks and generate SQLPage presentation layer.
+- Uses Spry to manage tasks and generate the SQLPage presentation layer.
 - Uses DuckDB with its built-in `excel` and `sqlite` extensions.
 
 ## Setup
@@ -67,10 +67,10 @@ rm -rf dev-src.auto
 ## Layout
 
 This cell instructs Spry to automatically inject the SQL `PARTIAL` into all
-SQLPage content cells. The name `global-layout.sql` is not signficant (it's
+SQLPage content cells. The name `global-layout.sql` is not significant (it's
 required by Spry but just used for reference) but the `--inject **/*` argument
 is how matching occurs. The `--BEGIN` and `--END` comments are not required by
-Spry but makes it easier to trace where _partial_ injections are occuring.
+Spry but makes it easier to trace where _partial_ injections are occurring.
 
 ```sql PARTIAL global-layout.sql --inject **/*
 -- BEGIN: PARTIAL global-layout.sql
@@ -295,10 +295,10 @@ ${paginate("scf_regime_control_unpivoted", "WHERE scf_no = $scf_no")}
 
 SELECT 'table' AS component,
        TRUE     AS sort,
-       "regime_label" as  markdown,
+       "Regime" as  markdown,
        TRUE     AS search;              
 SELECT
-  ${md.link("regime_label", [`'regime.sql?regime='`, "regime_label"])} as "regime_label",  
+  ${md.link("regime_label", [`'regime.sql?regime='`, "regime_label"])} as "Regime",  
   scf_no AS "SCF #",
   scf_domain AS "SCF Domain",
   scf_control AS "SCF Control",
