@@ -1,3 +1,21 @@
+export function safeJsonStringify(
+  value: unknown,
+  space?: string | number,
+): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(
+    value,
+    (_k, v) => {
+      if (v && typeof v === "object") {
+        if (seen.has(v)) return "[Circular]";
+        seen.add(v);
+      }
+      return v;
+    },
+    space,
+  );
+}
+
 /**
  * Dedent template literal output if the first line is whitespace-only.
  * Removes the first blank line, then strips the smallest common indent.
