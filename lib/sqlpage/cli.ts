@@ -12,21 +12,20 @@ import {
 import { ensureDir } from "jsr:@std/fs@^1";
 import { dirname, globToRegExp, join, relative } from "jsr:@std/path@^1";
 import { basename } from "node:path";
+import * as taskCLI from "../task/cli.ts";
+import { collectAsyncGenerated } from "../universal/collectable.ts";
+import { SourceRelativeTo } from "../universal/content-acquisition.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
-import {
-  SourceRelativeTo,
-  SqlPagePlaybook,
-  sqlPagePlaybookState,
-} from "./playbook.ts";
-import { isRouteSupplier } from "./route.ts";
+import { executionSubplan } from "../universal/task.ts";
+import { sqlPageConf } from "./conf.ts";
 import {
   normalizeSPC,
   SqlPageContent,
   sqlPageFilesUpsertDML,
 } from "./content.ts";
-import { sqlPageConf } from "./conf.ts";
-import { collectAsyncGenerated } from "../universal/collectable.ts";
+import { SqlPagePlaybook, sqlPagePlaybookState } from "./playbook.ts";
+import { isRouteSupplier } from "./route.ts";
 
 export type LsCommandRow = SqlPageContent & {
   name: string;
@@ -429,6 +428,37 @@ export class CLI {
               md: opts.md.map((f) => String(f)),
             })
           ),
+      )
+      .command(
+        "task",
+        new Command() // Emit SQL package (sqlite) to stdout; accepts md path
+          .description("Spry Task CLI")
+          .type("sourceRelTo", srcRelTo)
+          .arguments("<taskId>")
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
+          .option("--verbose", "Emit information messages")
+          .option("--dry-run", "Don't execute, do a dry-run only")
+          .action(async (opts, taskId) => {
+            const pp = await this.spn.prepare({
+              mdSources: opts.md.map((f) => String(f)),
+              srcRelTo: opts.srcRelTo,
+              state: sqlPagePlaybookState(),
+            });
+            taskCLI.executeTasks(executionSubplan(pp.executionPlan, [taskId]));
+          })
+          .command("ls", "List SQLPage file entries")
+          .type("sourceRelTo", srcRelTo)
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
+          .action(async (opts) => {
+            const pp = await this.spn.prepare({
+              mdSources: opts.md.map((f) => String(f)),
+              srcRelTo: opts.srcRelTo,
+              state: sqlPagePlaybookState(),
+            });
+            taskCLI.ls(pp.state.directives.tasks);
+          }),
       );
   }
 
