@@ -249,6 +249,92 @@ export function executionPlan<T extends Task>(
   };
 }
 
+/** Derive a TaskExecutionPlan<T> induced by targets ∪ their transitive ancestors. */
+
+export function executionSubplan<T extends Task>(
+  plan: TaskExecutionPlan<T>,
+  only: Iterable<string>,
+): TaskExecutionPlan<T> {
+  // Build parent index once (child -> parents)
+  const parents = new Map<string, string[]>();
+  for (const id of plan.ids) parents.set(id, []);
+  for (const [dep, child] of plan.edges) parents.get(child)!.push(dep);
+
+  // Ancestor closure (ignore unknown targets safely)
+  const want = new Set(only);
+  const selected = new Set<string>();
+  const stack: string[] = [];
+  for (const t of want) if (t in plan.byId) stack.push(t);
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (selected.has(cur)) continue;
+    selected.add(cur);
+    for (const p of (parents.get(cur) ?? [])) stack.push(p);
+  }
+
+  // Induced plan structures, preserving original definition order
+  const ids = plan.ids.filter((id) => selected.has(id));
+  const byId: Record<string, T> = Object.fromEntries(
+    ids.map((id) => [id, plan.byId[id]] as const),
+  );
+
+  const adjacency: Record<string, string[]> = {};
+  const indegree: Record<string, number> = {};
+  for (const id of ids) {
+    adjacency[id] = [];
+    indegree[id] = 0;
+  }
+
+  const edges: [string, string][] = [];
+  for (const [dep, child] of plan.edges) {
+    if (selected.has(dep) && selected.has(child)) {
+      adjacency[dep].push(child);
+      indegree[child] += 1;
+      edges.push([dep, child]);
+    }
+  }
+
+  // Kahn on the induced subgraph (stable by original definition order)
+  const indegWork = { ...indegree };
+  const zeroQueue: string[] = ids.filter((id) => indegWork[id] === 0);
+  const layers: string[][] = [];
+  const topo: string[] = [];
+  while (zeroQueue.length) {
+    const wave = [...zeroQueue];
+    layers.push(wave);
+    zeroQueue.length = 0;
+    for (const u of wave) {
+      topo.push(u);
+      for (const v of adjacency[u]) {
+        indegWork[v] -= 1;
+        if (indegWork[v] === 0) zeroQueue.push(v);
+      }
+      zeroQueue.sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
+    }
+  }
+  const inTopo = new Set(topo);
+  const unresolved = ids.filter((id) => !inTopo.has(id));
+  const dag = topo.map((id) => byId[id]);
+
+  // Filter missing deps to selected nodes only (signal, not noise)
+  const missingDeps = Object.fromEntries(
+    Object.entries(plan.missingDeps).filter(([id]) => selected.has(id)),
+  );
+
+  return {
+    tasks: ids.map((id) => byId[id]),
+    ids,
+    byId,
+    missingDeps,
+    adjacency,
+    indegree,
+    edges,
+    layers,
+    dag,
+    unresolved,
+  };
+}
+
 /* ========================
  * Result & event types
  * ======================== */
@@ -457,6 +543,7 @@ export async function executeDAG<T extends Task, Context = { runId: string }>(
   plan: TaskExecutionPlan<T>,
   execute: (
     task: T,
+    ctx: Context,
     section: SectionStack<T, Context>,
   ) => Promise<
     TaskExecutionResult<Context> & { disposition: ContinueOrTerminate }
@@ -512,6 +599,7 @@ export async function executeDAG<T extends Task, Context = { runId: string }>(
       // NEW: caller returns a full TaskExecutionResult with a disposition
       const { disposition, ...result } = await execute(
         task,
+        ctx,
         section as SectionStack<T, Context>,
       );
 

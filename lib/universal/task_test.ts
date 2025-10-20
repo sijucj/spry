@@ -2,6 +2,7 @@ import { assertArrayIncludes, assertEquals } from "jsr:@std/assert@^1";
 import {
   executeDAG,
   executionPlan,
+  executionSubplan,
   type Task,
   type TaskExecutionResult,
 } from "./task.ts";
@@ -185,6 +186,135 @@ Deno.test("executionPlan()", async (t) => {
   });
 });
 
+/* ========================
+ * subplan() tests
+ * ======================== */
+
+Deno.test("subplan()", async (t) => {
+  await t.step(
+    "leaf target pulls all ancestors; order is definition-stable",
+    () => {
+      // clean -> build -> test
+      const tasks = [T("clean"), T("build", ["clean"]), T("test", ["build"])];
+      const full = executionPlan(tasks);
+
+      const sp = executionSubplan(full, ["test"]);
+      assertEquals(sp.ids, ["clean", "build", "test"]);
+      assertEquals(sp.edges, [["clean", "build"], ["build", "test"]]);
+      assertEquals(sp.layers, [["clean"], ["build"], ["test"]]);
+      assertEquals(sp.unresolved, []);
+      assertEquals(sp.dag.map((t) => t.taskId()), ["clean", "build", "test"]);
+    },
+  );
+
+  await t.step(
+    "middle target includes just its ancestors (not unrelated leaves)",
+    () => {
+      const tasks = [T("clean"), T("build", ["clean"]), T("test", ["build"])];
+      const full = executionPlan(tasks);
+
+      const sp = executionSubplan(full, ["build"]);
+      assertEquals(sp.ids, ["clean", "build"]);
+      assertEquals(sp.edges, [["clean", "build"]]);
+      assertEquals(sp.layers, [["clean"], ["build"]]);
+      assertEquals(sp.unresolved, []);
+    },
+  );
+
+  await t.step("multiple targets unify closures without duplicates", () => {
+    const tasks = [T("clean"), T("build", ["clean"]), T("test", ["build"])];
+    const full = executionPlan(tasks);
+
+    const sp = executionSubplan(full, ["build", "test"]);
+    assertEquals(sp.ids, ["clean", "build", "test"]);
+    assertEquals(sp.layers, [["clean"], ["build"], ["test"]]);
+  });
+
+  await t.step("unknown targets are ignored safely", () => {
+    const tasks = [T("a"), T("b", ["a"]), T("c", ["b"])];
+    const full = executionPlan(tasks);
+
+    const sp = executionSubplan(full, ["nope", "c"]);
+    assertEquals(sp.ids, ["a", "b", "c"]);
+    assertEquals(sp.edges, [["a", "b"], ["b", "c"]]);
+  });
+
+  await t.step("filters missingDeps to selected nodes only", () => {
+    // build depends on clean (exists) and ghost (missing)
+    // other is unrelated and has its own missing dep that should be filtered out
+    const tasks = [
+      T("clean"),
+      T("build", ["clean", "ghost"]),
+      T("other", ["phantom"]),
+    ];
+    const full = executionPlan(tasks);
+
+    const sp = executionSubplan(full, ["build"]);
+    assertEquals(sp.missingDeps, { build: ["ghost"] });
+    assertEquals(sp.indegree["build"], 1); // only 'clean' contributes
+    assertEquals(sp.edges, [["clean", "build"]]);
+    assertEquals(sp.ids, ["clean", "build"]);
+  });
+
+  await t.step("does not mutate original plan structures", () => {
+    const tasks = [T("root"), T("a", ["root"]), T("b", ["a"])];
+    const full = executionPlan(tasks);
+    const snapshot = {
+      ids: [...full.ids],
+      indegree: { ...full.indegree },
+      edges: [...full.edges],
+      layers: full.layers.map((w) => [...w]),
+      unresolved: [...full.unresolved],
+    };
+
+    // create a subplan and then re-assert original is intact
+    void executionSubplan(full, ["b"]);
+
+    assertEquals(full.ids, snapshot.ids);
+    assertEquals(full.indegree, snapshot.indegree);
+    assertEquals(full.edges, snapshot.edges);
+    assertEquals(full.layers, snapshot.layers);
+    assertEquals(full.unresolved, snapshot.unresolved);
+  });
+
+  await t.step(
+    "execution over a subplan runs only selected induced nodes",
+    async () => {
+      // root -> a -> b ; plus an unrelated component x -> y
+      const tasks = [
+        T("root"),
+        T("a", ["root"]),
+        T("b", ["a"]),
+        T("x"),
+        T("y", ["x"]),
+      ];
+      const full = executionPlan(tasks);
+      const sp = executionSubplan(full, ["b"]); // should include root, a, b only
+
+      const ran: string[] = [];
+      const summary = await executeDAG(
+        sp,
+        // deno-lint-ignore require-await
+        async (task) => {
+          const now = new Date();
+          ran.push(task.taskId());
+          return {
+            disposition: "continue",
+            ctx: { runId: "sub" },
+            success: true,
+            exitCode: 0,
+            startedAt: now,
+            endedAt: now,
+          };
+        },
+      );
+
+      assertEquals(summary.terminated, false);
+      assertEquals(ran, ["root", "a", "b"]);
+    },
+  );
+});
+
 Deno.test("executeDAG()", async (t) => {
   await t.step(
     "executes tasks in topological order and accumulates a section stack",
@@ -199,7 +329,7 @@ Deno.test("executeDAG()", async (t) => {
       const order: string[] = [];
       const summary = await executeDAG(
         plan,
-        async (task, section) => {
+        async (task, _ctx, section) => {
           assertEquals(order.length, section.length);
           const startedAt = new Date();
           await (task.run?.() ?? Promise.resolve());
