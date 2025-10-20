@@ -11,11 +11,15 @@ import {
   TaskDirectiveInspector,
   TaskDirectives,
 } from "../task/cell.ts";
-import { safeSourceText } from "../universal/content-acquisition.ts";
+import {
+  safeSourceText,
+  SourceRelativeTo,
+} from "../universal/content-acquisition.ts";
 import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { forestToStatelessViews } from "../universal/path-tree-tabular.ts";
 import { raw as rawSQL, SQL, sqlCat } from "../universal/sql-text.ts";
 import { executionPlan } from "../universal/task.ts";
+import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 import { dropUndef } from "./conf.ts";
 import {
   isSqlPageContent,
@@ -157,11 +161,6 @@ export function sqlPageFileCellTDI(): SqlPageTDI {
       } satisfies SqlPageContent,
     };
   };
-}
-
-export enum SourceRelativeTo {
-  LocalFs = "fs",
-  Module = "module",
 }
 
 export function sqlPagePlaybookState() {
@@ -487,22 +486,4 @@ export class SqlPagePlaybook {
   static instance() {
     return new SqlPagePlaybook();
   }
-}
-
-export function safeJsonStringify(
-  value: unknown,
-  space?: string | number,
-): string {
-  const seen = new WeakSet<object>();
-  return JSON.stringify(
-    value,
-    (_k, v) => {
-      if (v && typeof v === "object") {
-        if (seen.has(v)) return "[Circular]";
-        seen.add(v);
-      }
-      return v;
-    },
-    space,
-  );
 }

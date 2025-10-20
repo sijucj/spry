@@ -4,7 +4,8 @@ import {
 } from "../markdown/notebook/mod.ts";
 import { isAsyncIterator } from "../universal/collectable.ts";
 import { literal } from "../universal/sql-text.ts";
-import { safeJsonStringify, SqlPageProvenance } from "./playbook.ts";
+import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
+import { SqlPageProvenance } from "./playbook.ts";
 import { PageRoute, RouteSupplier } from "./route.ts";
 
 export type SqlPagePath =
