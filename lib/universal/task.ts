@@ -79,6 +79,9 @@
  */
 import { eventBus } from "../universal/event-bus.ts";
 
+// deno-lint-ignore no-explicit-any
+type Any = any;
+
 export type Task = {
   taskId: () => string;
   taskDeps?: () => string[] | undefined;
@@ -545,9 +548,11 @@ export async function executeDAG<T extends Task, Context = { runId: string }>(
     task: T,
     ctx: Context,
     section: SectionStack<T, Context>,
-  ) => Promise<
-    TaskExecutionResult<Context> & { disposition: ContinueOrTerminate }
-  >,
+  ) =>
+    | TaskExecutionResult<Context> & { disposition: ContinueOrTerminate }
+    | Promise<
+      TaskExecutionResult<Context> & { disposition: ContinueOrTerminate }
+    >,
   init?: { eventBus?: MaybeBus<T, Context>; ctx?: Context },
 ): Promise<ExecuteSummary<T, Context>> {
   const bus = init?.eventBus;
@@ -660,4 +665,306 @@ export async function executeDAG<T extends Task, Context = { runId: string }>(
   });
 
   return { ran, terminated, section };
+}
+
+/* ========================
+ * Polymorphic Task Executor (builder + DX helpers)
+ * ======================== */
+
+/** The execute function type, derived from executeDAG’s second parameter. */
+export type ExecutorOf<T extends Task, Context> = Parameters<
+  typeof executeDAG<T, Context>
+>[1];
+
+/** The result type returned by an ExecutorOf (awaited). */
+export type ExecResultOf<T extends Task, Context> = Awaited<
+  ReturnType<ExecutorOf<T, Context>>
+>;
+
+/** Cross-cutting middleware for an executor. */
+export type ExecuteMiddleware<T extends Task, Context> = (
+  next: ExecutorOf<T, Context>,
+) => ExecutorOf<T, Context>;
+
+/** Compose middlewares (last registered is outermost). */
+export function composeMiddlewares<T extends Task, Context>(
+  base: ExecutorOf<T, Context>,
+  middlewares: readonly ExecuteMiddleware<T, Context>[],
+): ExecutorOf<T, Context> {
+  let fn = base;
+  for (let i = middlewares.length - 1; i >= 0; i--) fn = middlewares[i](fn);
+  return fn;
+}
+
+/** A type-guarded handler that knows how to execute a subset of tasks. */
+export interface TaskHandler<T extends Task, U extends T, Context> {
+  matches(task: T): task is U;
+  run(
+    task: U,
+    ctx: Context,
+    section: SectionStack<T, Context>,
+  ): ExecResultOf<T, Context> | Promise<ExecResultOf<T, Context>>;
+}
+
+/** Builder for a polymorphic task executor. */
+export class TaskExecutorBuilder<T extends Task, Context> {
+  private handlers: Array<TaskHandler<T, T, Context>> = [];
+  private middlewares: ExecuteMiddleware<T, Context>[] = [];
+  private onUnknown?: TaskHandler<T, T, Context>;
+
+  handle<U extends T>(
+    matches: (task: T) => task is U,
+    run: TaskHandler<T, U, Context>["run"],
+  ): this {
+    // Wrap `run` so we can store a unified handler type without `any`
+    const wrapped: TaskHandler<T, T, Context> = {
+      matches: (task: T): task is T => matches(task),
+      run: async (task: T, ctx: Context, section: SectionStack<T, Context>) => {
+        // task is U here by virtue of matches
+        return await run(task as unknown as U, ctx, section);
+      },
+    };
+    this.handlers.push(wrapped);
+    return this;
+  }
+
+  /** Optional fallback if no handler matches. */
+  fallback(run: TaskHandler<T, T, Context>["run"]): this {
+    this.onUnknown = { matches: (_): _ is T => true, run };
+    return this;
+  }
+
+  /** Add cross-cutting middleware (logging, timing, retries, etc.). */
+  use(mw: ExecuteMiddleware<T, Context>): this {
+    this.middlewares.push(mw);
+    return this;
+  }
+
+  /** Produce the final ExecuteFn to pass to executeDAG. */
+  build(): ExecutorOf<T, Context> {
+    // prefer-const + satisfy require-await by awaiting handler calls
+    const base: ExecutorOf<T, Context> = async (task, ctx, section) => {
+      for (const h of this.handlers) {
+        if (h.matches(task)) {
+          return await h.run(task, ctx, section);
+        }
+      }
+      if (this.onUnknown) return await this.onUnknown.run(task, ctx, section);
+      const now = new Date();
+      return {
+        disposition: "terminate" as ContinueOrTerminate,
+        ctx,
+        success: false,
+        exitCode: 1,
+        error: new Error(
+          `No handler registered for task id "${task.taskId()}"`,
+        ),
+        startedAt: now,
+        endedAt: now,
+      };
+    };
+    return composeMiddlewares(base, this.middlewares);
+  }
+}
+
+/* ---------- DX: type-guard helpers ---------- */
+
+/** Create a type guard that matches by discriminant `kind`. */
+export function matchKind<K extends string, U extends Task & { kind: K }>(
+  kind: K,
+): (t: Task) => t is U {
+  return ((t: Task): t is U => (t as Any)?.kind === kind);
+}
+
+/** Match on a property with a predicate (guards when predicate returns true). */
+export function matchProp<
+  K extends string,
+  V,
+  U extends Task & Record<K, V>,
+>(
+  prop: K,
+  predicate: (value: unknown) => value is V,
+): (t: Task) => t is U {
+  return ((t: Task): t is U => predicate((t as Any)?.[prop]));
+}
+
+/** Narrow by `instanceof` for object-bearing tasks. */
+export function matchInstanceOf<
+  C extends new (...args: Any[]) => Any,
+  U extends Task,
+>(
+  prop: string,
+  ctor: C,
+): (t: Task) => t is U {
+  return ((t: Task): t is U => (t as Any)?.[prop] instanceof ctor);
+}
+
+/* ---------- DX: result helpers (standardize ok/fail) ---------- */
+
+// BEFORE: (the version that used Partial<Omit<...>>)
+// export function ok<...>(..., extra?: Partial<Omit<TaskExecutionResult<...>>> & { disposition?: ... })
+
+// AFTER:
+export function ok<T extends Task, Context>(
+  ctx: Context,
+  extra?: {
+    exitCode?: number;
+    startedAt?: Date;
+    endedAt?: Date;
+    /** Optional producer for stdout on success (default encoding is fine). */
+    stdout?: () => Uint8Array;
+    disposition?: ContinueOrTerminate;
+  },
+): ExecResultOf<T, Context> {
+  const now = new Date();
+  return {
+    disposition: extra?.disposition ?? "continue",
+    ctx,
+    success: true,
+    exitCode: extra?.exitCode ?? 0,
+    startedAt: extra?.startedAt ?? now,
+    endedAt: extra?.endedAt ?? now,
+    stdout: extra?.stdout,
+  } as ExecResultOf<T, Context>;
+}
+
+export function fail<T extends Task, Context>(
+  ctx: Context,
+  error: unknown,
+  extra?: {
+    exitCode?: number;
+    startedAt?: Date;
+    endedAt?: Date;
+    /** Optional producer for stderr on failure. */
+    stderr?: () => Uint8Array;
+    disposition?: ContinueOrTerminate;
+  },
+): ExecResultOf<T, Context> {
+  const now = new Date();
+  return {
+    disposition: extra?.disposition ?? "terminate",
+    ctx,
+    success: false,
+    exitCode: extra?.exitCode ?? 1,
+    startedAt: extra?.startedAt ?? now,
+    endedAt: extra?.endedAt ?? now,
+    error,
+    stderr: extra?.stderr,
+  } as ExecResultOf<T, Context>;
+}
+/* ---------- DX: common middleware ---------- */
+
+/** Measure elapsed time; on failure, append a tiny stderr line with elapsed_ms. */
+export function withTiming<T extends Task, Context>(): ExecuteMiddleware<
+  T,
+  Context
+> {
+  return (next) => async (task, ctx, section) => {
+    const t0 = performance.now();
+    const res = await next(task, ctx, section);
+    const t1 = performance.now();
+    if (!res.success) {
+      const prev = res.stderr;
+      res.stderr = () => {
+        const enc = new TextEncoder();
+        const line = enc.encode(`elapsed_ms=${(t1 - t0).toFixed(2)}`);
+        if (!prev) return line;
+        const p = prev();
+        const out = new Uint8Array(p.length + 1 + line.length);
+        out.set(p, 0);
+        out.set(enc.encode("\n"), p.length);
+        out.set(line, p.length + 1);
+        return out;
+      };
+    }
+    return res;
+  };
+}
+
+/** Enforce a wall-clock timeout per task. */
+export function withTimeout<T extends Task, Context>(
+  ms: number,
+  opts?: { onTimeoutDisposition?: ContinueOrTerminate; exitCode?: number },
+): ExecuteMiddleware<T, Context> {
+  const disposition = opts?.onTimeoutDisposition ?? "terminate";
+  const exitCode = opts?.exitCode ?? 124;
+  return (next) => async (task, ctx, section) => {
+    const startedAt = new Date();
+    let timer: number | undefined;
+    try {
+      const timeout = new Promise<ExecResultOf<T, Context>>((resolve) => {
+        timer = setTimeout(() => {
+          resolve({
+            disposition,
+            ctx,
+            success: false,
+            exitCode,
+            startedAt,
+            endedAt: new Date(),
+            error: new Error(`Task timed out after ${ms}ms`),
+          } as ExecResultOf<T, Context>);
+        }, ms) as unknown as number;
+      });
+      return await Promise.race([next(task, ctx, section), timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer as unknown as number);
+    }
+  };
+}
+
+/** Retry failures with exponential backoff by default. */
+export function withRetry<T extends Task, Context>(opts?: {
+  retries?: number;
+  shouldRetry?: (e: unknown) => boolean;
+  backoffMs?: (attempt: number) => number; // attempt starts at 1
+  continueOnFinalFail?: boolean;
+}): ExecuteMiddleware<T, Context> {
+  const retries = Math.max(0, opts?.retries ?? 2);
+  const shouldRetry = opts?.shouldRetry ?? ((e) => e instanceof Error);
+  const backoffMs = opts?.backoffMs ?? ((a) => 100 * Math.pow(2, a));
+  const continueOnFinalFail = opts?.continueOnFinalFail ?? false;
+
+  return (next) => async (task, ctx, section) => {
+    const startedAt = new Date();
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await next(task, ctx, section);
+        if (res.success) return res;
+        lastErr = res.error ??
+          new Error(`Task failed (exitCode=${res.exitCode})`);
+        if (attempt === retries || !shouldRetry(lastErr)) return res;
+      } catch (err) {
+        lastErr = err;
+        if (attempt === retries || !shouldRetry(err)) {
+          return fail<T, Context>(ctx, err, {
+            startedAt,
+            endedAt: new Date(),
+            disposition: continueOnFinalFail ? "continue" : "terminate",
+          });
+        }
+      }
+      await new Promise((r) => setTimeout(r, backoffMs(attempt + 1)));
+    }
+    return fail<T, Context>(ctx, lastErr, { startedAt, endedAt: new Date() });
+  };
+}
+
+/** Tiny DSL to create an executor from route list + middlewares + fallback. */
+export function createExecutor<T extends Task, Context>(init: {
+  routes: Array<{
+    guard: (task: T) => boolean;
+    run: ExecutorOf<T, Context>;
+  }>;
+  middlewares?: readonly ExecuteMiddleware<T, Context>[];
+  fallback?: TaskHandler<T, T, Context>["run"];
+}): ExecutorOf<T, Context> {
+  const b = new TaskExecutorBuilder<T, Context>();
+  for (const r of init.routes) {
+    // Wrap the non-narrowing guard with a generic handler
+    b.handle<T>((t: T): t is T => r.guard(t), r.run);
+  }
+  if (init.fallback) b.fallback(init.fallback);
+  for (const mw of (init.middlewares ?? [])) b.use(mw);
+  return b.build();
 }

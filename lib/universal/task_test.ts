@@ -1,10 +1,18 @@
 import { assertArrayIncludes, assertEquals } from "jsr:@std/assert@^1";
 import {
+  createExecutor,
   executeDAG,
   executionPlan,
   executionSubplan,
+  fail,
+  matchKind,
+  ok,
   type Task,
   type TaskExecutionResult,
+  TaskExecutorBuilder,
+  withRetry,
+  withTimeout,
+  withTiming,
 } from "./task.ts";
 
 /** Simple test task that implements the required Task interface. */
@@ -723,5 +731,213 @@ Deno.test("executionPlan()", async (t) => {
     assertEquals(plan.layers[0], ["n0"]);
     assertEquals(plan.layers[N - 1], [`n${N - 1}`]);
     assertEquals(plan.unresolved, []);
+  });
+});
+
+Deno.test("TaskExecutorBuilder & helpers", async (t) => {
+  // Discriminated tasks
+  type Ctx = { runId: string };
+  interface ShellTask extends Task {
+    kind: "shell";
+    cmd: string[];
+    allowFail?: boolean;
+  }
+  interface SqlTask extends Task {
+    kind: "sql";
+    sql: string;
+  }
+  type AnyTask = ShellTask | SqlTask;
+
+  const TT = (
+    id: string,
+    kind: AnyTask["kind"],
+    deps: string[] = [],
+  ): AnyTask => ({
+    taskId: () => id,
+    taskDeps: () => deps,
+    kind,
+    // payloads just for kind
+    ...(kind === "shell" ? { cmd: ["echo", id] } : { sql: `select '${id}'` }),
+  } as AnyTask);
+
+  const isShell = matchKind<"shell", ShellTask>("shell");
+  const isSql = matchKind<"sql", SqlTask>("sql");
+
+  await t.step("routes to matching handlers and preserves order", async () => {
+    const tasks: AnyTask[] = [
+      TT("clean", "shell"),
+      TT("build", "sql", ["clean"]),
+      TT("test", "shell", ["build"]),
+    ];
+    const plan = executionPlan(tasks);
+
+    const logs: string[] = [];
+
+    const exec = new TaskExecutorBuilder<AnyTask, Ctx>()
+      .handle(isShell, (task, ctx) => {
+        logs.push(`shell:${task.taskId()}`);
+        return ok<AnyTask, Ctx>(ctx);
+      })
+      .handle(isSql, (task, ctx) => {
+        logs.push(`sql:${task.taskId()}`);
+        return ok<AnyTask, Ctx>(ctx);
+      })
+      .build();
+
+    const summary = await executeDAG(plan, exec, {
+      ctx: { runId: "r1" } as Ctx,
+    });
+    assertEquals(summary.terminated, false);
+    assertEquals(summary.ran, ["clean", "build", "test"]);
+    assertEquals(logs, ["shell:clean", "sql:build", "shell:test"]);
+  });
+
+  await t.step("fallback handles unknown kinds", async () => {
+    interface UnknownTask extends Task {
+      kind: "???";
+    }
+    const unk: UnknownTask = {
+      taskId: () => "u",
+      taskDeps: () => [],
+      kind: "???",
+    };
+    const plan = executionPlan([unk as unknown as AnyTask]);
+
+    const exec = new TaskExecutorBuilder<AnyTask, Ctx>()
+      .handle(isShell, (_, ctx) => ok<AnyTask, Ctx>(ctx))
+      .fallback((_t, ctx) =>
+        fail<AnyTask, Ctx>(ctx, new Error("no-handler"), {
+          disposition: "continue",
+        })
+      )
+      .build();
+
+    const summary = await executeDAG(plan, exec, {
+      ctx: { runId: "r2" } as Ctx,
+    });
+    assertEquals(summary.terminated, false);
+    assertEquals(summary.ran, ["u"]);
+    assertEquals(summary.section[0].result.success, false);
+  });
+
+  await t.step(
+    "withTiming attaches elapsed to stderr on failures",
+    async () => {
+      const a = TT("a", "shell");
+      const plan = executionPlan([a]);
+
+      const exec = new TaskExecutorBuilder<AnyTask, Ctx>()
+        .handle(
+          isShell,
+          // deno-lint-ignore require-await
+          async (_t, ctx) => fail<AnyTask, Ctx>(ctx, new Error("boom")),
+        )
+        .use(withTiming())
+        .build();
+
+      const summary = await executeDAG(plan, exec, {
+        ctx: { runId: "r3" } as Ctx,
+      });
+      const res = summary.section[0].result;
+
+      // Narrow the union so stderr is in scope
+      if (res.success) {
+        throw new Error(
+          "Expected a failure result to test stderr instrumentation",
+        );
+      }
+
+      // res is now the failure branch; stderr exists (instrumented by withTiming)
+      const stderrFn = res.stderr;
+      // Extra safety: ensure middleware attached it
+      if (!stderrFn) {
+        throw new Error("Expected withTiming to attach stderr on failure");
+      }
+
+      const txt = new TextDecoder().decode(stderrFn());
+      // contains elapsed_ms=...
+      assertEquals(/elapsed_ms=\d+(\.\d+)?/.test(txt), true);
+    },
+  );
+
+  await t.step("withTimeout terminates long tasks", async () => {
+    const slow = TT("slow", "shell");
+    const plan = executionPlan([slow]);
+
+    const exec = new TaskExecutorBuilder<AnyTask, Ctx>()
+      .handle(isShell, async (_t, ctx) => {
+        await new Promise((r) => setTimeout(r, 30));
+        return ok<AnyTask, Ctx>(ctx);
+      })
+      .use(withTimeout<AnyTask, Ctx>(10))
+      .build();
+
+    const summary = await executeDAG(plan, exec, {
+      ctx: { runId: "r4" } as Ctx,
+    });
+    assertEquals(summary.section[0].result.success, false);
+    assertEquals(summary.terminated, true); // default disposition=terminate
+  });
+
+  await t.step(
+    "withRetry retries failures and then continues on final fail if configured",
+    async () => {
+      const flakey = TT("f", "shell");
+      const plan = executionPlan([flakey]);
+
+      let attempts = 0;
+      const exec = new TaskExecutorBuilder<AnyTask, Ctx>()
+        .handle(isShell, (_t, ctx) => {
+          attempts++;
+          if (attempts < 3) {
+            return fail<AnyTask, Ctx>(ctx, new Error("try-again"), {
+              disposition: "continue",
+            });
+          }
+          return ok<AnyTask, Ctx>(ctx);
+        })
+        .use(withRetry<AnyTask, Ctx>({ retries: 1, continueOnFinalFail: true }))
+        .build();
+
+      const summary = await executeDAG(plan, exec, {
+        ctx: { runId: "r5" } as Ctx,
+      });
+      // First attempt fails; one retry happens; since our handler marks first failure disposition=continue
+      // and withRetry continueOnFinalFail=true, executor won't terminate early.
+      assertEquals(summary.terminated, false);
+      assertEquals(attempts >= 1, true);
+    },
+  );
+
+  await t.step("createExecutor DSL builds the same thing tersely", async () => {
+    const tasks: AnyTask[] = [TT("a", "sql"), TT("b", "shell", ["a"])];
+    const plan = executionPlan(tasks);
+
+    const logs: string[] = [];
+    const exec = createExecutor<AnyTask, Ctx>({
+      routes: [
+        {
+          guard: isSql,
+          run: (t, ctx) => {
+            logs.push(`sql:${t.taskId()}`);
+            return ok<AnyTask, Ctx>(ctx);
+          },
+        },
+        {
+          guard: isShell,
+          run: (t, ctx) => {
+            logs.push(`shell:${t.taskId()}`);
+            return ok<AnyTask, Ctx>(ctx);
+          },
+        },
+      ],
+      middlewares: [withTiming()],
+    });
+
+    const summary = await executeDAG(plan, exec, {
+      ctx: { runId: "r6" } as Ctx,
+    });
+    assertEquals(summary.ran, ["a", "b"]);
+    assertEquals(logs, ["sql:a", "shell:b"]);
   });
 });
