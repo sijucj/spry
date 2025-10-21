@@ -9,16 +9,16 @@ import {
 } from "jsr:@std/fmt@^1/colors";
 import { relative } from "jsr:@std/path@^1";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
-import { isTaskDirectiveSupplier, TaskCell } from "./cell.ts";
+import { shell, verboseInfoShellEventBus } from "../universal/shell.ts";
 import {
-  ContinueOrTerminate,
   executeDAG,
+  ok,
   Task,
-  TaskExecEventMap,
   TaskExecutionPlan,
-  TaskExecutionResult,
+  TaskExecutorBuilder,
+  verboseInfoTaskEventBus,
 } from "../universal/task.ts";
-import { eventBus } from "../universal/event-bus.ts";
+import { matchTaskNature, TaskCell } from "./cell.ts";
 
 export type LsTaskRow = {
   name: string;
@@ -102,85 +102,29 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
     .ls(true);
 }
 
-export async function executeTasks<T extends Task>(plan: TaskExecutionPlan<T>) {
+export async function executeTasks<T extends Task>(
+  plan: TaskExecutionPlan<T>,
+  verbose?: false | Parameters<typeof verboseInfoShellEventBus>[0]["style"],
+  summarize?: boolean,
+) {
   type Context = { runId: string };
 
-  const bus = eventBus<TaskExecEventMap<T, Context>>();
-  bus.on(
-    "task:start",
-    ({ id }) => console.info({ event: "task:start", task: id }),
-  );
-  bus.on(
-    "error",
-    ({ message }) => console.error({ error: message }),
-  );
-  bus.on(
-    "task:end",
-    ({ id }) => console.info({ event: "task:start", task: id }),
-  );
+  const sh = shell({
+    bus: verbose ? verboseInfoShellEventBus({ style: verbose }) : undefined,
+  });
 
-  await executeDAG(
-    plan,
-    // deno-lint-ignore require-await
-    async (supplied, ctx) => {
-      const invalid = (error: Error) => {
-        console.error(error);
-        return {
-          disposition: "continue",
-          ctx,
-          success: false,
-          exitCode: -1,
-          startedAt: now,
-          endedAt: now,
-          error,
-        } satisfies TaskExecutionResult<Context> & {
-          disposition: ContinueOrTerminate;
-        };
-      };
-      const now = new Date();
+  const exec = new TaskExecutorBuilder<Task, Context>()
+    .handle(matchTaskNature("TASK"), async (cell, ctx) => {
+      await sh.auto(cell.source);
+      return ok(ctx);
+    })
+    .build();
 
-      // task is a TaskCell<Provenance> discrimated type
-      if (!isTaskDirectiveSupplier(supplied)) {
-        return invalid(
-          new Error("Unknown type of task: not a TaskDirectiveSupplier"),
-        );
-      }
-
-      const { taskDirective: td } = supplied;
-      switch (td.nature) {
-        case "TASK": {
-          console.log(td.nature, td.task.strategy);
-          switch (td.task.strategy) {
-            case "Deno.Task": {
-              break;
-            }
-            default:
-              return invalid(
-                new Error(
-                  `Unknown type of task: is a TaskDirectiveSupplier with known task nature '${td.nature}' but strategy '${td.task.strategy}' unknown`,
-                ),
-              );
-          }
-          break;
-        }
-
-        default:
-          return invalid(
-            new Error(
-              `Unknown type of task: is a TaskDirectiveSupplier but unknown task nature '${td.nature}'`,
-            ),
-          );
-      }
-
-      return {
-        disposition: "continue",
-        ctx,
-        success: true,
-        exitCode: 0,
-        startedAt: now,
-        endedAt: now,
-      };
-    },
-    { eventBus: bus },
-  );
+  const summary = await executeDAG(plan, exec, {
+    eventBus: verbose
+      ? verboseInfoTaskEventBus<T, Context>({ style: verbose })
+      : undefined,
+  });
+  if (summarize) console.dir({ summary });
+  return summary;
 }

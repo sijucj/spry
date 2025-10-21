@@ -7,10 +7,13 @@ import {
   Source,
 } from "../markdown/notebook/mod.ts";
 import {
+  annotationsFactory,
   parsedInfo,
   TaskDirectiveInspector,
   TaskDirectives,
+  TasksProvenance,
 } from "../task/cell.ts";
+import { ensureLanguageByIdOrAlias } from "../universal/code.ts";
 import {
   safeSourceText,
   SourceRelativeTo,
@@ -38,7 +41,7 @@ import {
   RoutesBuilder,
 } from "./route.ts";
 
-export type SqlPageProvenance = string;
+export type SqlPageProvenance = TasksProvenance;
 export type SqlPageFrontmatter = Record<string, unknown> & {
   "sqlpage-conf"?: Record<string, unknown>;
 };
@@ -51,8 +54,8 @@ export type SqlPageTDI = TaskDirectiveInspector<
   SqlPageIssue
 >;
 
-export const sqlCodeCellLang = "sql" as const;
-export type SqlCodeCellLang = typeof sqlCodeCellLang;
+export const sqlCodeCellLangId = "sql" as const;
+export const sqlCodeCellLangSpec = ensureLanguageByIdOrAlias(sqlCodeCellLangId);
 
 export const sqlTaskHead = "HEAD" as const;
 export const sqlTaskTail = "TAIL" as const;
@@ -76,7 +79,7 @@ export function counter<Identifier>(identifier: Identifier, padValue = 4) {
 export function sqlHeadCellTDI(): SqlPageTDI {
   const heads = counter(sqlTaskHead);
   return ({ cell }) => {
-    if (cell.language != sqlCodeCellLang) return false;
+    if (cell.language != sqlCodeCellLangId) return false;
     const pi = parsedInfo(cell.info);
     if (!pi) return false; // no identity, ignore
     if (pi.first.toLocaleUpperCase() != sqlTaskHead) return false;
@@ -90,6 +93,7 @@ export function sqlHeadCellTDI(): SqlPageTDI {
         contents: cell.source,
         cell,
       } satisfies SqlPageContent,
+      language: sqlCodeCellLangSpec,
     };
   };
 }
@@ -97,7 +101,7 @@ export function sqlHeadCellTDI(): SqlPageTDI {
 export function sqlTailCellTDI(): SqlPageTDI {
   const tails = counter(sqlTaskTail);
   return ({ cell }) => {
-    if (cell.language != sqlCodeCellLang) return false;
+    if (cell.language != sqlCodeCellLangId) return false;
     const pi = parsedInfo(cell.info);
     if (!pi) return false; // no identity, ignore
     if (pi.first.toLocaleUpperCase() != sqlTaskTail) return false;
@@ -111,16 +115,44 @@ export function sqlTailCellTDI(): SqlPageTDI {
         contents: cell.source,
         cell,
       } satisfies SqlPageContent,
+      language: sqlCodeCellLangSpec,
     };
   };
 }
 
-export function mutateRoute(
+export function mutateRouteInCellAttrs(
   cell: PlaybookCodeCell<string, SqlPageCellAttrs>,
   identity: string,
-  registerIssue: (message: string, error?: unknown) => void,
+  registerIssue?: (message: string, error?: unknown) => void,
+  candidateAnns?: unknown, // if routes were supplied in annotation
 ) {
-  if (!isRouteSupplier(cell.attrs)) return;
+  const validated = (route: unknown) => {
+    const parsed = z.safeParse(pageRouteSchema, route);
+    if (!parsed.success) {
+      registerIssue?.(
+        `Zod error parsing route: ${z.prettifyError(parsed.error)}`,
+        parsed.error,
+      );
+      return false;
+    }
+    return true;
+  };
+
+  // if no route was supplied in the cell attributes, use what's in annotations
+  if (!isRouteSupplier(cell.attrs)) {
+    if (candidateAnns) cell.attrs.route = candidateAnns;
+    return validated(cell.attrs.route);
+  }
+
+  // if route was supplied in the cell attributes, merge with annotations with
+  // what's in the annotations overriding what's in cell attributes
+  if (isRouteSupplier(cell.attrs) && candidateAnns) {
+    // deno-lint-ignore no-explicit-any
+    (cell.attrs as any).route = { ...cell.attrs.route, ...candidateAnns };
+    return validated(cell.attrs.route);
+  }
+
+  // if we get to here, it's the first time we're seeing cell attributes
   const route = cell.attrs.route as PageRoute;
   if (!route.path) route.path = identity;
   const extensions = pathExtensions(route.path);
@@ -129,24 +161,16 @@ export function mutateRoute(
   route.pathDirname = dirname(route.path);
   route.pathExtnTerminal = extensions.terminal;
   route.pathExtns = extensions.extensions;
-  const parsed = z.safeParse(pageRouteSchema, route);
-  if (!parsed.success) {
-    registerIssue(
-      `Zod error parsing route: ${z.prettifyError(parsed.error)}`,
-      parsed.error,
-    );
-    return false;
-  }
-  return true;
+  return validated(route);
 }
 
 export function sqlPageFileCellTDI(): SqlPageTDI {
   return ({ cell, registerIssue }) => {
-    if (cell.language != sqlCodeCellLang) return false;
+    if (cell.language != sqlCodeCellLangId) return false;
     const pi = parsedInfo(cell.info);
     if (!pi) return false; // no identity, ignore
     const path = pi.first;
-    mutateRoute(cell, path, registerIssue);
+    mutateRouteInCellAttrs(cell, path, registerIssue);
     return {
       nature: "CONTENT",
       identity: path,
@@ -159,6 +183,7 @@ export function sqlPageFileCellTDI(): SqlPageTDI {
         isUnsafeInterpolatable: true,
         isInjectableCandidate: true,
       } satisfies SqlPageContent,
+      language: sqlCodeCellLangSpec,
     };
   };
 }
@@ -219,6 +244,7 @@ export function sqlPageInterpolator() {
     };
   };
 
+  // "unsafely" means we're using JavaScript "eval"
   async function mutateUpsertUnsafely(
     ctx: ReturnType<typeof context>,
     spfu: SqlPageFileUpsert,
@@ -298,7 +324,8 @@ export function sqlPageInterpolator() {
     }
   }
 
-  async function mutateUnsafely(
+  // "unsafely" means we're using JavaScript "eval"
+  async function mutateContentUnsafely(
     ctx: ReturnType<typeof context>,
     spc: SqlPageContent,
     unsafeInterp: ReturnType<typeof unsafeInterpolator>,
@@ -309,7 +336,7 @@ export function sqlPageInterpolator() {
     return spc;
   }
 
-  return { context, mutateUpsertUnsafely, mutateUnsafely };
+  return { context, mutateUpsertUnsafely, mutateContentUnsafely };
 }
 
 export class SqlPagePlaybook {
@@ -334,7 +361,7 @@ export class SqlPagePlaybook {
     }
   }
 
-  async prepare(
+  async populateContent(
     init: {
       mdSources: string[];
       srcRelTo: SourceRelativeTo;
@@ -342,7 +369,7 @@ export class SqlPagePlaybook {
     },
   ) {
     const { state } = init;
-    const { directives: td, routes } = state;
+    const { directives: td } = state;
 
     /*  Markdown Files' Fenced Cells
         ↓
@@ -360,16 +387,15 @@ export class SqlPagePlaybook {
     // directives now has all the tasks/content across all notebooks in memory
     await td.populate(() => this.sources(init));
 
-    // build the routes tree from anything with { route: {...} } in fenced attrs
-    for (const c of td.tasks.filter((c) => isRouteSupplier(c.attrs))) {
-      routes.encounter(c.attrs.route as PageRoute);
-    }
-
     const plan = executionPlan(state.directives.tasks);
 
     const spInterpolator = sqlPageInterpolator();
     const spiContext = spInterpolator.context(state);
     const unsafeInterp = unsafeInterpolator(spiContext);
+    const routeAnnsF = annotationsFactory({
+      language: sqlCodeCellLangSpec,
+      prefix: "route.",
+    });
 
     return {
       state,
@@ -377,6 +403,7 @@ export class SqlPagePlaybook {
       spInterpolator,
       spiContext,
       unsafeInterp,
+      routeAnnsF,
     };
   }
 
@@ -387,8 +414,8 @@ export class SqlPagePlaybook {
       state: SqlPagePlaybookState;
     },
   ) {
-    const p = await this.prepare(init);
-    const { state, spInterpolator, spiContext, unsafeInterp } = p;
+    const p = await this.populateContent(init);
+    const { state, spInterpolator, spiContext, unsafeInterp, routeAnnsF } = p;
     const { directives, routes } = state;
     const { sql: sqlSPF, json: jsonSPF } = sqlPageContentHelpers();
 
@@ -400,11 +427,22 @@ export class SqlPagePlaybook {
       );
     }
 
-    const { mutateUnsafely } = spInterpolator;
+    const { mutateContentUnsafely } = spInterpolator;
     for await (const t of directives.tasks) {
       const { taskDirective: td } = t;
       if (td.nature === "CONTENT" && isSqlPageContent(td.content)) {
-        yield mutateUnsafely(spiContext, td.content, unsafeInterp);
+        const mutated = await mutateContentUnsafely(
+          spiContext,
+          td.content,
+          unsafeInterp,
+        );
+        // see if any @route.* annotations are supplied in the mutated content
+        // and merge them with existing { route: {...} } cell
+        const route = routeAnnsF.transform(
+          await routeAnnsF.catalog(mutated.contents),
+        );
+        if (route) mutateRouteInCellAttrs(t, mutated.path, undefined, route);
+        yield mutated;
         if (td.content.cell) {
           const cell = td.content.cell;
           if (Object.entries(cell.attrs).length) {
@@ -415,6 +453,13 @@ export class SqlPagePlaybook {
             );
           }
         }
+      }
+
+      // now that all content mutations (template replacements) are completed,
+      // build the routes tree from anything with { route: {...} } in fenced
+      // attrs or @route annotations
+      if (isRouteSupplier(t.attrs)) {
+        routes.encounter(t.attrs.route as PageRoute);
       }
     }
 
@@ -463,24 +508,8 @@ export class SqlPagePlaybook {
     yield sqlSPF(`sql.d/tail/navigation.auto.sql`, sv.sql, {
       kind: "tail_sql",
     });
+
     return p;
-  }
-
-  async execute(
-    init: {
-      mdSources: string[];
-      srcRelTo: SourceRelativeTo;
-      state: SqlPagePlaybookState;
-    },
-  ) {
-    const { state, executionPlan: plan } = await this.prepare(init);
-    const { directives: td, routes } = state;
-
-    console.log(td.issues);
-    console.log(plan.dag.map((t) => t.taskId()));
-    console.log((await routes.resolved()).candidates);
-
-    return { state };
   }
 
   static instance() {

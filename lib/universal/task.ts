@@ -77,6 +77,16 @@
  * });
  * ```
  */
+import {
+  bold,
+  cyan,
+  dim,
+  gray,
+  green,
+  magenta,
+  red,
+  yellow,
+} from "jsr:@std/fmt@1/colors";
 import { eventBus } from "../universal/event-bus.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -967,4 +977,205 @@ export function createExecutor<T extends Task, Context>(init: {
   if (init.fallback) b.fallback(init.fallback);
   for (const mw of (init.middlewares ?? [])) b.use(mw);
   return b.build();
+}
+
+/**
+ * Create a verbose, single-line logging bus for Task execution.
+ *
+ * Pass this bus into whatever runs your Task engine so it can emit TaskExecEventMap<T, C> events.
+ */
+export function verboseInfoTaskEventBus<
+  T extends Task,
+  Context,
+>(init: {
+  style: "plain" | "rich";
+  /** Max IDs to show inline before summarizing, default 10 */
+  showIdsMax?: number;
+}) {
+  const fancy = init.style === "rich";
+  const maxShow = init.showIdsMax ?? 10;
+  const bus = eventBus<TaskExecEventMap<T, Context>>();
+
+  // Emojis
+  const E = {
+    run: "🏃",
+    graph: "📈",
+    link: "🔗",
+    play: "▶️",
+    stop: "⏹️",
+    check: "✅",
+    cross: "❌",
+    warn: "⚠️",
+    err: "💥",
+    box: "📦",
+    gear: "⚙️",
+    timer: "⏱️",
+    list: "📝",
+  } as const;
+
+  // Colors
+  const c = {
+    tag: (s: string) => (fancy ? bold(magenta(s)) : s),
+    id: (s: string) => (fancy ? bold(cyan(s)) : s),
+    ok: (s: string) => (fancy ? green(s) : s),
+    warn: (s: string) => (fancy ? yellow(s) : s),
+    err: (s: string) => (fancy ? red(s) : s),
+    faint: (s: string) => (fancy ? dim(s) : s),
+    gray: (s: string) => (fancy ? gray(s) : s),
+  };
+
+  // Emoji helpers
+  const em = {
+    run: (s: string) => (fancy ? `${E.run} ${s}` : s),
+    graph: (s: string) => (fancy ? `${E.graph} ${s}` : s),
+    link: (s: string) => (fancy ? `${E.link} ${s}` : s),
+    play: (s: string) => (fancy ? `${E.play} ${s}` : s),
+    stop: (s: string) => (fancy ? `${E.stop} ${s}` : s),
+    done: (
+      ok: boolean,
+    ) => (fancy ? (ok ? E.check : E.cross) : ok ? "OK" : "FAIL"),
+    warn: (s: string) => (fancy ? `${E.warn} ${s}` : s),
+    err: (s: string) => (fancy ? `${E.err} ${s}` : s),
+    timer: (ms?: number) =>
+      ms == null
+        ? ""
+        : fancy
+        ? ` ${E.timer} ${Math.round(ms)}ms`
+        : ` ${Math.round(ms)}ms`,
+    list: (s: string) => (fancy ? `${E.list} ${s}` : s),
+    gear: (s: string) => (fancy ? `${E.gear} ${s}` : s),
+    box: (s: string) => (fancy ? `${E.box} ${s}` : s),
+  };
+
+  // Formatters
+  const fmtIds = (ids: readonly string[]) => {
+    if (ids.length <= maxShow) return ids.join(", ");
+    return `${ids.slice(0, maxShow).join(", ")}${
+      c.faint(` …(+${ids.length - maxShow})`)
+    }`;
+  };
+  const fmtPairs = (obj: Record<string, unknown>) =>
+    Object.entries(obj)
+      .map(([k, v]) => `${k}=${String(v)}`)
+      .join(" ");
+  const fmtTotals = (t: {
+    tasks: number;
+    failed: number;
+    succeeded: number;
+    unresolved: number;
+    missingDeps: number;
+  }) =>
+    `tasks=${t.tasks} ${c.ok(`ok=${t.succeeded}`)} ${
+      c.err(`fail=${t.failed}`)
+    } ` +
+    `${c.warn(`unresolved=${t.unresolved}`)} missingDeps=${t.missingDeps}`;
+
+  // ---- listeners ----
+  bus.on("run:start", ({ startedAt }) => {
+    console.info(
+      `${c.tag("[run]")} ${em.run("start")} ${
+        c.faint(startedAt.toISOString())
+      }`,
+    );
+  });
+
+  bus.on("plan:ready", ({ ids, unresolved, missingDeps }) => {
+    const parts = [
+      `${em.box("plan")}`,
+      `ids=${ids.length}`,
+      unresolved.length
+        ? c.warn(`unresolved=${unresolved.length}`)
+        : c.ok("unresolved=0"),
+      Object.keys(missingDeps).length
+        ? c.warn(`missingDeps=${Object.keys(missingDeps).length}`)
+        : "missingDeps=0",
+    ];
+    console.info(`${c.tag("[plan]")} ${parts.join(" ")}`);
+    if (ids.length) {
+      console.info(`${c.tag("[plan]")} ${em.list("ids")} ${fmtIds(ids)}`);
+    }
+    if (unresolved.length) {
+      console.info(
+        `${c.tag("[plan]")} ${em.list(c.warn("unresolved"))} ${
+          fmtIds(unresolved)
+        }`,
+      );
+    }
+    const mdKeys = Object.keys(missingDeps);
+    if (mdKeys.length) {
+      for (const k of mdKeys) {
+        console.info(
+          `${c.tag("[plan]")} ${em.link(`${c.id(k)} ->`)} ${
+            fmtIds(missingDeps[k])
+          }`,
+        );
+      }
+    }
+  });
+
+  bus.on("dag:ready", ({ ids }) => {
+    console.info(
+      `${c.tag("[dag]")} ${em.graph("ready")} nodes=${ids.length}` +
+        (ids.length ? ` ${c.faint(fmtIds(ids))}` : ""),
+    );
+  });
+
+  bus.on("dag:release", ({ from, to }) => {
+    console.info(
+      `${c.tag("[dag]")} ${em.link(`${c.id(from)} →`)} ${fmtIds(to)}`,
+    );
+  });
+
+  bus.on("task:scheduled", ({ id }) => {
+    console.info(`${c.tag("[task]")} ${em.gear("scheduled")} ${c.id(id)}`);
+  });
+
+  bus.on("task:start", ({ id, at }) => {
+    console.info(
+      `${c.tag("[task]")} ${em.play("start")} ${c.id(id)} ${
+        c.faint(at.toISOString())
+      }`,
+    );
+  });
+
+  bus.on("task:end", ({ id, result }) => {
+    const line = `${c.tag("[task]")} ${em.stop("end")} ${c.id(id)} ` +
+      (result.success ? c.ok("success") : c.err("failure"));
+    // If your result includes timing, stderr, exitCode, etc., summarize them:
+    const extras: Record<string, unknown> = {
+      // deno-lint-ignore no-explicit-any
+      code: (result as any).exitCode ?? (result as any).code, // tolerate either field name
+      // deno-lint-ignore no-explicit-any
+      startedAt: (result as any).startedAt?.toISOString?.(),
+      // deno-lint-ignore no-explicit-any
+      endedAt: (result as any).endedAt?.toISOString?.(),
+    };
+    const extraText = fmtPairs(
+      Object.fromEntries(Object.entries(extras).filter(([, v]) => v != null)),
+    );
+    console.info(extraText ? `${line} ${c.faint(extraText)}` : line);
+  });
+
+  bus.on("run:end", ({ endedAt, durationMs, totals }) => {
+    const head = `${c.tag("[run]")} ${em.stop("end")} ${
+      c.faint(endedAt.toISOString())
+    }`;
+    console.info(`${head} ${fmtTotals(totals)}${em.timer(durationMs)}`);
+  });
+
+  bus.on("error", ({ message, cause, taskId, stage }) => {
+    const parts = [
+      c.err(message),
+      taskId ? `task=${c.id(taskId)}` : "",
+      stage ? `stage=${stage}` : "",
+    ].filter(Boolean);
+    const suffix = cause instanceof Error
+      ? ` cause=${c.faint(cause.name)}:${c.faint(cause.message)}`
+      : cause != null
+      ? ` cause=${c.faint(String(cause))}`
+      : "";
+    console.error(`${c.tag("[error]")} ${em.err(parts.join(" "))}${suffix}`);
+  });
+
+  return bus;
 }

@@ -9,30 +9,38 @@
  * Focus-agnostic: usable for comments, linting, formatting, etc.
  */
 
-import { extname } from "jsr:@std/path@1";
+import { z } from "jsr:@zod/zod@4";
 
 /* -------------------------------------------------------------------------------------------------
  * Language registry (reusable beyond comments)
  * -----------------------------------------------------------------------------------------------*/
 
-export type CommentStyle = {
-  readonly line: readonly string[];
-  readonly block: readonly {
-    open: string;
-    close: string;
-    nested?: boolean;
-  }[];
-};
+/** Schema for block comment delimiters */
+export const commentBlockSchema = z.object({
+  open: z.string(),
+  close: z.string(),
+  nested: z.boolean().optional(),
+});
 
-export type LanguageSpec = {
-  readonly id: string;
-  readonly aliases?: readonly string[];
-  readonly extensions?: readonly string[];
-  readonly shebangs?: readonly string[];
-  readonly mime?: string;
+/** Schema for comment styles (line + block) */
+export const commentStyleSchema = z.object({
+  line: z.array(z.string()).readonly(),
+  block: z.array(commentBlockSchema).readonly(),
+});
+
+/** Schema for language specifications */
+export const languageSpecSchema = z.object({
+  id: z.string(),
+  aliases: z.array(z.string()).readonly().optional(),
+  extensions: z.array(z.string()).readonly().optional(),
+  shebangs: z.array(z.string()).readonly().optional(),
+  mime: z.string().optional(),
   /** Minimal info most tooling needs; comments are used by the comments module */
-  readonly comment: CommentStyle;
-};
+  comment: commentStyleSchema,
+});
+
+export type CommentStyle = z.infer<typeof commentStyleSchema>;
+export type LanguageSpec = z.infer<typeof languageSpecSchema>;
 
 export const languageRegistry = new Map<string, LanguageSpec>();
 export const languageExtnIndex = new Map<string, LanguageSpec>();
@@ -51,10 +59,12 @@ export function getLanguageByIdOrAlias(
   return languageRegistry.get(idOrAlias);
 }
 
-export function detectLanguageByPath(path: string): LanguageSpec | undefined {
-  const ext = extname(path).toLowerCase();
-  if (!ext) return undefined;
-  return languageExtnIndex.get(ext);
+export function ensureLanguageByIdOrAlias(
+  idOrAlias: string,
+): LanguageSpec {
+  const result = languageRegistry.get(idOrAlias);
+  if (!result) throw new Error(`Language ID ${idOrAlias} not found`);
+  return result;
 }
 
 export function detectLanguageByShebang(
