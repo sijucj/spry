@@ -312,6 +312,7 @@ export class CLI {
       fs: string;
       destroyFirst?: boolean;
       watch?: boolean;
+      verbose?: boolean;
       withSqlPage?: {
         enabled?: boolean;
         sitePrefix?: string;
@@ -337,7 +338,9 @@ export class CLI {
     const run = watcher(
       opts.md,
       async () => {
-        for await (const _ of this.materializeFs(opts)) { /* consume */ }
+        for await (const spf of this.materializeFs(opts)) {
+          if (opts.verbose) console.log(spf.path);
+        }
       },
       {
         debounceMs: 120,
@@ -447,6 +450,7 @@ export class CLI {
                 srcRelTo: opts.srcRelTo,
                 fs: opts.fs,
                 destroyFirst: opts.destroyFirst,
+                verbose: opts.verbose,
                 watch: opts?.watch,
                 withSqlPage: { enabled: opts.withSqlpage },
               });
