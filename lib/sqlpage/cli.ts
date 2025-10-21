@@ -453,13 +453,23 @@ export class CLI {
           .type("sourceRelTo", srcRelTo)
           .option(...mdOpt)
           .option(...srcRelToOpt)
+          .option(
+            "-c, --content",
+            "List CONTENT cells in addition to executables",
+          )
           .action(async (opts) => {
             const pp = await this.spn.populateContent({
               mdSources: opts.md.map((f) => String(f)),
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            taskCLI.ls(pp.state.directives.tasks);
+            taskCLI.ls(
+              opts.content
+                ? pp.state.directives.tasks
+                : pp.state.directives.tasks.filter((t) =>
+                  t.taskDirective.nature === "TASK"
+                ),
+            );
           }),
       );
   }

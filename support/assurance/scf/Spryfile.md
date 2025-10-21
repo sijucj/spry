@@ -19,9 +19,12 @@ into a structured SQLite database.
 ## Setup
 
 Download the SCF Excel workbook from the GitHub repo and place it into the same
-directory as this `README.md` and then run `spry.ts task prepare-db`:
+directory as this `README.md` and then run `spry.ts task prepare-db`. We supply
+our own `#!/usr/bin/env -S bash` shebang since we have comments in the shell
+script.
 
 ```bash prepare-db --descr "Delete and recreate the SQLite database used by SQLPage"
+#!/usr/bin/env -S bash
 rm -f scf-2025.3.sqlite.db                  # will be re-created by DuckDB `ATTACH`
 cat prepare.duckdb.sql | duckdb ":memory:"  # DuckDB processes in memory but creates SQLite DB
 ```
@@ -32,6 +35,10 @@ While you're developing Spry's `dev-src.auto` generator should be used:
 
 ```bash prepare-sqlpage-dev --descr "Generate the dev-src.auto directory to work in SQLPage dev mode"
 rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
+```
+
+```bash clean
+rm -rf dev-src.auto
 ```
 
 In development mode, here’s the `watchexec` convenience you can use so that
