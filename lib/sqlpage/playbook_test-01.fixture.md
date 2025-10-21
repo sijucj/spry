@@ -28,7 +28,11 @@ PRAGMA foreign_keys = ON;
 ```
 
 ```sql admin/index.sql { route: { caption: "test" } }
+-- route annotations override { route: { ... } }
+-- @route.description "This description will be merged into the attributes at the cell level, allowing templating to create route content"
+
 select 1;
+
 -- this is the path: ${path}
 -- this is the caption: ${route.caption}
 ```
