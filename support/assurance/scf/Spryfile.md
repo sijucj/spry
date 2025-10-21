@@ -34,31 +34,33 @@ cat prepare.duckdb.sql | duckdb ":memory:"  # DuckDB processes in memory but cre
 While you're developing Spry's `dev-src.auto` generator should be used:
 
 ```bash prepare-sqlpage-dev --descr "Generate the dev-src.auto directory to work in SQLPage dev mode"
-rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
+./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json
 ```
 
 ```bash clean
 rm -rf dev-src.auto
 ```
 
-In development mode, here’s the `watchexec` convenience you can use so that
+In development mode, here’s the `--watch` convenience you can use so that
 whenever you update `Spryfile.md` it regenerates the SQLPage `dev-src.auto`
 which then is picked up automatically by SQLPage server:
 
 ```bash
-watchexec -e md -w Spryfile.md -- rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
+./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json --watch --with-sqlpage
 ```
 
-- `-e md` — watch only Markdown files.
-- `-w Spryfile.md` — limit watching to that specific file.
-- The command after `--` runs every time `Spryfile.md` changes.
+- `--watch` turns on watching all `--md` files passed in (defaults to
+  `Spryfile.md`)
+- `--with-sqlpage` starts and stops SQLPage after each build
 
-You would then run SQLPage server in one terminal while running the `watchexec`
-in another terminal. If you want to do both in one terminal:
+Restarting SQLPage after each re-generation of dev-src.auto is **not** necessary
+so you can also use `--watch` without `--with-sqlpage` in one terminal window
+while keeping SQLPage running in another terminal window.
+
+If you're running SQLPage in another terminal window, use:
 
 ```bash
-watchexec --shell=bash --restart -e md -w Spryfile.md -- \
-  'set -Eeuo pipefail; rm -rf dev-src.auto && deno run -A ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json && SQLPAGE_SITE_PREFIX="" sqlpage'
+./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json --watch
 ```
 
 ## SQLPage single database deployment mode

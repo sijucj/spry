@@ -21,9 +21,11 @@ import * as taskCLI from "../task/cli.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
 import { doctor } from "../universal/doctor.ts";
+import { eventBus } from "../universal/event-bus.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
 import { executionSubplan } from "../universal/task.ts";
+import { SidecarOpts, watcher, WatcherEvents } from "../universal/watcher.ts";
 import { sqlPageConf } from "./conf.ts";
 import {
   normalizeSPC,
@@ -276,7 +278,6 @@ export class CLI {
       srcRelTo: SourceRelativeTo;
       fs: string;
       destroyFirst?: boolean;
-      watch?: boolean;
     },
   ) {
     const { fs } = opts;
@@ -302,6 +303,67 @@ export class CLI {
       await Deno.writeTextFile(absPath, spf.contents);
       yield { ...spf, absPath };
     }
+  }
+
+  async materializeFsWatch(
+    opts: {
+      md: string[];
+      srcRelTo: SourceRelativeTo;
+      fs: string;
+      destroyFirst?: boolean;
+      watch?: boolean;
+      withSqlPage?: {
+        enabled?: boolean;
+        sitePrefix?: string;
+      };
+    },
+  ) {
+    const sidecars = opts.withSqlPage?.enabled
+      ? [
+        {
+          name: "sqlpage",
+          cmd: ["sqlpage"],
+          env: {
+            SQLPAGE_SITE_PREFIX: opts.withSqlPage?.sitePrefix ?? "",
+            ...Deno.env.toObject(),
+          },
+          shutdownSignal: "SIGTERM",
+          shutdownTimeoutMs: 1500,
+        } satisfies SidecarOpts,
+      ]
+      : undefined;
+
+    const bus = eventBus<WatcherEvents>();
+    const run = watcher(
+      opts.md,
+      async () => {
+        for await (const _ of this.materializeFs(opts)) { /* consume */ }
+      },
+      {
+        debounceMs: 120,
+        recursive: false,
+        bus,
+        sidecars,
+      },
+    );
+
+    // Example listeners (optional)
+    bus.on(
+      "run:begin",
+      (ev) =>
+        console.log(
+          `[watch] build ${ev.runIndex} begin with SQLPage: ${
+            opts.withSqlPage?.enabled ?? "no"
+          }`,
+        ),
+    );
+    bus.on("run:success", () => console.log("[watch] build success"));
+    bus.on(
+      "run:error",
+      ({ error }) => console.error("[watch] build error:", error),
+    );
+
+    await run(opts.watch);
   }
 
   command(name = "spry.ts") {
@@ -353,7 +415,7 @@ export class CLI {
           .option(
             "--fs <srcHome:string>",
             "Materialize SQL files under this directory.",
-            { conflicts: ["package"] },
+            { conflicts: ["package"], depends: ["conf"] },
           )
           .option(
             "--destroy-first",
@@ -365,6 +427,11 @@ export class CLI {
             "Materialize SQL files under this directory every time the markdown sources change",
             { depends: ["fs"] },
           )
+          .option(
+            "--with-sqlpage",
+            "Start a local SQLPage binary in dev mode pointing to the --fs directory",
+            { depends: ["watch"] },
+          )
           // Write sqlpage.json to the given path
           .option(
             "-c, --conf <confPath:string>",
@@ -374,19 +441,15 @@ export class CLI {
           .action(async (opts) => {
             // If --fs is present, materialize files under that root
             if (typeof opts.fs === "string" && opts.fs.length > 0) {
-              const generated = await Array.fromAsync(
-                this.materializeFs({
-                  // not sure why this mapping is needed, Cliffy seems to not type `default` for `collect`ed arrays properly?
-                  md: opts.md.map((f) => String(f)),
-                  srcRelTo: opts.srcRelTo,
-                  fs: opts.fs,
-                  destroyFirst: opts.destroyFirst,
-                  watch: opts.watch,
-                }),
-              );
-              if (opts.verbose) {
-                generated.forEach((f) => console.log(f.absPath));
-              }
+              await this.materializeFsWatch({
+                // not sure why this mapping is needed, Cliffy seems to not type `default` for `collect`ed arrays properly?
+                md: opts.md.map((f) => String(f)),
+                srcRelTo: opts.srcRelTo,
+                fs: opts.fs,
+                destroyFirst: opts.destroyFirst,
+                watch: opts?.watch,
+                withSqlPage: { enabled: opts.withSqlpage },
+              });
             }
 
             // If -p/--package is present (i.e., user requested SQL package), emit to stdout
