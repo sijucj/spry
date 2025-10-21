@@ -24,6 +24,7 @@ export type LsTaskRow = {
   name: string;
   notebook: string;
   language: string;
+  descr: string;
   deps?: string[];
   error?: unknown;
 };
@@ -86,17 +87,22 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
       name: t.taskId(),
       notebook: String(t.provenance),
       language: t.language,
-      deps: t.taskDeps?.(),
+      deps: t.taskDeps?.() ?? [],
+      descr: (String(t.parsedInfo?.flags["descr"]) ?? "").replace(
+        "undefined",
+        "",
+      ),
     } satisfies LsTaskRow;
   });
 
   await new ListerBuilder<LsTaskRow>()
-    .declareColumns("name", "notebook", "language", "deps", "error")
+    .declareColumns("name", "notebook", "language", "deps", "descr", "error")
     .from(tasksList)
     .field("name", "name", lsTaskIdField())
     .field("language", "language", lsLanguageField())
-    .field("notebook", "notebook", lsColorPathField("Notebook"))
+    .field("descr", "descr")
     .field("error", "error", { header: "Err" })
+    .field("notebook", "notebook", lsColorPathField("Notebook"))
     .sortBy("name").sortDir("asc")
     .build()
     .ls(true);
