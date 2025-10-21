@@ -25,7 +25,7 @@ export type LsTaskRow = {
   notebook: string;
   language: string;
   descr: string;
-  deps?: string[];
+  deps?: string;
   error?: unknown;
 };
 
@@ -87,7 +87,7 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
       name: t.taskId(),
       notebook: String(t.provenance),
       language: t.language,
-      deps: t.taskDeps?.() ?? [],
+      deps: (t.taskDeps?.() ?? []).join(", "),
       descr: (String(t.parsedInfo?.flags["descr"]) ?? "").replace(
         "undefined",
         "",
@@ -100,6 +100,7 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
     .from(tasksList)
     .field("name", "name", lsTaskIdField())
     .field("language", "language", lsLanguageField())
+    .field("deps", "deps")
     .field("descr", "descr")
     .field("error", "error", { header: "Err" })
     .field("notebook", "notebook", lsColorPathField("Notebook"))
