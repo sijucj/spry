@@ -10,8 +10,13 @@ import {
   yellow,
 } from "jsr:@std/fmt@^1/colors";
 import { ensureDir } from "jsr:@std/fs@^1";
-import { dirname, globToRegExp, join, relative } from "jsr:@std/path@^1";
-import { basename } from "node:path";
+import {
+  basename,
+  dirname,
+  globToRegExp,
+  join,
+  relative,
+} from "jsr:@std/path@^1";
 import * as taskCLI from "../task/cli.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
@@ -266,9 +271,25 @@ export class CLI {
   }
 
   async *materializeFs(
-    opts: { md: string[]; srcRelTo: SourceRelativeTo; fs: string },
+    opts: {
+      md: string[];
+      srcRelTo: SourceRelativeTo;
+      fs: string;
+      destroyFirst?: boolean;
+      watch?: boolean;
+    },
   ) {
     const { fs } = opts;
+    if (opts.destroyFirst) {
+      try {
+        await Deno.remove(fs, { recursive: true });
+        console.info(`Removed ${fs}`);
+      } catch (err) {
+        if (!(err instanceof Deno.errors.NotFound)) {
+          console.error(`Error while trying to remove ${fs}`, err);
+        }
+      }
+    }
     for await (
       const spf of normalizeSPC(this.spn.sqlPageFiles({
         mdSources: opts.md,
@@ -334,6 +355,16 @@ export class CLI {
             "Materialize SQL files under this directory.",
             { conflicts: ["package"] },
           )
+          .option(
+            "--destroy-first",
+            "Remove the directory that --fs points to before materializing SQL files",
+            { depends: ["fs"] },
+          )
+          .option(
+            "--watch",
+            "Materialize SQL files under this directory every time the markdown sources change",
+            { depends: ["fs"] },
+          )
           // Write sqlpage.json to the given path
           .option(
             "-c, --conf <confPath:string>",
@@ -349,6 +380,8 @@ export class CLI {
                   md: opts.md.map((f) => String(f)),
                   srcRelTo: opts.srcRelTo,
                   fs: opts.fs,
+                  destroyFirst: opts.destroyFirst,
+                  watch: opts.watch,
                 }),
               );
               if (opts.verbose) {
