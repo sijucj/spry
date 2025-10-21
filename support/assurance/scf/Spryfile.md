@@ -31,7 +31,7 @@ cat prepare.duckdb.sql | duckdb ":memory:"  # DuckDB processes in memory but cre
 While you're developing Spry's `dev-src.auto` generator should be used:
 
 ```bash prepare-sqlpage-dev --descr "Generate the dev-src.auto directory to work in SQLPage dev mode"
-rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json 
+rm -rf dev-src.auto && ./spry.ts spc --fs dev-src.auto --conf sqlpage/sqlpage.json
 ```
 
 In development mode, here’s the `watchexec` convenience you can use so that
@@ -120,7 +120,9 @@ WHERE IFNULL(json_extract(c.value,'$.virtual'), 0) <> 1;
 
 ## Unpivoted page
 
-```sql scf/regime_control_unpivoted.sql { route: { caption: "Regime mappings", description: "One row per (SCF control, regime column) with the raw cell value and regime column ordinal. Use this as the base long-form dataset." } }
+```sql scf/regime_control_unpivoted.sql { route: { caption: "Regime mappings" } }
+-- @route.description "One row per (SCF control, regime column) with the raw cell value and regime column ordinal. Use this as the base long-form dataset."
+
 SELECT 'text' AS component, $page_title AS title;
 
 ${paginate("scf_regime_control_unpivoted")}
@@ -352,6 +354,7 @@ SELECT
     "≥ 0.5% of total revenue"
 FROM scf_threat_catalog;
 ```
+
 ## Controls Library page
 
 ```sql scf/controls.sql { route: { caption: "Controls Library", description: "Discover and understand compliance controls across different regulatory frameworks. Select your applicable regimes to identify your control responsibilities." } }
@@ -373,13 +376,11 @@ SELECT
     ORDER BY control_count DESC, regime
     ${pagination.limit}; 
     ${pagination.navigation}
+```
 
- ```
-
- ## Regime details page
+## Regime details page
 
 ```sql scf/details/regime_details.sql { route: { caption: "Control details" } }
-
  SELECT 'card' AS component,
            $page_title AS title,
            1 AS columns;
@@ -399,5 +400,4 @@ SELECT
   FROM "scf_regime_control_unpivoted"
 WHERE scf_no = $scf_no
 AND regime_label = $regime;
-
- ```
+```
