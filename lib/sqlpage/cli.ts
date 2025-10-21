@@ -15,6 +15,7 @@ import { basename } from "node:path";
 import * as taskCLI from "../task/cli.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
+import { doctor } from "../universal/doctor.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
 import { executionSubplan } from "../universal/task.ts";
@@ -309,6 +310,12 @@ export class CLI {
         "SQLPage Markdown Notebook: emit SQL package, write sqlpage.json, or materialize filesystem.",
       )
       .command("help", new HelpCommand().global())
+      .command("doctor", "Show dependencies and their availability")
+      .action(async () => {
+        const diags = doctor(["deno --version", "sqlpage --version"]);
+        const result = await diags.run();
+        diags.render.cli(result);
+      })
       .command(
         "spc",
         new Command() // Emit SQL package (sqlite) to stdout; accepts md path

@@ -288,6 +288,7 @@ export function shell(init?: {
     spawnShebang,
     denoTaskEval,
     auto,
+    splitArgvLine,
   };
 }
 
