@@ -9,8 +9,13 @@ import {
 } from "jsr:@std/fmt@^1/colors";
 import { relative } from "jsr:@std/path@^1";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
-import { shell, verboseInfoShellEventBus } from "../universal/shell.ts";
 import {
+  errorOnlyShellEventBus,
+  shell,
+  verboseInfoShellEventBus,
+} from "../universal/shell.ts";
+import {
+  errorOnlyTaskEventBus,
   executeDAG,
   ok,
   Task,
@@ -117,7 +122,9 @@ export async function executeTasks<T extends Task>(
   type Context = { runId: string };
 
   const sh = shell({
-    bus: verbose ? verboseInfoShellEventBus({ style: verbose }) : undefined,
+    bus: verbose
+      ? verboseInfoShellEventBus({ style: verbose })
+      : errorOnlyShellEventBus({ style: verbose ? verbose : "rich" }),
   });
 
   const exec = new TaskExecutorBuilder<Task, Context>()
@@ -130,7 +137,9 @@ export async function executeTasks<T extends Task>(
   const summary = await executeDAG(plan, exec, {
     eventBus: verbose
       ? verboseInfoTaskEventBus<T, Context>({ style: verbose })
-      : undefined,
+      : errorOnlyTaskEventBus<T, Context>({
+        style: verbose ? verbose : "rich",
+      }),
   });
   if (summarize) console.dir({ summary });
   return summary;
