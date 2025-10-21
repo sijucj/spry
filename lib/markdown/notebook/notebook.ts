@@ -146,13 +146,15 @@ export type Issue<Provenance> =
 export type CodeCell<
   Provenance,
   Attrs extends Record<string, unknown> = Record<string, unknown>,
-> = {
+> // TODO: strongly type parsedInfo record?
+ = {
   kind: "code";
   provenance: Provenance;
   language: string; // fence lang or "text"
   source: string; // fence body
   attrs: Attrs; // JSON5 from fence meta {...}
   info?: string; // meta prefix before {...}
+  parsedInfo?: ReturnType<typeof parsedTextFlags>; // meta prefix before {...}
   startLine?: number;
   endLine?: number;
 };
@@ -457,6 +459,7 @@ function parseDocument<
       // Extract trailing {...} JSON5 as attrs; prefix (if any) as info
       let attrs = {} as Attrs;
       let info: string | undefined;
+      let parsedInfo: ReturnType<typeof parsedTextFlags> | undefined;
       if (metaRaw) {
         const m = metaRaw.match(/\{.*\}$/);
         if (m) {
@@ -465,6 +468,7 @@ function parseDocument<
         } else {
           info = metaRaw.trim();
         }
+        parsedInfo = info ? parsedTextFlags(info) : undefined;
       }
 
       const codeCell: CodeCell<Provenance, Attrs> = {
@@ -474,6 +478,7 @@ function parseDocument<
         source: String(node.value ?? ""),
         attrs,
         info,
+        parsedInfo,
         startLine: posStartLine(node),
         endLine: posEndLine(node),
       };
@@ -514,23 +519,118 @@ function parseDocument<
   } satisfies Notebook<Provenance, FM, Attrs, I>;
 }
 
+/** Minimal POSIX-like tokenizer:
+ * - Splits on whitespace.
+ * - Respects single quotes: everything literal until next `'`.
+ * - Respects double quotes: everything literal until next `"`, supports `\"` and `\\` escaping within.
+ * - Outside quotes, `\x` becomes `x` (escapes next char).
+ */
+function tokenizePosix(s: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let i = 0;
+  let q: '"' | "'" | null = null;
+
+  const isSpace = (c: string) => /\s/.test(c);
+
+  while (i < s.length) {
+    const ch = s[i];
+
+    if (q) {
+      // Inside quotes
+      if (q === '"' && ch === "\\") {
+        // In double quotes, allow \" and \\ (treat \X as X)
+        if (i + 1 < s.length) {
+          cur += s[i + 1];
+          i += 2;
+          continue;
+        }
+      }
+      if (ch === q) {
+        q = null;
+        i++;
+        continue;
+      }
+      cur += ch;
+      i++;
+      continue;
+    }
+
+    // Outside quotes
+    if (isSpace(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+      // skip contiguous spaces
+      i++;
+      while (i < s.length && isSpace(s[i])) i++;
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      q = ch as '"' | "'";
+      i++;
+      continue;
+    }
+
+    if (ch === "\\") {
+      if (i + 1 < s.length) {
+        cur += s[i + 1];
+        i += 2;
+        continue;
+      }
+      // trailing backslash -> treat literally
+      cur += ch;
+      i++;
+      continue;
+    }
+
+    cur += ch;
+    i++;
+  }
+
+  if (cur) out.push(cur);
+  return out;
+}
+
 /**
- * Parse posix CLI-style args into a flexible record, collecting repeated flags.
+ * Parse POSIX-style CLI args into `{ bareTokens, flags }`.
+ *
+ * Input may be either:
+ *  - `string[]` (e.g., `Deno.args`) — processed directly, or
+ *  - `string`  — tokenized internally using a minimal POSIX-like tokenizer
+ *                (whitespace splits; supports single/double quotes; backslash
+ *                escapes outside and inside double-quotes).
  *
  * Supports:
  * - Long flags: `--key value` or `--key=value`
- * - Long flags: `--key` (on/off)
- * - Short flags: `-k value` or `-k=value or -k`
+ * - Short flags: `-k value` or `-k=value`
+ * - Bare flags: `--key` or `-k` (boolean true)
+ * - Bare tokens (no leading `-`): collected into `bareTokens: string[]`
  *
  * Behavior:
- * - Flags not present in `base` are automatically added.
- * - First occurrence of a flag overwrites any base default.
- * - Subsequent occurrences of the same flag promote to / append a string[].
+ * - `flags` merges onto an optional `base` record; first occurrence wins vs base.
+ * - Repeated flags are promoted/collected into `string[]`.
+ * - Bare tokens that are not consumed as flag values are captured in `bareTokens`.
  *
- * @template T - Optional initial record type (string or string[] values).
- * @param argv - CLI arguments (e.g., `Deno.args`).
- * @param base - Optional initial record for defaults or typing.
- * @returns A record with parsed flags and collected values.
+ * @example
+ * ```ts
+ * const a1 = ["build", "--out=dist", "-v", "src/main.ts", "--tag", "a", "--tag", "b"];
+ * const r1 = parsedTextFlags(a1, { v: false as boolean });
+ * // r1.bareTokens: ["build", "src/main.ts"]
+ * // r1.flags: { out: "dist", v: true, tag: ["a", "b"] }
+ *
+ * const a2 = `build "src/main.ts" --out=dist --tag a --tag "b c" -v`;
+ * const r2 = parsedTextFlags(a2);
+ * // r2.bareTokens: ["build", "src/main.ts"]
+ * // r2.flags: { out: "dist", tag: ["a", "b c"], v: true }
+ * ```
+ *
+ * @template T - Optional initial record type for flags.
+ * @param argv - CLI as array or single string to be tokenized.
+ * @param base - Optional defaults or to drive the flags result typing.
+ * @returns Object with `bareTokens` and `flags`.
  */
 export function parsedTextFlags<
   T extends Record<string, string | string[] | boolean> = Record<
@@ -538,17 +638,27 @@ export function parsedTextFlags<
     string | string[] | boolean
   >,
 >(
-  argv: readonly string[],
+  argv: readonly string[] | string,
   base?: T,
-): T {
-  const out: Record<string, string | string[] | boolean> = base
+) {
+  const tokens = Array.isArray(argv)
+    ? argv as readonly string[]
+    : tokenizePosix(argv as string);
+  const flagsOut: Record<string, string | string[] | boolean> = base
     ? { ...base }
     : {};
   const seenFromArg = new Set<string>();
+  const bareTokens: string[] = [];
 
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i];
-    if (!token.startsWith("-")) continue;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    // Non-flag token: either a bare token or a value consumed by a previous flag.
+    if (!token.startsWith("-")) {
+      // Only recorded as bare when encountered standalone.
+      bareTokens.push(token);
+      continue;
+    }
 
     const isLong = token.startsWith("--");
     const prefixLen = isLong ? 2 : 1;
@@ -559,91 +669,45 @@ export function parsedTextFlags<
       : token.slice(prefixLen, eqIdx);
     if (!key) continue;
 
-    // value cases:
-    // 1) --k=v or -k=v  => string value after '='
-    // 2) --k v or -k v  => next token if not another flag
-    // 3) bare (--k or -k) => boolean true
-    let val: string | boolean | undefined;
+    // Resolve value:
+    // 1) --k=v or -k=v  => value after '='
+    // 2) --k v or -k v  => next token if not a flag (also consumes it)
+    // 3) --k or -k      => boolean true
+    let val: string | boolean;
     if (eqIdx !== -1) {
       val = token.slice(eqIdx + 1);
-    } else if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
-      val = argv[++i];
+    } else if (i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
+      val = tokens[++i]; // consume next token as the flag value
+      // Note: Because we only push non-dash tokens to bareTokens when encountered,
+      // consumed values won't appear among bareTokens.
     } else {
       val = true;
     }
 
-    const current = out[key];
+    const current = flagsOut[key];
 
     if (Array.isArray(current)) {
-      // already a string array: append stringified value
-      out[key] = [...current, String(val)];
+      flagsOut[key] = [...current, String(val)];
     } else if (seenFromArg.has(key)) {
-      // promote to array
       if (typeof current === "string") {
-        out[key] = [current, String(val)];
+        flagsOut[key] = [current, String(val)];
       } else if (current === true) {
-        out[key] = ["true", String(val)];
+        flagsOut[key] = ["true", String(val)];
       } else {
-        // base might have been undefined or non-string; start fresh
-        out[key] = [String(val)];
+        flagsOut[key] = [String(val)];
       }
     } else {
-      // first time set from argv
-      out[key] = val;
+      flagsOut[key] = val;
     }
 
     seenFromArg.add(key);
   }
 
-  return out as T;
-}
-
-/**
- * Parse a space-delimited text string into its leading token, argument list,
- * and argsText, returning a structured object for easy access.
- *
- * Useful for decomposing shell-like or CLI-style command strings into their
- * components, preserving the original argument order.
- *
- * @example
- * ```ts
- * parsedTextComponents("bash name --dep=X --dep Y");
- * // {
- * //   first: "bash",
- * //   argv: ["name", "--dep", "X", "--dep", "Y"],
- * //   argsText: "name --dep X --dep Y",
- * //   flags: [Function: flags]
- * // }
- *
- * // Optionally, if parsedTextFlags() supports collecting repeated flags:
- * const parsed = parsedTextComponents("bash name --dep X --dep=Y");
- * parsed.flags();
- * // => {
- * //   name: "name",
- * //   dep: ["X", "Y"]
- * // }
- * ```
- *
- * @param candidate - A text string to parse (e.g., command line input).
- * @returns
- * - `false` if the input is empty, undefined, or only whitespace.
- * - Otherwise an object containing:
- *   - `first`: the first token (typically a command).
- *   - `argv`: an array of the remaining tokens.
- *   - `argsText`: the remaining text after the first token.
- *   - `flags()`: a lazily-evaluated parser for CLI-style flags.
- */
-export function parsedTextComponents(candidate?: string) {
-  if (!candidate) return false;
-  const info = candidate?.trim();
-  if (info.length == 0) return false;
-  const [first, ...argv] = info.split(/\s+/);
-  const argsText = argv.join(" ").trim();
   return {
-    first,
-    argv,
-    argsText,
-    flags: () => parsedTextFlags(argv),
+    firstToken: bareTokens.length > 0 ? bareTokens[0] : undefined,
+    secondToken: bareTokens.length > 1 ? bareTokens[1] : undefined,
+    bareTokens,
+    flags: flagsOut as T,
   };
 }
 

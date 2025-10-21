@@ -8,7 +8,6 @@ import {
 } from "../markdown/notebook/mod.ts";
 import {
   annotationsFactory,
-  parsedInfo,
   TaskDirectiveInspector,
   TaskDirectives,
   TasksProvenance,
@@ -80,10 +79,10 @@ export function sqlHeadCellTDI(): SqlPageTDI {
   const heads = counter(sqlTaskHead);
   return ({ cell }) => {
     if (cell.language != sqlCodeCellLangId) return false;
-    const pi = parsedInfo(cell.info);
+    const pi = cell.parsedInfo;
     if (!pi) return false; // no identity, ignore
-    if (pi.first.toLocaleUpperCase() != sqlTaskHead) return false;
-    const identity = pi.identity(`sql.d/head/${heads.nextText()}`);
+    if (pi.firstToken?.toLocaleUpperCase() != sqlTaskHead) return false;
+    const identity = pi.secondToken ?? `sql.d/head/${heads.nextText()}`;
     return {
       nature: "CONTENT",
       identity,
@@ -102,10 +101,10 @@ export function sqlTailCellTDI(): SqlPageTDI {
   const tails = counter(sqlTaskTail);
   return ({ cell }) => {
     if (cell.language != sqlCodeCellLangId) return false;
-    const pi = parsedInfo(cell.info);
+    const pi = cell.parsedInfo;
     if (!pi) return false; // no identity, ignore
-    if (pi.first.toLocaleUpperCase() != sqlTaskTail) return false;
-    const identity = pi.identity(`sql.d/head/${tails.nextText()}`);
+    if (pi.firstToken?.toLocaleUpperCase() != sqlTaskHead) return false;
+    const identity = pi.secondToken ?? `sql.d/head/${tails.nextText()}`;
     return {
       nature: "CONTENT",
       identity,
@@ -167,9 +166,9 @@ export function mutateRouteInCellAttrs(
 export function sqlPageFileCellTDI(): SqlPageTDI {
   return ({ cell, registerIssue }) => {
     if (cell.language != sqlCodeCellLangId) return false;
-    const pi = parsedInfo(cell.info);
-    if (!pi) return false; // no identity, ignore
-    const path = pi.first;
+    const pi = cell.parsedInfo;
+    if (!pi || !pi.firstToken) return false; // no identity, ignore
+    const path = pi.firstToken;
     mutateRouteInCellAttrs(cell, path, registerIssue);
     return {
       nature: "CONTENT",

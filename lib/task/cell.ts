@@ -5,7 +5,6 @@ import {
   Issue,
   mdFencedBlockPartialSchema,
   notebooks,
-  parsedTextComponents,
   Playbook,
   PlaybookCodeCell,
   playbooks,
@@ -156,40 +155,6 @@ export type TaskDirectiveInspector<
   },
 ) => TaskDirective | false;
 
-const parsedInfoCache = new Map<string, ReturnType<typeof parsedInfoPrime>>();
-
-export function parsedInfoPrime(candidate?: string) {
-  const ptc = parsedTextComponents(candidate);
-  if (!ptc) return false;
-
-  return {
-    ...ptc,
-    identity: (idIfMissing: string) =>
-      ptc.argv.length > 0 ? ptc.argv[0] : idIfMissing,
-    deps: () => {
-      const flags = ptc.flags();
-      return "dep" in flags
-        ? (typeof flags.dep === "boolean"
-          ? undefined
-          : typeof flags.dep === "string"
-          ? [flags.dep]
-          : flags.dep)
-        : undefined;
-    },
-  };
-}
-
-export function parsedInfo(candidate?: string) {
-  if (!candidate) return false;
-
-  let pi = parsedInfoCache.get(candidate);
-  if (typeof pi === "undefined") {
-    pi = parsedInfoPrime(candidate);
-    parsedInfoCache.set(candidate, pi);
-  }
-  return pi;
-}
-
 export function partialsInspector<
   Provenance,
   Frontmatter extends Record<string, unknown> = Record<string, unknown>,
@@ -197,11 +162,12 @@ export function partialsInspector<
   I extends Issue<Provenance> = Issue<Provenance>,
 >(): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
   return ({ cell, registerIssue }) => {
-    const pi = parsedInfo(cell.info);
-    if (pi && pi.first.toLocaleUpperCase() == "PARTIAL") {
+    if (!cell.parsedInfo) return false;
+    const pi = cell.parsedInfo;
+    if (pi && pi.firstToken?.toLocaleUpperCase() == "PARTIAL") {
       const fbc = {
         nature: "PARTIAL",
-        partial: fbPartialCandidate(pi.argsText, cell.source, cell.attrs, {
+        partial: fbPartialCandidate(cell.parsedInfo, cell.source, cell.attrs, {
           registerIssue,
         }),
       };
@@ -245,14 +211,21 @@ export function spawnableTDI<
   return ({ cell }) => {
     const language = isValidLanguage(cell);
     if (!language) return false;
-    const pi = parsedInfo(cell.info);
-    if (!pi) return false; // TODO: should we warn about this or ignore it?
+    if (!cell.info) return false;
+    const pi = cell.parsedInfo;
+    if (!pi || !pi.firstToken) return false;
     return {
       nature: "TASK",
-      identity: pi.first,
+      identity: pi.firstToken,
       source: cell.source,
       language,
-      deps: pi.deps(),
+      deps: "dep" in pi.flags
+        ? (typeof pi.flags.dep === "boolean"
+          ? undefined
+          : typeof pi.flags.dep === "string"
+          ? [pi.flags.dep]
+          : pi.flags.dep)
+        : undefined,
     };
   };
 }
