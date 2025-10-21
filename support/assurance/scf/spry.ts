@@ -1,7 +1,8 @@
-#!/usr/bin/env -S deno run -A --watch
+#!/usr/bin/env -S deno run -A
 
-// Use `deno --watch` in shebang ☝️ during dev of Spry itself
-// but remove --watch if you're not doing Spry development
+// #!/usr/bin/env -S deno run -A --watch
+// Use `deno --watch` in shebang ☝️ during dev of Spry itself but do not keep
+// `--watch` if you're not doing Spry development.
 
 import { CLI } from "../../../lib/sqlpage/cli.ts";
 
