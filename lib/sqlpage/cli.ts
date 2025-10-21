@@ -24,7 +24,7 @@ import { doctor } from "../universal/doctor.ts";
 import { eventBus } from "../universal/event-bus.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
-import { executionSubplan } from "../universal/task.ts";
+import { executionPlan, executionSubplan } from "../universal/task.ts";
 import { SidecarOpts, watcher, WatcherEvents } from "../universal/watcher.ts";
 import { sqlPageConf } from "./conf.ts";
 import {
@@ -545,16 +545,27 @@ export class CLI {
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option("--verbose", "Emit information messages")
+          .option("--summarize", "Emit summary after execution in JSON")
           .action(async (opts, taskId) => {
             const pp = await this.spn.populateContent({
               mdSources: opts.md.map((f) => String(f)),
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            taskCLI.executeTasks(
-              executionSubplan(pp.executionPlan, [taskId]),
+            const runbook = await taskCLI.executeTasks(
+              executionSubplan(
+                executionPlan(
+                  pp.state.directives.tasks.filter((t) =>
+                    t.taskDirective.nature === "TASK"
+                  ),
+                ),
+                [taskId],
+              ),
               opts.verbose ? "rich" : false,
             );
+            if (opts.summarize) {
+              console.log(runbook);
+            }
           })
           .command("ls", "List SQLPage file entries")
           .type("sourceRelTo", srcRelTo)
@@ -576,6 +587,49 @@ export class CLI {
                 : pp.state.directives.tasks.filter((t) =>
                   t.taskDirective.nature === "TASK"
                 ),
+            );
+          }),
+      ).command(
+        "runbook",
+        new Command() // Emit SQL package (sqlite) to stdout; accepts md path
+          .description("Spry Runbook CLI")
+          .type("sourceRelTo", srcRelTo)
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
+          .option("--verbose", "Emit information messages verbosely")
+          .option("--summarize", "Emit summary after execution in JSON")
+          .action(async (opts) => {
+            const pp = await this.spn.populateContent({
+              mdSources: opts.md.map((f) => String(f)),
+              srcRelTo: opts.srcRelTo,
+              state: sqlPagePlaybookState(),
+            });
+            const runbook = await taskCLI.executeTasks(
+              executionPlan(
+                pp.state.directives.tasks.filter((t) =>
+                  t.taskDirective.nature === "TASK"
+                ),
+              ),
+              opts.verbose ? "rich" : false,
+            );
+            if (opts.summarize) {
+              console.log(runbook);
+            }
+          })
+          .command("ls", "List SQLPage file runbook entries")
+          .type("sourceRelTo", srcRelTo)
+          .option(...mdOpt)
+          .option(...srcRelToOpt)
+          .action(async (opts) => {
+            const pp = await this.spn.populateContent({
+              mdSources: opts.md.map((f) => String(f)),
+              srcRelTo: opts.srcRelTo,
+              state: sqlPagePlaybookState(),
+            });
+            taskCLI.ls(
+              pp.state.directives.tasks.filter((t) =>
+                t.taskDirective.nature === "TASK"
+              ),
             );
           }),
       );

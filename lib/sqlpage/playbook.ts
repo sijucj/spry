@@ -20,7 +20,6 @@ import {
 import { unsafeInterpolator } from "../universal/interpolate.ts";
 import { forestToStatelessViews } from "../universal/path-tree-tabular.ts";
 import { raw as rawSQL, SQL, sqlCat } from "../universal/sql-text.ts";
-import { executionPlan } from "../universal/task.ts";
 import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 import { dropUndef } from "./conf.ts";
 import {
@@ -393,8 +392,6 @@ export class SqlPagePlaybook {
     // directives now has all the tasks/content across all notebooks in memory
     await td.populate(() => this.sources(init));
 
-    const plan = executionPlan(state.directives.tasks);
-
     const spInterpolator = sqlPageInterpolator();
     const spiContext = spInterpolator.context(state);
     const unsafeInterp = unsafeInterpolator(spiContext);
@@ -405,7 +402,6 @@ export class SqlPagePlaybook {
 
     return {
       state,
-      executionPlan: plan,
       spInterpolator,
       spiContext,
       unsafeInterp,
