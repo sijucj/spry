@@ -263,9 +263,7 @@ export function sqlPageInterpolator() {
         const source = ic?.injection?.wrap(spfu.contents) ?? spfu.contents;
         errSource = source;
 
-        // NOTE: This is intentionally unsafe. Do not feed untrusted content.
-        // Assume you're treating code cell blocks as fully trusted source code.
-        const mutated = await unsafeInterp.interpolate(source, {
+        const commonLocals = {
           pagination: ctx.pagination,
           paginate: ctx.paginate,
           safeJsonStringify,
@@ -275,17 +273,26 @@ export function sqlPageInterpolator() {
           raw: rawSQL,
           ...spfu.cell?.attrs,
           ...spfu,
+        };
+
+        // NOTE: This is intentionally unsafe. Do not feed untrusted content.
+        // Assume you're treating code cell blocks as fully trusted source code.
+        const mutated = await unsafeInterp.interpolate(source, {
+          ...commonLocals,
           partial: async (
             name: string,
             partialLocals?: Record<string, unknown>,
           ) => {
             const found = directives.partials.get(name);
             if (found) {
+              const partialCell = directives.partialDirectives.find((pd) =>
+                pd.partialDirective.partial.identity == found.identity
+              );
               const { content: partial, interpolate, locals } = await found
                 .content({
                   ...partialLocals,
-                  ...spfu.cell?.attrs,
-                  ...spfu,
+                  ...commonLocals,
+                  partial: partialCell,
                 });
               if (!interpolate) return partial;
               return await unsafeInterp.interpolate(partial, locals, [{
