@@ -13,10 +13,12 @@ import { ensureDir } from "jsr:@std/fs@^1";
 import {
   basename,
   dirname,
+  fromFileUrl,
   globToRegExp,
   join,
   relative,
 } from "jsr:@std/path@^1";
+import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import * as taskCLI from "../task/cli.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
@@ -25,6 +27,7 @@ import { eventBus } from "../universal/event-bus.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
 import { executionPlan, executionSubplan } from "../universal/task.ts";
+import { dedentIfFirstLineBlank } from "../universal/tmpl-literal-aide.ts";
 import { SidecarOpts, watcher, WatcherEvents } from "../universal/watcher.ts";
 import { sqlPageConf } from "./conf.ts";
 import {
@@ -108,6 +111,115 @@ export function upsertMissingAncestors<T>(
 
 export class CLI {
   constructor(readonly spn = SqlPagePlaybook.instance()) {
+  }
+
+  // Determines:
+  // - projectHome: cwd by default (where we'll scaffold files)
+  // - abs paths to spry.ts and Spryfile.md
+  // - correct import specifier for spry.ts depending on whether this CLI
+  //   module (cli.ts) is local (file:) or remote (http/https:)
+  //
+  projectPaths(projectHome = Deno.cwd()) {
+    // Where is THIS cli.ts loaded from?
+    const cliModuleUrl = new URL(import.meta.url);
+
+    // Decide remote vs local
+    const isRemote = cliModuleUrl.protocol === "http:" ||
+      cliModuleUrl.protocol === "https:";
+
+    // Import specifier to embed into generated spry.ts
+    let importSpecifierForSpry: string;
+
+    if (isRemote) {
+      // If CLI was loaded from a remote URL, import specifier should be that URL
+      // so the generated spry.ts imports CLI directly from remote.
+      importSpecifierForSpry = cliModuleUrl.href;
+    } else {
+      // Local filesystem path -> generate a relative import from projectHome to cli.ts
+      const cliFsPath = fromFileUrl(cliModuleUrl);
+      let rel = relative(projectHome, cliFsPath).replaceAll("\\", "/");
+      if (!rel.startsWith(".") && !rel.startsWith("/")) rel = `./${rel}`;
+      importSpecifierForSpry = rel;
+    }
+
+    const absPathToSpryTsLocal = join(projectHome, "spry.ts");
+    const absPathToSpryfileLocal = join(projectHome, "Spryfile.md");
+
+    return {
+      projectHome,
+      absPathToSpryTsLocal,
+      absPathToSpryfileLocal,
+      importSpecifierForSpry,
+      isRemote,
+      cliModuleUrl,
+    };
+  }
+
+  async init(
+    projectHome = Deno.cwd(),
+    init?: { dbName: string; force?: boolean },
+  ) {
+    const {
+      absPathToSpryTsLocal,
+      absPathToSpryfileLocal,
+      importSpecifierForSpry,
+    } = this.projectPaths(projectHome);
+
+    // spry.ts template (imports CLI from remote/local depending on our own location)
+    const spryTs = dedentIfFirstLineBlank(`
+      #!/usr/bin/env -S deno run -A
+      // Use \`deno run -A --watch\` in the shebang if you're contributing / developing Spry itself.
+
+      import { CLI } from "${importSpecifierForSpry}";
+
+      CLI.instance().run();`);
+
+    const exists = async (path: string) =>
+      await Deno.stat(path).catch(() => false);
+    const relativeToCWD = (path: string) => relative(Deno.cwd(), path);
+
+    const removed: string[] = [];
+    if (init?.force) {
+      if (await exists(absPathToSpryTsLocal)) {
+        await Deno.remove(absPathToSpryTsLocal);
+        removed.push(relativeToCWD(absPathToSpryTsLocal));
+      }
+    }
+
+    const ignored: string[] = [];
+    const created: string[] = [];
+
+    if (!await exists(absPathToSpryTsLocal)) {
+      await Deno.writeTextFile(absPathToSpryTsLocal, spryTs);
+      created.push(relativeToCWD(absPathToSpryTsLocal));
+      await Deno.chmod(absPathToSpryTsLocal, 0o755);
+    } else {
+      ignored.push(relativeToCWD(absPathToSpryTsLocal));
+    }
+
+    if (!await exists(absPathToSpryfileLocal)) {
+      const sfMD = new MarkdownDoc();
+      sfMD.frontMatterOnce({
+        "sqlpage-conf": {
+          allow_exec: true,
+          port: 9227,
+          database_url: `sqlite://${init?.dbName ?? "sqlpage.db"}?mode=rwc`,
+          web_root: "./dev-src.auto",
+        },
+      });
+      sfMD.h1("Sample Spryfile.md");
+      sfMD.p("You can create fenced cells for `bash`, `sql`, etc. here.");
+      sfMD.p("TODO: add examples with `doctor`, `prepare-db`, etc.");
+      sfMD.codeTag(
+        "bash",
+      )`# name this section prepare-db and put in your db prep code`;
+      await Deno.writeTextFile(absPathToSpryfileLocal, sfMD.write());
+      created.push(relativeToCWD(absPathToSpryfileLocal));
+    } else {
+      ignored.push(relativeToCWD(absPathToSpryfileLocal));
+    }
+
+    return { removed, ignored, created };
   }
 
   lsColorPathField<Row extends LsCommandRow>(
@@ -397,6 +509,22 @@ export class CLI {
         "SQLPage Markdown Notebook: emit SQL package, write sqlpage.json, or materialize filesystem.",
       )
       .command("help", new HelpCommand().global())
+      .command(
+        "init",
+        "Setup Spryfile.md and spry.ts for local dev environment",
+      )
+      .option("--db-name <file>", "name of SQLite database", {
+        default: "sqlpage.db",
+      })
+      .option("--force", "Remove existing and recreate", {
+        default: false,
+      })
+      .action(async (opts) => {
+        const { created, removed, ignored } = await this.init(Deno.cwd(), opts);
+        removed.forEach((r) => console.warn(`❌ Removed ${r}`));
+        created.forEach((c) => console.info(`📄 Created ${c}`));
+        ignored.forEach((i) => console.info(`🆗 Retained ${i}`));
+      })
       .command("doctor", "Show dependencies and their availability")
       .action(async () => {
         const diags = doctor(["deno --version", "sqlpage --version"]);
@@ -653,4 +781,8 @@ export class CLI {
   static instance() {
     return new CLI();
   }
+}
+
+if (import.meta.main) {
+  CLI.instance().run();
 }
