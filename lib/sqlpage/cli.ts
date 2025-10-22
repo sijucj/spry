@@ -28,6 +28,7 @@ import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
 import { executionPlan, executionSubplan } from "../universal/task.ts";
 import { dedentIfFirstLineBlank } from "../universal/tmpl-literal-aide.ts";
+import { computeSemVerSync } from "../universal/version.ts";
 import { SidecarOpts, watcher, WatcherEvents } from "../universal/watcher.ts";
 import { sqlPageConf } from "./conf.ts";
 import {
@@ -504,7 +505,7 @@ export class CLI {
 
     return new Command()
       .name(name)
-      .version("0.1.0")
+      .version(() => computeSemVerSync(import.meta.url))
       .description(
         "SQLPage Markdown Notebook: emit SQL package, write sqlpage.json, or materialize filesystem.",
       )
