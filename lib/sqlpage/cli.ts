@@ -316,6 +316,7 @@ export class CLI {
       withSqlPage?: {
         enabled?: boolean;
         sitePrefix?: string;
+        sqlPageBin?: string;
       };
     },
   ) {
@@ -323,7 +324,7 @@ export class CLI {
       ? [
         {
           name: "sqlpage",
-          cmd: ["sqlpage"],
+          cmd: [opts?.withSqlPage?.sqlPageBin ?? "sqlpage"],
           env: {
             SQLPAGE_SITE_PREFIX: opts.withSqlPage?.sitePrefix ?? "",
             ...Deno.env.toObject(),
@@ -435,6 +436,11 @@ export class CLI {
             "Start a local SQLPage binary in dev mode pointing to the --fs directory",
             { depends: ["watch"] },
           )
+          .option(
+            "--sqlpage-bin <bin:string>",
+            "Start a local SQLPage binary in dev mode pointing to the --fs directory",
+            { depends: ["watch"], default: "sqlpage" },
+          )
           // Write sqlpage.json to the given path
           .option(
             "-c, --conf <confPath:string>",
@@ -452,7 +458,10 @@ export class CLI {
                 destroyFirst: opts.destroyFirst,
                 verbose: opts.verbose,
                 watch: opts?.watch,
-                withSqlPage: { enabled: opts.withSqlpage },
+                withSqlPage: {
+                  enabled: opts.withSqlpage,
+                  sqlPageBin: opts.sqlpageBin,
+                },
               });
             }
 
