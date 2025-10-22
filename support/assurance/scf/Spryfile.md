@@ -157,7 +157,8 @@ ${pagination.navigation}
 
 ## Regime Controls page
 
-```sql scf/regime_control.sql { route: { caption: "Clean list of regime mappings", description: "Filtered projection of the unpivoted data. One row per (SCF control, regime) keeping key control fields and the regime's raw marker." } }
+```sql scf/regime_control.sql { route: { caption: "Clean list of regime mappings"} }
+-- @route.description "Filtered projection of the unpivoted data. One row per (SCF control, regime) keeping key control fields and the regime's raw marker."
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -180,7 +181,8 @@ ${pagination.navigation}
 
 ## Regime Count page
 
-```sql scf/regime_count.sql { route: { caption: "Controls per regime (totals)", description: "Filtered projection of the unpivoted data. One row per (SCF control, regime) keeping key control fields and the regime's raw marker." } }
+```sql scf/regime_count.sql { route: { caption: "Controls per regime (totals)"} }
+-- @route.description "Filtered projection of the unpivoted data. One row per (SCF control, regime) keeping key control fields and the regime's raw marker."
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -202,7 +204,8 @@ ${pagination.navigation}
 
 ## Domain Count page
 
-```sql scf/regime_domain_count.sql { route: { caption: "Domain x Regime counts", description: "Counts of controls grouped by SCF domain and regime. Useful for heatmaps showing domain coverage by regime." } }
+```sql scf/regime_domain_count.sql { route: { caption: "Domain x Regime counts"} }
+-- @route.description "Counts of controls grouped by SCF domain and regime. Useful for heatmaps showing domain coverage by regime."
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -223,7 +226,8 @@ ${pagination.navigation}
 
 ## Coverage page
 
-```sql scf/regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime", description: "For each SCF domain and regime, shows mapped control count, total controls in the domain, and the percent coverage." } }
+```sql scf/regime_domain_coverage.sql { route: { caption: "Domain coverage % by regime"} }
+-- @route.description "For each SCF domain and regime, shows mapped control count, total controls in the domain, and the percent coverage."
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -248,7 +252,8 @@ ${pagination.navigation}
 
 ## Regime Rank page
 
-```sql scf/regime_domain_rank.sql { route: { caption: "Top regimes within each domain", description: "Ranks regimes inside each SCF domain by count of mapped controls (ties broken by regime name)." } }
+```sql scf/regime_domain_rank.sql { route: { caption: "Top regimes within each domain"} }
+-- @route.description "Ranks regimes inside each SCF domain by count of mapped controls (ties broken by regime name)."
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -272,7 +277,8 @@ ${pagination.navigation}
 
 ## Jaccard page
 
-```sql scf/regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)", description:"Pairwise overlap of regimes based on shared SCF controls, including each regime's total and the Jaccard similarity score." } }
+```sql scf/regime_overlap_jaccard.sql { route: { caption: "Regime overlap (Jaccard)"} }
+-- @route.description "Pairwise overlap of regimes based on shared SCF controls, including each regime's total and the Jaccard similarity score."
 SELECT
   'text' AS component,
  $page_title AS title;
@@ -366,7 +372,8 @@ FROM scf_threat_catalog;
 
 ## Controls Library page
 
-```sql scf/controls.sql { route: { caption: "Controls Library", description: "Discover and understand compliance controls across different regulatory frameworks. Select your applicable regimes to identify your control responsibilities." } }
+```sql scf/controls.sql { route: { caption: "Controls Library"} }
+-- @route.description "Discover and understand compliance controls across different regulatory frameworks. Select your applicable regimes to identify your control responsibilities."
 SELECT
   'text' AS component,
  $page_title AS title;
