@@ -539,7 +539,9 @@ export class CLI {
       .command(
         "task",
         new Command() // Emit SQL package (sqlite) to stdout; accepts md path
-          .description("Spry Task CLI")
+          .description(
+            "Spry Task CLI (execute a specific cell and dependencies)",
+          )
           .type("sourceRelTo", srcRelTo)
           .arguments("<taskId>")
           .option(...mdOpt)
@@ -592,7 +594,7 @@ export class CLI {
       ).command(
         "runbook",
         new Command() // Emit SQL package (sqlite) to stdout; accepts md path
-          .description("Spry Runbook CLI")
+          .description("Spry Runbook CLI (execute all cells in DAG order)")
           .type("sourceRelTo", srcRelTo)
           .option(...mdOpt)
           .option(...srcRelToOpt)

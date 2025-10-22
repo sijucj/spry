@@ -37,7 +37,7 @@ While you're developing Spry's `dev-src.auto` generator should be used:
 ./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json
 ```
 
-```bash clean
+```bash clean --descr "Clean up the project directory's generated artifacts"
 rm -rf dev-src.auto
 ```
 
@@ -68,7 +68,7 @@ If you're running SQLPage in another terminal window, use:
 After development is complete, the `dev-src.auto` can be removed and
 single-database deployment can be used:
 
-```bash deploy
+```bash deploy --descr "Generate sqlpage_files table upsert SQL and push them to SQLite"
 rm -rf dev-src.auto
 ./spry.ts spc --package --conf sqlpage/sqlpage.json | sqlite3 scf-2025.3.sqlite.db
 ```
