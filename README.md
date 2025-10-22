@@ -63,7 +63,8 @@ built-in CLI initializer. You don’t need to manually create `spry.ts` or
 
 ### Quick Start
 
-Run the following command in an empty directory to bootstrap your project:
+Install [`deno 2.5`](https://deno.land) or higher and run the following command
+in an empty directory to bootstrap your project:
 
 ```bash
 cd <your-project>  # create a new directory or use an existing one
