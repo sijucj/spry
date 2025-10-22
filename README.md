@@ -55,10 +55,6 @@ all in one, all executable.
 - AI prompt notebooks that emit structured JSON
 - Documentation that proves its own examples work
 
-Here’s the **updated `Getting Started with Spry for SQLPage`** section for your
-README — rewritten to make `cli.ts init` the fastest and recommended path for
-bootstrapping new projects while preserving all technical context and accuracy.
-
 ## Getting Started with Spry for SQLPage
 
 Spry can scaffold a complete **Markdown + SQLPage** project in seconds using the
