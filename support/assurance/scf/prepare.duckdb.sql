@@ -130,7 +130,7 @@ FROM read_xlsx(getvariable('scf_xls_source'),
                all_varchar = true);
 
 CREATE TABLE "scf_authoritative_source" AS
-SELECT * REPLACE (regexp_replace("Mapping Column Header", '\n', '', 'g') AS "Mapping Column Header")
+SELECT * REPLACE (regexp_replace("Mapping Column Header", '\n', ' ', 'g') AS "Mapping Column Header")
 FROM scf_authoritative_source_raw;
 
 CREATE TABLE "scf_assessment_objective" AS
@@ -331,6 +331,7 @@ DROP TABLE IF EXISTS scf."scf_xls_sheet";
 DROP TABLE IF EXISTS scf."scf_compliance_regime_control_column";
 DROP VIEW IF EXISTS scf."scf_regime_control";
 DROP TABLE IF EXISTS scf."scf_regime_control_unpivoted"; 
+DROP TABLE IF EXISTS scf."scf_authoritative_source_raw";
 
 CREATE TABLE scf."scf_control" AS SELECT * FROM "scf_control";
 CREATE TABLE scf."scf_domain_principle" AS SELECT * FROM "scf_domain_principle";
@@ -343,6 +344,7 @@ CREATE TABLE scf."scf_data_privacy_mgmt_principle" AS SELECT * FROM "scf_data_pr
 CREATE TABLE scf."scf_xls_sheet" AS SELECT * FROM "scf_xls_sheet";
 CREATE TABLE scf."scf_compliance_regime_control_column" AS SELECT * FROM "scf_compliance_regime_control_column";
 CREATE TABLE scf."scf_regime_control_unpivoted" AS SELECT * FROM "scf_regime_control_unpivoted";
+CREATE TABLE scf."scf_authoritative_source_raw" AS SELECT * FROM "scf_authoritative_source_raw";
 
 -- Only the “in” mappings (clean list)
 CREATE OR REPLACE VIEW scf."scf_regime_control" AS
