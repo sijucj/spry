@@ -130,7 +130,11 @@ FROM read_xlsx(getvariable('scf_xls_source'),
                all_varchar = true);
 
 CREATE TABLE "scf_authoritative_source" AS
-SELECT * REPLACE (regexp_replace("Mapping Column Header", '\n', ' ', 'g') AS "Mapping Column Header")
+ 
+SELECT * REPLACE (regexp_replace(
+      regexp_replace("Mapping Column Header", '[\r\n]+', ' ', 'g'),
+      '\s+', ' ', 'g'
+    )  AS "Mapping Column Header")
 FROM scf_authoritative_source_raw;
 
 CREATE TABLE "scf_assessment_objective" AS
