@@ -124,6 +124,7 @@ Zod.
 
 ### Next Steps
 
-- Explore [`Spryfile.md`](support/assurance/scf/Spryfile.md) to understand how tasks and SQLPage routes are defined.
+- Explore [`Spryfile.md`](support/assurance/scf/Spryfile.md) to understand how
+  tasks and SQLPage routes are defined.
 - Add more `bash` or `sql` fences to extend functionality.
 - Run `./spry.ts help` to see available commands.
