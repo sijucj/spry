@@ -169,7 +169,7 @@ export class CLI {
 
     // spry.ts template (imports CLI from remote/local depending on our own location)
     const spryTs = dedentIfFirstLineBlank(`
-      #!/usr/bin/env -S deno run -A
+      #!/usr/bin/env -S deno run -A --node-modules-dir=auto
       // Use \`deno run -A --watch\` in the shebang if you're contributing / developing Spry itself.
 
       import { CLI } from "${importSpecifierForSpry}";
