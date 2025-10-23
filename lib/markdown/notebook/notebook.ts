@@ -99,6 +99,10 @@ import { isAsyncIterator } from "../../universal/collectable.ts";
 export type Source<Provenance> = {
   provenance: Provenance;
   content: string | ReadableStream<Uint8Array>;
+  import?: (
+    src: string | string[],
+    cell: CodeCell<Provenance>,
+  ) => string | Promise<string>;
 };
 
 export type SourceStream<Provenance> =
@@ -215,12 +219,12 @@ function isSourceObject<Provenance>(x: unknown): x is Source<Provenance> {
  */
 export async function* normalizeSources<Provenance>(
   input: SourceStream<Provenance>,
-): AsyncIterable<[Provenance, string]> {
+): AsyncIterable<[Provenance, string, Source<Provenance>]> {
   // Single Source object
-  if (isSourceObject(input)) {
+  if (isSourceObject<Provenance>(input)) {
     const { provenance, content } = input;
     if (typeof content === "string") {
-      yield [provenance, content];
+      yield [provenance, content, input];
       return;
     }
     throw new TypeError("Unsupported Source.content type");
@@ -239,9 +243,9 @@ export async function* normalizeSources<Provenance>(
     }
     const { provenance, content } = value;
     if (typeof content === "string") {
-      yield [provenance, content];
+      yield [provenance, content, value];
     } else if (isReadableStream(content)) {
-      yield [provenance, await readStreamToText(content)];
+      yield [provenance, await readStreamToText(content), value];
     } else {
       throw new TypeError("Unsupported Source.content type");
     }
@@ -260,8 +264,12 @@ export async function* notebooks<
 >(
   input: SourceStream<Provenance>,
 ): AsyncGenerator<Notebook<Provenance, FM, Attrs, I>> {
-  for await (const [provenance, src] of normalizeSources(input)) {
-    const nb = parseDocument<Provenance, FM, Attrs, I>(provenance, src);
+  for await (const [provenance, src, srcSupplied] of normalizeSources(input)) {
+    const nb = await parseDocument<Provenance, FM, Attrs, I>(
+      provenance,
+      src,
+      srcSupplied,
+    );
     yield nb;
   }
 }
@@ -274,12 +282,12 @@ export const remarkProcessor = remark()
   .use(remarkStringify);
 
 /** Parse a single Markdown document into a Notebook<FM, Attrs, I>. */
-function parseDocument<
+async function parseDocument<
   Provenance,
   FM extends Record<string, unknown>,
   Attrs extends Record<string, unknown>,
   I extends Issue<Provenance>,
->(provenance: Provenance, source: string) {
+>(provenance: Provenance, source: string, srcSupplied: Source<Provenance>) {
   type Dict = Record<string, unknown>;
 
   const issues: I[] = [];
@@ -482,6 +490,14 @@ function parseDocument<
         startLine: posStartLine(node),
         endLine: posEndLine(node),
       };
+
+      if (srcSupplied.import && parsedInfo && "import" in parsedInfo.flags) {
+        const importSrc = parsedInfo.flags["import"];
+        if (typeof importSrc !== "boolean") {
+          codeCell.source = await srcSupplied.import(importSrc, codeCell);
+        }
+      }
+
       cells.push(codeCell);
       mdastByCell.push(null); // code cell: no mdast nodes
       codeCellIndices.push(cells.length - 1);

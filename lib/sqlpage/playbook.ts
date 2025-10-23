@@ -82,7 +82,7 @@ export function sqlHeadCellTDI(): SqlPageTDI {
     const pi = cell.parsedInfo;
     if (!pi) return false; // no identity, ignore
     if (pi.firstToken?.toLocaleUpperCase() != sqlTaskHead) return false;
-    const identity = pi.secondToken ?? `sql.d/head/${heads.nextText()}`;
+    const identity = pi.bareTokens[1] ?? `sql.d/head/${heads.nextText()}.sql`;
     return {
       nature: "CONTENT",
       identity,
@@ -103,8 +103,8 @@ export function sqlTailCellTDI(): SqlPageTDI {
     if (cell.language != sqlCodeCellLangId) return false;
     const pi = cell.parsedInfo;
     if (!pi) return false; // no identity, ignore
-    if (pi.firstToken?.toLocaleUpperCase() != sqlTaskHead) return false;
-    const identity = pi.secondToken ?? `sql.d/head/${tails.nextText()}`;
+    if (pi.firstToken?.toLocaleUpperCase() != sqlTaskTail) return false;
+    const identity = pi.bareTokens[1] ?? `sql.d/tail/${tails.nextText()}.sql`;
     return {
       nature: "CONTENT",
       identity,
@@ -363,6 +363,23 @@ export class SqlPagePlaybook {
           ? safeMdSrc.source
           : safeMdSrc.source.href,
         content: safeMdSrc.text,
+        import: async (src, cell) => {
+          const all = typeof src === "string" ? [src] : src;
+          let result = "";
+          for (const s of all) {
+            const safeImportSrc = await safeSourceText(s, init.srcRelTo);
+            if (safeImportSrc.nature == "error") {
+              const err = safeImportSrc.error;
+              return `❌ ${err.name} in import from ${cell.provenance} line ${cell.startLine}\n\n${err.message}${
+                err.stack
+                  ? "\n" + err.stack.split("\n").slice(1).join("\n")
+                  : ""
+              }`;
+            }
+            result += safeImportSrc.text;
+          }
+          return result;
+        },
       } satisfies Source<SqlPageProvenance>;
     }
   }

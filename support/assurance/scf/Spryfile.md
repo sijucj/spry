@@ -53,9 +53,10 @@ which is then picked up automatically by the SQLPage server:
   `Spryfile.md`)
 - `--with-sqlpage` starts and stops SQLPage after each build
 
-Restarting SQLPage after each re-generation of dev-src.auto is **not** necessary,
-so you can also use `--watch` without `--with-sqlpage` in one terminal window
-while keeping the SQLPage server running in another terminal window.
+Restarting SQLPage after each re-generation of dev-src.auto is **not**
+necessary, so you can also use `--watch` without `--with-sqlpage` in one
+terminal window while keeping the SQLPage server running in another terminal
+window.
 
 If you're running SQLPage in another terminal window, use:
 
@@ -71,6 +72,14 @@ single-database deployment can be used:
 ```bash deploy --descr "Generate sqlpage_files table upsert SQL and push them to SQLite"
 rm -rf dev-src.auto
 ./spry.ts spc --package --conf sqlpage/sqlpage.json | sqlite3 scf-2025.3.sqlite.db
+```
+
+## Raw SQL
+
+This raw SQL will be placed into HEAD/TAIL.
+
+```sql TAIL --import ../../../lib/universal/schema-info.dml.sqlite.sql
+-- this will be replaced by the content of schema-info.dml.sqlite.sql
 ```
 
 ## Layout

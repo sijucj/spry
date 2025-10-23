@@ -31,9 +31,11 @@ function isMarkdown<T extends Record<string, unknown>>(
   return c.kind === "markdown";
 }
 
-async function loadFixture(): Promise<string> {
+async function loadFixture(
+  src = "./notebook_test-fixture-01.md",
+): Promise<string> {
   const safeText = await safeSourceText(
-    new URL("./notebook_test-fixture-01.md", import.meta.url),
+    new URL(src, import.meta.url),
     SourceRelativeTo.Module,
   );
   if (safeText.nature === "error") {
@@ -49,7 +51,16 @@ Deno.test("Markdown Notebook core - complex fixture", async (t) => {
 
   // Parse with the core — pass a single string (valid Source)
   const out: Notebook<string>[] = [];
-  for await (const nb of notebooks({ provenance: "prime", content: md })) {
+  for await (
+    const nb of notebooks({
+      provenance: "prime",
+      content: md,
+      import: async (src) =>
+        typeof src === "string"
+          ? await loadFixture(src)
+          : await loadFixture(src[0]),
+    })
+  ) {
     out.push(nb);
   }
 
@@ -82,6 +93,7 @@ Deno.test("Markdown Notebook core - complex fixture", async (t) => {
       "markdown",
       "code",
       "markdown",
+      "code",
       "code",
       "code",
       "markdown",
@@ -161,8 +173,15 @@ Deno.test("Markdown Notebook core - complex fixture", async (t) => {
     assertMatch(cell.source, /raw code block without an explicit language/);
   });
 
-  await t.step("final markdown cell - trailing paragraph after HR", () => {
+  await t.step("imported cell - content is replaced with CSV fixture", () => {
     const cell = nb.cells[15];
+    assert(isCode(cell));
+    assertEquals(cell.language, "csv");
+    assertMatch(cell.source, /id,name,qty/);
+  });
+
+  await t.step("final markdown cell - trailing paragraph after HR", () => {
+    const cell = nb.cells[16];
     assert(isMarkdown(cell));
     assertMatch(cell.text, /trailing paragraph/);
   });
