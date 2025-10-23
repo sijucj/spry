@@ -102,8 +102,8 @@ After development, you can remove generated files and package everything into
 your database:
 
 ```bash
-rm -rf dev-src.auto
 ./spry.ts spc --package --conf sqlpage/sqlpage.json | sqlite3 spry-sqlpage.sqlite.db
+./spry.ts spc --package --conf sqlpage/sqlpage.json | psql
 ```
 
 This produces a single SQLite database containing all `sqlpage_files` rows,
@@ -124,6 +124,6 @@ Zod.
 
 ### Next Steps
 
-- Explore `Spryfile.md` to understand how tasks and SQLPage routes are defined.
+- Explore [`Spryfile.md`](support/assurance/scf/Spryfile.md) to understand how tasks and SQLPage routes are defined.
 - Add more `bash` or `sql` fences to extend functionality.
 - Run `./spry.ts help` to see available commands.
