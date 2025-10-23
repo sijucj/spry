@@ -24,6 +24,7 @@ import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
 import { doctor } from "../universal/doctor.ts";
 import { eventBus } from "../universal/event-bus.ts";
+import { gitignore } from "../universal/gitignore.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
 import { executionPlan, executionSubplan } from "../universal/task.ts";
@@ -198,6 +199,7 @@ export class CLI {
       ignored.push(relativeToCWD(absPathToSpryTsLocal));
     }
 
+    const webRoot = "dev-src.auto";
     if (!await exists(absPathToSpryfileLocal)) {
       const sfMD = new MarkdownDoc();
       sfMD.frontMatterOnce({
@@ -205,7 +207,7 @@ export class CLI {
           allow_exec: true,
           port: 9227,
           database_url: `sqlite://${init?.dbName ?? "sqlpage.db"}?mode=rwc`,
-          web_root: "./dev-src.auto",
+          web_root: `./${webRoot}`,
         },
       });
       sfMD.h1("Sample Spryfile.md");
@@ -220,7 +222,7 @@ export class CLI {
       ignored.push(relativeToCWD(absPathToSpryfileLocal));
     }
 
-    return { removed, ignored, created };
+    return { removed, ignored, created, gitignore: await gitignore(webRoot) };
   }
 
   lsColorPathField<Row extends LsCommandRow>(
@@ -521,10 +523,19 @@ export class CLI {
         default: false,
       })
       .action(async (opts) => {
-        const { created, removed, ignored } = await this.init(Deno.cwd(), opts);
+        const { created, removed, ignored, gitignore: gi } = await this.init(
+          Deno.cwd(),
+          opts,
+        );
         removed.forEach((r) => console.warn(`❌ Removed ${r}`));
         created.forEach((c) => console.info(`📄 Created ${c}`));
-        ignored.forEach((i) => console.info(`🆗 Retained ${i}`));
+        ignored.forEach((i) => console.info(`🆗 Preserved ${i}`));
+
+        const { added, preserved } = gi;
+        added.forEach((c) => console.info(`📄 Added ${c} to .gitignore`));
+        preserved.forEach((p) =>
+          console.info(`🆗 Preserved ${p} in .gitignore`)
+        );
       })
       .command("doctor", "Show dependencies and their availability")
       .action(async () => {
