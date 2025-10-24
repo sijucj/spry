@@ -111,6 +111,75 @@ export function upsertMissingAncestors<T>(
   return out;
 }
 
+// import { fromFileUrl, join, relative } from "jsr:@std/path";
+
+export async function projectPaths(projectHome = Deno.cwd()) {
+  const cliModuleUrl = new URL(import.meta.url);
+  const isRemote = cliModuleUrl.protocol === "http:" ||
+    cliModuleUrl.protocol === "https:";
+
+  const absPathToSpryTsLocal = join(projectHome, "spry.ts");
+  const absPathToSpryfileLocal = join(projectHome, "Spryfile.md");
+
+  let importSpecifierForSpry: string;
+  let importSpecifierForSpryLatest: string;
+
+  if (isRemote) {
+    const CANONICAL =
+      "https://raw.githubusercontent.com/programmablemd/spry/refs/heads/main/lib/sqlpage/cli.ts";
+
+    const headers: Record<string, string> = {
+      "Accept": "application/vnd.github+json",
+    };
+    const token = Deno.env.get("GITHUB_TOKEN");
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const latestTag = await (async () => {
+      const r1 = await fetch(
+        "https://api.github.com/repos/programmablemd/spry/releases/latest",
+        { headers },
+      );
+      if (r1.ok) {
+        const j = await r1.json();
+        const t = (j?.tag_name ?? "").toString().trim();
+        if (t) return t;
+      }
+      const r2 = await fetch(
+        "https://api.github.com/repos/programmablemd/spry/tags?per_page=1",
+        { headers },
+      );
+      if (r2.ok) {
+        const a = await r2.json();
+        const t = (a?.[0]?.name ?? "").toString().trim();
+        if (t) return t;
+      }
+      throw new Error(`Unable to retrieve latest tag for ${CANONICAL}`); // fallback
+    })();
+
+    importSpecifierForSpry = CANONICAL;
+    importSpecifierForSpryLatest = CANONICAL.replace(
+      "/refs/heads/main/",
+      `/refs/tags/${latestTag}/`,
+    );
+  } else {
+    const cliFsPath = fromFileUrl(cliModuleUrl);
+    let rel = relative(projectHome, cliFsPath).replaceAll("\\", "/");
+    if (!rel.startsWith(".") && !rel.startsWith("/")) rel = `./${rel}`;
+    importSpecifierForSpry = rel;
+    importSpecifierForSpryLatest = rel;
+  }
+
+  return {
+    projectHome,
+    absPathToSpryTsLocal,
+    absPathToSpryfileLocal,
+    importSpecifierForSpry,
+    importSpecifierForSpryLatest,
+    isRemote,
+    cliModuleUrl,
+  };
+}
+
 export class CLI<Project> {
   constructor(
     readonly project: Project,
@@ -118,46 +187,9 @@ export class CLI<Project> {
   ) {
   }
 
-  // Determines:
-  // - projectHome: cwd by default (where we'll scaffold files)
-  // - abs paths to spry.ts and Spryfile.md
-  // - correct import specifier for spry.ts depending on whether this CLI
-  //   module (cli.ts) is local (file:) or remote (http/https:)
-  //
-  projectPaths(projectHome = Deno.cwd()) {
-    // Where is THIS cli.ts loaded from?
-    const cliModuleUrl = new URL(import.meta.url);
-
-    // Decide remote vs local
-    const isRemote = cliModuleUrl.protocol === "http:" ||
-      cliModuleUrl.protocol === "https:";
-
-    // Import specifier to embed into generated spry.ts
-    let importSpecifierForSpry: string;
-
-    if (isRemote) {
-      // If CLI was loaded from a remote URL, import specifier should be that URL
-      // so the generated spry.ts imports CLI directly from remote.
-      importSpecifierForSpry = cliModuleUrl.href;
-    } else {
-      // Local filesystem path -> generate a relative import from projectHome to cli.ts
-      const cliFsPath = fromFileUrl(cliModuleUrl);
-      let rel = relative(projectHome, cliFsPath).replaceAll("\\", "/");
-      if (!rel.startsWith(".") && !rel.startsWith("/")) rel = `./${rel}`;
-      importSpecifierForSpry = rel;
-    }
-
-    const absPathToSpryTsLocal = join(projectHome, "spry.ts");
-    const absPathToSpryfileLocal = join(projectHome, "Spryfile.md");
-
-    return {
-      projectHome,
-      absPathToSpryTsLocal,
-      absPathToSpryfileLocal,
-      importSpecifierForSpry,
-      isRemote,
-      cliModuleUrl,
-    };
+  // wrap this in
+  async projectPaths(projectHome = Deno.cwd()) {
+    return await projectPaths(projectHome);
   }
 
   async init(
@@ -167,15 +199,16 @@ export class CLI<Project> {
     const {
       absPathToSpryTsLocal,
       absPathToSpryfileLocal,
-      importSpecifierForSpry,
-    } = this.projectPaths(projectHome);
+      importSpecifierForSpryLatest,
+    } = await this.projectPaths(projectHome);
 
     // spry.ts template (imports CLI from remote/local depending on our own location)
-    const spryTs = dedentIfFirstLineBlank(`
+    const spryTs = (importSpec = importSpecifierForSpryLatest) =>
+      dedentIfFirstLineBlank(`
       #!/usr/bin/env -S deno run -A --node-modules-dir=auto
       // Use \`deno run -A --watch\` in the shebang if you're contributing / developing Spry itself.
 
-      import { CLI } from "${importSpecifierForSpry}";
+      import { CLI } from "${importSpec}";
 
       CLI.instance().run();`);
 
@@ -195,7 +228,7 @@ export class CLI<Project> {
     const created: string[] = [];
 
     if (!await exists(absPathToSpryTsLocal)) {
-      await Deno.writeTextFile(absPathToSpryTsLocal, spryTs);
+      await Deno.writeTextFile(absPathToSpryTsLocal, spryTs());
       created.push(relativeToCWD(absPathToSpryTsLocal));
       await Deno.chmod(absPathToSpryTsLocal, 0o755);
     } else {
@@ -522,7 +555,7 @@ export class CLI<Project> {
       .option("--db-name <file>", "name of SQLite database", {
         default: "sqlpage.db",
       })
-      .option("--force", "Remove existing and recreate", {
+      .option("--force", "Remove existing and recreate from latest tag", {
         default: false,
       })
       .action(async (opts) => {
