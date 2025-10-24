@@ -160,59 +160,65 @@ export async function computeSemVer(
 }
 
 /**
- * Compute a SemVer-like version string synchronously.
- * - For file: URLs, try to read .git/refs/tags or use env GITHUB_LATEST_TAG.
- * - For remote URLs, extract @vX.Y.Z or ref.
- * - Always returns something like "v1.2.3" or "v0.0.0-local".
+ * Compute a SemVer-like version string synchronously using our latest rules.
+ * - Local (file:): prefer env GITHUB_LATEST_TAG -> "vX.Y.Z-local", else "v0.0.0-local".
+ * - raw.githubusercontent.com with /refs/tags/<tag>: return that tag.
+ * - raw.githubusercontent.com with /refs/heads/main: force latest via env GITHUB_LATEST_TAG, else "v0.0.0-branch-main".
+ * - deno.land/jsr.io: extract @vX.Y.Z; else "v0.0.0-remote".
+ * - cdn.jsdelivr.net/gh/...@<ref>: if semver, return it; else "v0.0.0-branch-<ref>".
  */
 export function computeSemVerSync(importUrl: string = import.meta.url): string {
   const normalize = (v: string) => (v.startsWith("v") ? v : `v${v}`);
   const semverRe = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+  const envTagRaw = Deno.env.get("GITHUB_LATEST_TAG")?.trim();
+  const envTag = envTagRaw && semverRe.test(envTagRaw)
+    ? normalize(envTagRaw)
+    : null;
+
+  const extractAtVersion = (s: string) => {
+    const m = s.match(
+      /@([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)/,
+    );
+    return m ? normalize(m[1]) : null;
+  };
 
   try {
     const url = new URL(importUrl);
 
-    // --- Local mode ---
+    // Local: prefer latest tag from env
     if (url.protocol === "file:") {
-      // Try environment variable first (can be set by build pipeline)
-      const envTag = Deno.env.get("GITHUB_LATEST_TAG");
-      if (envTag && semverRe.test(envTag)) return `${normalize(envTag)}-local`;
-
-      // Try reading from .git/refs/tags if available
-      try {
-        const cwd = Deno.cwd();
-        for (const entry of Deno.readDirSync(`${cwd}/.git/refs/tags`)) {
-          const tagName = entry.name;
-          if (semverRe.test(tagName)) return `${normalize(tagName)}-local`;
-        }
-      } catch {
-        // ignore if .git not present
-      }
-
-      return "v0.0.0-local";
+      return envTag ? `${envTag}-local` : "v0.0.0-local";
     }
 
-    // --- Remote mode ---
     const host = url.hostname;
     const path = url.pathname;
 
-    const extractAtVersion = (s: string) => {
-      const m = s.match(
-        /@([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)/,
-      );
-      return m ? normalize(m[1]) : null;
-    };
-
+    // deno.land / jsr.io: use @version in path
     if (host === "deno.land" || host === "jsr.io") {
       return extractAtVersion(path) ?? "v0.0.0-remote";
     }
 
+    // raw.githubusercontent.com: /<owner>/<repo>/refs/{tags|heads}/<ref>/...
     if (host === "raw.githubusercontent.com") {
-      const [, _owner, _repo, ref] = path.split("/");
-      if (ref && semverRe.test(ref)) return normalize(ref);
-      return ref ? `v0.0.0-branch-${ref}` : "v0.0.0-remote";
+      // ['', owner, repo, 'refs', kind, ref, ...]
+      const parts = path.split("/");
+      const kind = parts[4];
+      const ref = parts[5];
+
+      if (kind === "tags" && ref && semverRe.test(ref)) {
+        return normalize(ref);
+      }
+      if (kind === "heads") {
+        if (ref === "main") {
+          // Force latest tag for "main" per our rules
+          return envTag ?? "v0.0.0-branch-main";
+        }
+        return ref ? `v0.0.0-branch-${ref}` : "v0.0.0-remote";
+      }
+      return "v0.0.0-remote";
     }
 
+    // cdn.jsdelivr.net/gh/OWNER/REPO@REF/path
     if (host === "cdn.jsdelivr.net" && path.startsWith("/gh/")) {
       const afterGh = path.slice("/gh/".length);
       const atIdx = afterGh.indexOf("@");
@@ -224,6 +230,7 @@ export function computeSemVerSync(importUrl: string = import.meta.url): string {
       return ref ? `v0.0.0-branch-${ref}` : "v0.0.0-remote";
     }
 
+    // Generic: try @vX.Y.Z anywhere in the path
     const generic = extractAtVersion(path);
     if (generic) return generic;
 
