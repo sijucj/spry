@@ -4,6 +4,7 @@ import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import {
   fbPartialsCollection,
   Issue,
+  parsedTextFlags,
   PlaybookCodeCell,
   Source,
 } from "../markdown/notebook/mod.ts";
@@ -13,7 +14,11 @@ import {
   TaskDirectives,
   TasksProvenance,
 } from "../task/cell.ts";
-import { ensureLanguageByIdOrAlias } from "../universal/code.ts";
+import {
+  ensureLanguageByIdOrAlias,
+  getLanguageByIdOrAlias,
+  LanguageSpec,
+} from "../universal/code.ts";
 import {
   safeSourceText,
   SourceRelativeTo,
@@ -163,13 +168,30 @@ export function mutateRouteInCellAttrs(
   return validated(route);
 }
 
-export function sqlPageFileCellTDI(): SqlPageTDI {
+export function typicalCellFlags(pi: ReturnType<typeof parsedTextFlags>) {
+  return {
+    isUnsafeInterpolatable: "I" in pi.flags || "interpolate" in pi.flags,
+    isInjectableCandidate: "J" in pi.flags || "injectable" in pi.flags,
+  };
+}
+
+export function sqlPageFileLangCellTDI(
+  language: LanguageSpec,
+  spfi:
+    & Pick<
+      SqlPageFileUpsert,
+      "asErrorContents" | "isUnsafeInterpolatable" | "isInjectableCandidate"
+    >
+    & { isRoutable: boolean },
+): SqlPageTDI {
   return ({ cell, registerIssue }) => {
-    if (cell.language != sqlCodeCellLangId) return false;
+    const langs = [language.id];
+    if (language.aliases) langs.push(...language.aliases);
+    if (!langs.find((l) => l === cell.language)) return false;
     const pi = cell.parsedInfo;
     if (!pi || !pi.firstToken) return false; // no identity, ignore
     const path = pi.firstToken;
-    mutateRouteInCellAttrs(cell, path, registerIssue);
+    if (spfi.isRoutable) mutateRouteInCellAttrs(cell, path, registerIssue);
     return {
       nature: "CONTENT",
       identity: path,
@@ -178,11 +200,60 @@ export function sqlPageFileCellTDI(): SqlPageTDI {
         path,
         contents: cell.source,
         cell,
-        asErrorContents: (text) => text.replaceAll(/^/gm, "-- "),
-        isUnsafeInterpolatable: true,
-        isInjectableCandidate: true,
+        asErrorContents: spfi.asErrorContents,
+        isUnsafeInterpolatable: spfi.isUnsafeInterpolatable,
+        isInjectableCandidate: spfi.isInjectableCandidate,
       } satisfies SqlPageContent,
-      language: sqlCodeCellLangSpec,
+      language,
+    };
+  };
+}
+
+export function sqlPageFileSqlCellTDI() {
+  return sqlPageFileLangCellTDI(sqlCodeCellLangSpec, {
+    asErrorContents: (text) => text.replaceAll(/^/gm, "-- "),
+    isRoutable: false,
+    isUnsafeInterpolatable: true,
+    isInjectableCandidate: true,
+  });
+}
+
+export function sqlPageFileCssCellTDI() {
+  return sqlPageFileLangCellTDI(getLanguageByIdOrAlias("css")!, {
+    asErrorContents: (text) => text.replaceAll(/^/gm, "// "),
+    isRoutable: false,
+    isUnsafeInterpolatable: true,
+    isInjectableCandidate: false,
+  });
+}
+
+export function sqlPageFileJsCellTDI() {
+  return sqlPageFileLangCellTDI(getLanguageByIdOrAlias("js")!, {
+    asErrorContents: (text) => text.replaceAll(/^/gm, "// "),
+    isRoutable: false,
+    isUnsafeInterpolatable: true,
+    isInjectableCandidate: false,
+  });
+}
+
+export function sqlPageFileAnyCellWithSpcFlagTDI(): SqlPageTDI {
+  return ({ cell }) => {
+    const pi = cell.parsedInfo;
+    if (!pi || !pi.firstToken) return false; // no identity, ignore
+    if (!("spc" in pi.flags)) return false;
+    const path = pi.firstToken;
+    const tcf = typicalCellFlags(pi);
+    return {
+      nature: "CONTENT",
+      identity: path,
+      content: {
+        kind: "sqlpage_file_upsert",
+        path,
+        contents: cell.source,
+        cell,
+        asErrorContents: (supplied) => supplied,
+        ...tcf,
+      } satisfies SqlPageContent,
     };
   };
 }
@@ -197,7 +268,10 @@ export function sqlPagePlaybookState() {
   >(partials);
   directives.use(sqlHeadCellTDI());
   directives.use(sqlTailCellTDI());
-  directives.use(sqlPageFileCellTDI()); // order matters, put head/tail before SqlPageFile
+  directives.use(sqlPageFileSqlCellTDI()); // order matters, put head/tail before SqlPageFile
+  directives.use(sqlPageFileCssCellTDI());
+  directives.use(sqlPageFileJsCellTDI());
+  directives.use(sqlPageFileAnyCellWithSpcFlagTDI());
   const routes = new RoutesBuilder();
   const spp = sqlPagePathsFactory();
   return { directives, routes, spp, partials };
