@@ -739,19 +739,19 @@ export class CLI<Project> {
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            const runbook = await taskCLI.executeTasks(
-              executionSubplan(
-                executionPlan(
-                  pp.state.directives.tasks.filter((t) =>
-                    t.taskDirective.nature === "TASK"
-                  ),
-                ),
-                [taskId],
-              ),
-              opts.verbose ? "rich" : false,
+            const tasks = pp.state.directives.tasks.filter((t) =>
+              t.taskDirective.nature === "TASK"
             );
-            if (opts.summarize) {
-              console.log(runbook);
+            if (tasks.find((t) => t.taskId() == taskId)) {
+              const runbook = await taskCLI.executeTasks(
+                executionSubplan(executionPlan(tasks), [taskId]),
+                opts.verbose ? "rich" : false,
+              );
+              if (opts.summarize) {
+                console.log(runbook);
+              }
+            } else {
+              console.warn(`Task '${taskId}' not found.`);
             }
           })
           .command("ls", "List SQLPage file entries")
