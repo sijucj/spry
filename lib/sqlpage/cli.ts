@@ -111,8 +111,11 @@ export function upsertMissingAncestors<T>(
   return out;
 }
 
-export class CLI {
-  constructor(readonly spn = SqlPagePlaybook.instance()) {
+export class CLI<Project> {
+  constructor(
+    readonly project: Project,
+    readonly spn = SqlPagePlaybook.instance<Project>(project),
+  ) {
   }
 
   // Determines:
@@ -790,8 +793,8 @@ export class CLI {
     await this.command(name).parse(argv);
   }
 
-  static instance() {
-    return new CLI();
+  static instance<Project>(project: Project = {} as Project) {
+    return new CLI<Project>(project);
   }
 }
 

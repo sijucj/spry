@@ -1,4 +1,4 @@
-import { dirname } from "jsr:@std/path@^1";
+import { basename, dirname } from "jsr:@std/path@^1";
 import z from "jsr:@zod/zod@4";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import {
@@ -205,7 +205,37 @@ export function sqlPagePlaybookState() {
 
 export type SqlPagePlaybookState = ReturnType<typeof sqlPagePlaybookState>;
 
-export function sqlPageInterpolator() {
+export function frontmatterInterpolator<Project>(project: Project) {
+  const context = () => {
+    return {
+      project, // fully custom, can be anything passed from project init location
+      env: Deno.env.toObject(),
+    };
+  };
+
+  // "unsafely" means we're using JavaScript "eval"
+  async function mutateUnsafely(
+    ctx: ReturnType<typeof context>,
+    fmRaw: string,
+    unsafeInterp: ReturnType<typeof unsafeInterpolator>,
+  ) {
+    try {
+      // NOTE: This is intentionally unsafe. Do not feed untrusted content.
+      // Assume you're treating code cell blocks as fully trusted source code.
+      const mutated = await unsafeInterp.interpolate(fmRaw, ctx);
+      if (mutated !== fmRaw) return mutated;
+      return fmRaw;
+    } catch (error) {
+      return `SPRY_ERROR: "frontmatterInterpolator.mutateUnsafely"\nSPRY_ERROR_MESSAGE: "${
+        String(error)
+      }"\n${fmRaw}`;
+    }
+  }
+
+  return { context, mutateUnsafely };
+}
+
+export function sqlPageInterpolator<Project>(project: Project) {
   const context = (state: SqlPagePlaybookState) => {
     const { directives, routes } = state;
     const pagination = {
@@ -217,7 +247,11 @@ export function sqlPageInterpolator() {
       navWithParams: (..._extraQueryParams: string[]) =>
         `/* \${paginate("tableOrViewName")} not called yet*/`,
     };
+
+    // every in Deno.args after "--" (if any)
     return {
+      project, // fully custom, can be anything passed from project init location
+      env: Deno.env.toObject(),
       state,
       directives,
       routes,
@@ -345,11 +379,15 @@ export function sqlPageInterpolator() {
   return { context, mutateUpsertUnsafely, mutateContentUnsafely };
 }
 
-export class SqlPagePlaybook {
-  protected constructor() {
+export class SqlPagePlaybook<Project> {
+  protected constructor(readonly project: Project) {
   }
 
   async *sources(init: { mdSources: string[]; srcRelTo: SourceRelativeTo }) {
+    const fmi = frontmatterInterpolator(this.project);
+    const fmiCtx = fmi.context();
+    const unsafeInterp = unsafeInterpolator(fmiCtx);
+
     for await (const md of init.mdSources) {
       const safeMdSrc = await safeSourceText(md, init.srcRelTo, {
         baseUrl: new URL(import.meta.url),
@@ -380,6 +418,8 @@ export class SqlPagePlaybook {
           }
           return result;
         },
+        transformFrontmatter: (fmRaw) =>
+          fmi.mutateUnsafely(fmiCtx, fmRaw, unsafeInterp),
       } satisfies Source<SqlPageProvenance>;
     }
   }
@@ -410,7 +450,7 @@ export class SqlPagePlaybook {
     // directives now has all the tasks/content across all notebooks in memory
     await td.populate(() => this.sources(init));
 
-    const spInterpolator = sqlPageInterpolator();
+    const spInterpolator = sqlPageInterpolator(this.project);
     const spiContext = spInterpolator.context(state);
     const unsafeInterp = unsafeInterpolator(spiContext);
     const routeAnnsF = annotationsFactory({
@@ -438,6 +478,13 @@ export class SqlPagePlaybook {
     const { state, spInterpolator, spiContext, unsafeInterp, routeAnnsF } = p;
     const { directives, routes } = state;
     const { sql: sqlSPF, json: jsonSPF } = sqlPageContentHelpers();
+
+    for (const pb of directives.playbooks) {
+      yield sqlSPF(
+        `spry.d/auto/frontmatter/${basename(pb.notebook.provenance)}.auto.json`,
+        JSON.stringify(pb.notebook.fm, null, 2),
+      );
+    }
 
     for (const pd of directives.partialDirectives) {
       yield sqlSPF(
@@ -556,6 +603,8 @@ export class SqlPagePlaybook {
       md.li("`../sql.d/head/*.sql` contains `HEAD` SQL files that are inserted before sqlpage_files upserts")
       md.li("`../sql.d/tail/*.sql` contains `TAIL` SQL files that are inserted after sqlpage_files upserts")
       md.li("[`../sql.d/tail/navigation.auto.sql`](../sql.d/tail/navigation.auto.sql) contains `TAIL` SQL file which describes all the JSON content in relational database format")
+      md.li("`auto/cell/` directory contains each markdown source file's cells in JSON.")
+      md.li("`auto/frontmatter/` directory contains each markdown source file's frontmatter in JSON (after it's been interpolated).")
       md.li("`auto/instructions/` directory contains the markdown source before each SQLPage `sql` fenced blocks individually.")
       md.li("`auto/resource/` directory contains parsed fence attributes blocks like { route: { ... } } and `@spry.*` with `@route.*` embedded annotations for each route / endpoint individually.")
       md.li("`auto/route/` directory contains route annotations JSON for each route / endpoint individually.")
@@ -569,7 +618,7 @@ export class SqlPagePlaybook {
       return md;
   }
 
-  static instance() {
-    return new SqlPagePlaybook();
+  static instance<Project>(project: Project) {
+    return new SqlPagePlaybook(project);
   }
 }

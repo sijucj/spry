@@ -1,7 +1,7 @@
 ---
 siteName: Demo
 sqlpage-conf:
-  database_url: "sqlite://app.db"
+  database_url: ${env.SPRY_DB ?? "sqlite://app.db"}
   listen_on: "0.0.0.0:8080"
   web_root: "./"
   site_prefix: "/sqlpage"
@@ -14,6 +14,7 @@ sqlpage-conf:
     issuer_url: "https://issuer.example/"
     client_id: "abc"
     client_secret: "shh"
+env: ${JSON.stringify(env)}
 ---
 
 ## Intro

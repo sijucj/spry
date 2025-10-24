@@ -103,6 +103,7 @@ export type Source<Provenance> = {
     src: string | string[],
     cell: CodeCell<Provenance>,
   ) => string | Promise<string>;
+  transformFrontmatter?: (fmRaw: string) => string | Promise<string>;
 };
 
 export type SourceStream<Provenance> =
@@ -294,7 +295,7 @@ async function parseDocument<
 
   const tree = remarkProcessor.parse(source) as Root;
 
-  const { fm, fmEndIdx } = (() => {
+  const { fm, fmEndIdx } = await (async () => {
     type FMParseResult = { fm: FM; fmEndIdx: number };
     const children = Array.isArray(tree.children)
       ? (tree.children as ReadonlyArray<unknown>)
@@ -306,7 +307,9 @@ async function parseDocument<
       const n = children[i];
 
       if (isYamlNode(n)) {
-        const raw = typeof n.value === "string" ? n.value : "";
+        const original = typeof n.value === "string" ? n.value : "";
+        const raw = await srcSupplied.transformFrontmatter?.(original) ??
+          original;
         try {
           fmRaw = (YAMLparse(raw) as Dict) ?? {};
         } catch (error) {
