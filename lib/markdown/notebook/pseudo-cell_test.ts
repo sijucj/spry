@@ -99,7 +99,7 @@ Deno.test("liveIncludes: expands import cell into materialized code cells", asyn
       assertEquals(c.kind, "code");
       assertEquals(c.language, "sql");
       assertMatch(c.parsedInfo.firstToken, /migrations\/init\.sql$/);
-      assertEquals(c.parsedInfo.flags["is-binary"], false);
+      assertEquals(c.parsedInfo.flags["is-binary"], undefined);
       assertEquals(c.source.trim(), "CREATE TABLE t(x INT);");
       assertEquals(c.sourceElaboration.isRefToBinary, false);
       assertMatch(String(c.sourceElaboration.importedFrom), /init\.sql$/);
@@ -156,7 +156,7 @@ Deno.test("liveIncludes: expands import cell into materialized code cells", asyn
       const c = out[0];
 
       assertEquals(c.language, "json");
-      assertEquals(c.parsedInfo.flags["is-binary"], false);
+      assertEquals(c.parsedInfo.flags["is-binary"], undefined);
       // firstToken is the **relative path** from base for remote
       assertEquals(c.parsedInfo.firstToken, "conf/demo.json");
       assertEquals(c.source, "REMOTE_JSON");
