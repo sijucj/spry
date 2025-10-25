@@ -1,5 +1,6 @@
 import { z } from "jsr:@zod/zod@4";
 import {
+  CodeCell,
   fbPartialCandidate,
   fbPartialsCollection,
   Issue,
@@ -8,6 +9,7 @@ import {
   Playbook,
   PlaybookCodeCell,
   playbooks,
+  pseudoCellsGenerator,
   Source,
 } from "../markdown/notebook/mod.ts";
 import {
@@ -256,6 +258,12 @@ export class TaskDirectives<
   CellAttrs extends Record<string, unknown> = Record<string, unknown>,
   I extends Issue<Provenance> = Issue<Provenance>,
 > {
+  readonly virtualCells = pseudoCellsGenerator<
+    Provenance,
+    Frontmatter,
+    CellAttrs,
+    I
+  >();
   readonly tdInspectors: TaskDirectiveInspector<
     Provenance,
     Frontmatter,
@@ -458,9 +466,16 @@ export class TaskDirectives<
     sources: () => AsyncGenerator<
       Source<Provenance> & { fmSchema?: z.ZodType }
     >,
-    init?: Parameters<
-      TaskDirectives<Provenance, Frontmatter, CellAttrs, I>["register"]
-    >[2],
+    init?:
+      & Parameters<
+        TaskDirectives<Provenance, Frontmatter, CellAttrs, I>["register"]
+      >[2]
+      & {
+        onVirtual?: (
+          cell: CodeCell<Provenance, CellAttrs>,
+          pb: Playbook<Provenance, Frontmatter, CellAttrs, I>,
+        ) => void;
+      },
   ) {
     const registerIssue = (...i: I[]) =>
       i.forEach((i) => this.registerIssue(i));
@@ -468,6 +483,7 @@ export class TaskDirectives<
       (await Array.fromAsync(sources())).map((s) => [s.provenance, s]),
     );
 
+    const { cellsFrom } = this.virtualCells;
     for await (
       const pb of playbooks(
         async function* () {
@@ -504,7 +520,14 @@ export class TaskDirectives<
       this.playbooks.push(pb);
       for (const cell of pb.cells) {
         if (cell.kind === "code") {
-          this.register(cell, pb, init);
+          if (cell.language === "import") {
+            for await (const c of cellsFrom(cell, pb)) {
+              if (init?.onVirtual) init.onVirtual(c, pb);
+              this.register(c, pb);
+            }
+          } else {
+            this.register(cell, pb, init);
+          }
         }
       }
     }

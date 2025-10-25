@@ -141,6 +141,11 @@ export type Issue<Provenance> =
   | FrontmatterIssue<Provenance>
   | FenceIssue<Provenance>;
 
+export type ImportInstructionInfoFlags = {
+  import: string | string[];
+  "is-binary": boolean; // designed for ease of use by users in cells (not for devs)
+};
+
 /**
  * DX note:
  * - Juniors can just use Notebook without generics.
@@ -162,6 +167,24 @@ export type CodeCell<
   parsedInfo?: ReturnType<typeof parsedTextFlags>; // meta prefix before {...}
   startLine?: number;
   endLine?: number;
+  sourceElaboration?:
+    & {
+      isRefToBinary: boolean;
+    }
+    & (
+      | {
+        isRefToBinary: false;
+        importedFrom: string | string[];
+        original: string;
+      }
+      | {
+        isRefToBinary: true;
+        importedFrom: string;
+        encoding: "UTF-8";
+        rs?: ReadableStream<Uint8Array>;
+      }
+    );
+  isVirtual: boolean; // true if not found in markdown but "generated" via live-include
 };
 
 export type MarkdownCell<Provenance> = {
@@ -204,6 +227,7 @@ export type Notebook<
   /** mdast cache produced by the core parser (no need to re-parse later) */
   ast: NotebookAstCache;
   provenance: Provenance;
+  source: Source<Provenance>;
 };
 
 /* =========================== Public API ============================== */
@@ -492,12 +516,30 @@ async function parseDocument<
         parsedInfo,
         startLine: posStartLine(node),
         endLine: posEndLine(node),
+        isVirtual: false,
       };
 
       if (srcSupplied.import && parsedInfo && "import" in parsedInfo.flags) {
         const importSrc = parsedInfo.flags["import"];
         if (typeof importSrc !== "boolean") {
-          codeCell.source = await srcSupplied.import(importSrc, codeCell);
+          const isRefToBinary = parsedInfo.flags["is-binary"] ? true : false;
+          if (isRefToBinary) {
+            codeCell.sourceElaboration = {
+              isRefToBinary: true,
+              encoding: "UTF-8",
+              importedFrom: typeof importSrc === "string"
+                ? importSrc
+                : importSrc[0],
+            };
+          } else {
+            const original = codeCell.source;
+            codeCell.source = await srcSupplied.import(importSrc, codeCell);
+            codeCell.sourceElaboration = {
+              isRefToBinary: false,
+              importedFrom: importSrc,
+              original,
+            };
+          }
         }
       }
 
@@ -535,6 +577,7 @@ async function parseDocument<
       codeCellIndices,
     },
     provenance,
+    source: srcSupplied,
   } satisfies Notebook<Provenance, FM, Attrs, I>;
 }
 

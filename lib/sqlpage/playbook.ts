@@ -4,6 +4,7 @@ import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import {
   fbPartialsCollection,
   Issue,
+  isVirtualDirective,
   parsedTextFlags,
   PlaybookCodeCell,
   Source,
@@ -80,10 +81,71 @@ export function counter<Identifier>(identifier: Identifier, padValue = 4) {
   return { identifier, incr, nextPadded, nextText };
 }
 
+/**
+ * Adjust the `parsedInfo` of a virtual import cell when it matches
+ * a **virtual HEAD or TAIL directive**.
+ *
+ * This helper normalizes generated import cells that come from
+ * patterns such as:
+ *
+ * ```markdown
+ * ```import
+ * sql **\/*.sql HEAD
+ * sql **\/*.sql TAIL
+ * ```
+ * ```
+ *
+ * When an imported cell is marked as "virtual" and its first token in
+ * `restParts` equals the provided `match` value (case-insensitive),
+ * the function rewrites its `parsedInfo` tokens to follow a canonical
+ * structure:
+ *
+ * - `firstToken` → `"HEAD"` or `"TAIL"`
+ * - `secondToken` → `"sql.d/{head|tail}/{originalFirstToken}"`
+ * - `bareTokens` → `[firstToken, secondToken]`
+ *
+ * This makes it easier for downstream SQLPage or Spry emitters to
+ * distinguish special pseudo-cells (HEAD/TAIL) from normal SQL imports.
+ *
+ * @param cell The virtual code cell to modify (must have `parsedInfo`)
+ * @param match The directive keyword to look for (e.g. `"HEAD"` or `"TAIL"`)
+ *
+ * @example
+ * ```ts
+ * fixupVirtualHeadTail(cell, "HEAD");
+ * // transforms:
+ * //   firstToken: "migrations/init.sql"
+ * // into:
+ * //   firstToken: "HEAD"
+ * //   secondToken: "sql.d/head/migrations/init.sql"
+ * ```
+ */
+export function fixupVirtualHeadTail(
+  cell: PlaybookCodeCell<string, SqlPageCellAttrs>,
+  match: string,
+) {
+  if (isVirtualDirective(cell) && cell.parsedInfo) {
+    // might look like `sql **/*.sql HEAD` or `sql **/*.sql TAIL`
+    // restParts is string tokens that come after the glob / remote
+    const firstGenDirecToken = cell.virtualDirective.restParts[0];
+    if (firstGenDirecToken.toUpperCase() == match.toUpperCase()) {
+      // switch to `sql HEAD file.sql` or `sql TAIL file.sql`
+      cell.parsedInfo.secondToken =
+        `sql.d/${match.toLowerCase()}/${cell.parsedInfo.firstToken}`;
+      cell.parsedInfo.firstToken = match;
+      cell.parsedInfo.bareTokens = [
+        cell.parsedInfo.firstToken,
+        cell.parsedInfo.secondToken,
+      ];
+    }
+  }
+}
+
 export function sqlHeadCellTDI(): SqlPageTDI {
   const heads = counter(sqlTaskHead);
   return ({ cell }) => {
     if (cell.language != sqlCodeCellLangId) return false;
+    fixupVirtualHeadTail(cell, sqlTaskHead);
     const pi = cell.parsedInfo;
     if (!pi) return false; // no identity, ignore
     if (pi.firstToken?.toLocaleUpperCase() != sqlTaskHead) return false;
@@ -106,6 +168,7 @@ export function sqlTailCellTDI(): SqlPageTDI {
   const tails = counter(sqlTaskTail);
   return ({ cell }) => {
     if (cell.language != sqlCodeCellLangId) return false;
+    fixupVirtualHeadTail(cell, sqlTaskTail);
     const pi = cell.parsedInfo;
     if (!pi) return false; // no identity, ignore
     if (pi.firstToken?.toLocaleUpperCase() != sqlTaskTail) return false;
@@ -322,7 +385,6 @@ export function sqlPageInterpolator<Project>(project: Project) {
         `/* \${paginate("tableOrViewName")} not called yet*/`,
     };
 
-    // every in Deno.args after "--" (if any)
     return {
       project, // fully custom, can be anything passed from project init location
       env: Deno.env.toObject(),
@@ -367,7 +429,7 @@ export function sqlPageInterpolator<Project>(project: Project) {
         ? directives.partials.findInjectableForPath(path)
         : undefined;
 
-      if (spfu.isUnsafeInterpolatable) {
+      if (spfu.isUnsafeInterpolatable && typeof spfu.contents === "string") {
         const source = ic?.injection?.wrap(spfu.contents) ?? spfu.contents;
         errSource = source;
 
@@ -416,7 +478,7 @@ export function sqlPageInterpolator<Project>(project: Project) {
           spfu.contents = String(mutated);
           spfu.isInterpolated = true;
         }
-      } else if (ic && ic.injection) {
+      } else if (ic && ic.injection && typeof spfu.contents === "string") {
         spfu.contents = ic.injection.wrap(spfu.contents);
       }
 
@@ -577,12 +639,14 @@ export class SqlPagePlaybook<Project> {
           td.content,
           unsafeInterp,
         );
-        // see if any @route.* annotations are supplied in the mutated content
-        // and merge them with existing { route: {...} } cell
-        const route = routeAnnsF.transform(
-          await routeAnnsF.catalog(mutated.contents),
-        );
-        if (route) mutateRouteInCellAttrs(t, mutated.path, undefined, route);
+        if (typeof mutated.contents === "string") {
+          // see if any @route.* annotations are supplied in the mutated content
+          // and merge them with existing { route: {...} } cell
+          const route = routeAnnsF.transform(
+            await routeAnnsF.catalog(mutated.contents),
+          );
+          if (route) mutateRouteInCellAttrs(t, mutated.path, undefined, route);
+        }
         yield mutated;
         if (td.content.cell) {
           const cell = td.content.cell;

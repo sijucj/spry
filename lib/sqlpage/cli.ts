@@ -451,7 +451,11 @@ export class CLI<Project> {
     ) {
       const absPath = join(fs, spf.path);
       await ensureDir(dirname(absPath));
-      await Deno.writeTextFile(absPath, spf.contents);
+      if (typeof spf.contents === "string") {
+        await Deno.writeTextFile(absPath, spf.contents);
+      } else {
+        await Deno.writeFile(absPath, spf.contents);
+      }
       yield { ...spf, absPath };
     }
   }

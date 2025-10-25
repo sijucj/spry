@@ -82,6 +82,14 @@ This raw SQL will be placed into HEAD/TAIL.
 -- this will be replaced by the content of schema-info.dml.sqlite.sql
 ```
 
+This raw SQL will be placed into HEAD/TAIL. Include as a duplicate of the above
+show style-difference between `sql TAIL --import` and `import` which creates
+pseudo-cells.
+
+```import --base ../../../lib/universal
+sql *.sql TAIL
+```
+
 ## Layout
 
 This cell instructs Spry to automatically inject the SQL `PARTIAL` into all
