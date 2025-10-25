@@ -1,4 +1,5 @@
 // content-acquisition.ts
+import { retry, type RetryOptions } from "jsr:@std/async@^1";
 import { fromFileUrl, isAbsolute, join, normalize } from "jsr:@std/path@^1";
 
 export enum SourceRelativeTo {
@@ -35,6 +36,7 @@ export type SourceOpts = {
   fetchFn?: FetchLike;
   realPath?: boolean;
   etag?: string; // If-None-Match
+  retry?: RetryOptions;
 };
 
 export class ProvenanceError extends Error {
@@ -84,6 +86,12 @@ async function readRemote(url: URL, opts: SourceOpts): Promise<RemoteContent> {
     allowedHosts,
     fetchFn,
     etag,
+    retry: retryOptions = {
+      maxAttempts: 5,
+      minTimeout: 10,
+      multiplier: 2,
+      jitter: 0,
+    },
   } = opts;
 
   if (allowedHosts && allowedHosts.length && !allowedHosts.includes(url.host)) {
@@ -93,7 +101,8 @@ async function readRemote(url: URL, opts: SourceOpts): Promise<RemoteContent> {
     );
   }
 
-  const doFetch: FetchLike = fetchFn ?? ((u) => fetch(u));
+  const doFetch: FetchLike = fetchFn ??
+    ((u) => retry(() => fetch(u), retryOptions));
   const ctrl = new AbortController();
   const tm = setTimeout(() => ctrl.abort(), timeoutMs);
 
