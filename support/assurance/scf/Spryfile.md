@@ -116,6 +116,17 @@ SET page_title  = json_extract($resource_json, '$.route.caption');
 -- this is the `${cell.info}` cell on line ${cell.startLine}
 ```
 
+Get the brand assets and store them into the SQLPage content stream. They will
+be stored as `assets/brand/*` because the `--base` is
+`https://www.surveilr.com/`. The `--spc` reminds Spry to include it as part of
+the SQLPage content since by default utf8 and other file types don't get
+inserted into the stream.
+
+```import --base https://www.surveilr.com/
+utf8 https://www.surveilr.com/assets/brand/content-assembler.ico --spc
+utf8 https://www.surveilr.com/assets/brand/compliance-explorer.png --spc
+```
+
 ## SCF Home Page
 
 Index page which automatically generates links to all `/scf` pages.

@@ -1,4 +1,4 @@
-import { basename, dirname } from "jsr:@std/path@^1";
+import { basename } from "jsr:@std/path@^1";
 import z from "jsr:@zod/zod@4";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import {
@@ -40,9 +40,9 @@ import * as interp from "./interpolate.ts";
 import { markdownLinkFactory } from "./interpolate.ts";
 import {
   isRouteSupplier,
+  muateRoutePaths,
   PageRoute,
   pageRouteSchema,
-  pathExtensions,
   RoutesBuilder,
 } from "./route.ts";
 
@@ -208,7 +208,8 @@ export function mutateRouteInCellAttrs(
   // if no route was supplied in the cell attributes, use what's in annotations
   if (!isRouteSupplier(cell.attrs)) {
     if (candidateAnns) cell.attrs.route = candidateAnns;
-    return validated(cell.attrs.route);
+    const mrp = muateRoutePaths(cell.attrs.route as PageRoute, identity);
+    return mrp || validated(cell.attrs.route);
   }
 
   // if route was supplied in the cell attributes, merge with annotations with
@@ -216,19 +217,11 @@ export function mutateRouteInCellAttrs(
   if (isRouteSupplier(cell.attrs) && candidateAnns) {
     // deno-lint-ignore no-explicit-any
     (cell.attrs as any).route = { ...cell.attrs.route, ...candidateAnns };
-    return validated(cell.attrs.route);
+    const mrp = muateRoutePaths(cell.attrs.route as PageRoute, identity);
+    return mrp || validated(cell.attrs.route);
   }
 
-  // if we get to here, it's the first time we're seeing cell attributes
-  const route = cell.attrs.route as PageRoute;
-  if (!route.path) route.path = identity;
-  const extensions = pathExtensions(route.path);
-  route.pathBasename = extensions.basename;
-  route.pathBasenameNoExtn = extensions.basename.split(".")[0];
-  route.pathDirname = dirname(route.path);
-  route.pathExtnTerminal = extensions.terminal;
-  route.pathExtns = extensions.extensions;
-  return validated(route);
+  return false;
 }
 
 export function typicalCellFlags(pi: ReturnType<typeof parsedTextFlags>) {
@@ -266,6 +259,7 @@ export function sqlPageFileLangCellTDI(
         asErrorContents: spfi.asErrorContents,
         isUnsafeInterpolatable: spfi.isUnsafeInterpolatable,
         isInjectableCandidate: spfi.isInjectableCandidate,
+        isBinary: false,
       } satisfies SqlPageContent,
       language,
     };
@@ -312,9 +306,14 @@ export function sqlPageFileAnyCellWithSpcFlagTDI(): SqlPageTDI {
       content: {
         kind: "sqlpage_file_upsert",
         path,
-        contents: cell.source,
+        contents: cell.sourceElaboration?.isRefToBinary
+          ? cell.sourceElaboration.rs ?? cell.source
+          : cell.source,
         cell,
         asErrorContents: (supplied) => supplied,
+        isBinary: cell.sourceElaboration?.isRefToBinary
+          ? cell.sourceElaboration.rs ?? false
+          : false,
         ...tcf,
       } satisfies SqlPageContent,
     };
