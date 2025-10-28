@@ -1,9 +1,9 @@
 ---
 sqlpage-conf:
-  database_url: "sqlite://scf-2025.3.sqlite.db?mode=rwc"
+  database_url: ${env.SPRY_DB}
   web_root: "./dev-src.auto"
   allow_exec: true
-  port: 9227
+  port: ${env.PORT}
 ---
 
 # Secure Controls Framework (SCF) SQLPage Application
@@ -103,8 +103,8 @@ Spry but make it easier to trace where _partial_ injections are occurring.
 SELECT 'shell' AS component,
        'Secure Controls Framework (SCF) Explorer' AS title,
        NULL AS icon,
-       'https://www.surveilr.com/assets/brand/content-assembler.ico' AS favicon,
-       'https://www.surveilr.com/assets/brand/compliance-explorer.png' AS image,
+       '/assets/brand/content-assembler.ico' AS favicon,
+       '/assets/brand/compliance-explorer.png' AS image,
        'fluid' AS layout,
        true AS fixed_top_menu,
        'index.sql' AS link,
