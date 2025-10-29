@@ -109,8 +109,10 @@ export const absUrlQuotedEncoded = (path: string) =>
  */
 export function breadcrumbsSQL(
   activePath: string,
-  link: string,
+  title: string,
 ): string {
+  const escapeSQL = (str: string) => str.replace(/'/g, "''");
+  const path = `'/' || ${escapeSQL(activePath)}`;
   const baseQuery = `
     SELECT 'breadcrumb' AS component;    
     SELECT 
@@ -135,7 +137,7 @@ export function breadcrumbsSQL(
         n.parent_path,
         0 AS depth
       FROM navigation_node n
-      WHERE n.path = ${activePath}
+      WHERE n.path = ${path}
       UNION ALL
       SELECT
         p.path,
@@ -161,12 +163,12 @@ export function breadcrumbsSQL(
       title,
       link
     FROM crumbs
-    WHERE link <> ${activePath}
+    WHERE link <> ${path}
     ORDER BY depth DESC;
     SELECT 
-    ${link} as title,
-    ${activePath}    as link
-    WHERE ${activePath} <> '/';
+    ${escapeSQL(title)} as title,
+    sqlpage.url_encode(${path})    as link
+    WHERE ${path} <> '/';
   `;
 
   return baseQuery;
@@ -212,17 +214,15 @@ export const pagination = (
     init: () => {
       const countSQL = config.countSQL
         ? config.countSQL
-        : `SELECT COUNT(*) FROM ${config.tableOrViewName} ${
-          config.whereSQL && config.whereSQL.length > 0 ? config.whereSQL : ``
+        : `SELECT COUNT(*) FROM ${config.tableOrViewName} ${config.whereSQL && config.whereSQL.length > 0 ? config.whereSQL : ``
         }`;
 
       return dedentIfFirstLineBlank(`
           SET ${n("total_rows")} = (${countSQL});
           SET ${n("limit")} = COALESCE(${$("limit")}, 50);
           SET ${n("offset")} = COALESCE(${$("offset")}, 0);
-          SET ${n("total_pages")} = (${$("total_rows")} + ${
-        $("limit")
-      } - 1) / ${$("limit")};
+          SET ${n("total_pages")} = (${$("total_rows")} + ${$("limit")
+        } - 1) / ${$("limit")};
           SET ${n("current_page")} = (${$("offset")} / ${$("limit")}) + 1;`);
     },
 
@@ -248,22 +248,20 @@ export const pagination = (
       );
       return `
           SELECT 'text' AS component,
-              (SELECT CASE WHEN CAST($current_page AS INTEGER) > 1 THEN '[Previous](?limit=' || $limit || '&offset=' || ($offset - $limit)${
-        filteredParams.length
+              (SELECT CASE WHEN CAST($current_page AS INTEGER) > 1 THEN '[Previous](?limit=' || $limit || '&offset=' || ($offset - $limit)${filteredParams.length
           ? " || " + filteredParams.map((qp) =>
             `COALESCE('&${n(qp)}=' ||  sqlpage.url_encode($${qp}), '')`
           ).join(" || ")
           : ""
-      } || ')' ELSE '' END)
+        } || ')' ELSE '' END)
               || ' '
               || '(Page ' || $current_page || ' of ' || $total_pages || ") "
-              || (SELECT CASE WHEN CAST($current_page AS INTEGER) < CAST($total_pages AS INTEGER) THEN '[Next](?limit=' || $limit || '&offset=' || ($offset + $limit)${
-        filteredParams.length
+              || (SELECT CASE WHEN CAST($current_page AS INTEGER) < CAST($total_pages AS INTEGER) THEN '[Next](?limit=' || $limit || '&offset=' || ($offset + $limit)${filteredParams.length
           ? " || " + filteredParams.map((qp) =>
             `COALESCE('&${n(qp)}=' ||  sqlpage.url_encode($${qp}), '')`
           ).join(" || ")
           : ""
-      } || ')' ELSE '' END)
+        } || ')' ELSE '' END)
               AS contents_md
           ${whereTabvalue ? ` WHERE ${whereTabvalue}` : ""};
         `;
@@ -373,8 +371,8 @@ export function markdownLinkFactory(
   const defaultBase = init?.base === false
     ? ""
     : init?.base === undefined
-    ? "sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')"
-    : fragToSql(init.base);
+      ? "sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')"
+      : fragToSql(init.base);
 
   // Split top-level a || b || c (respects quotes & parentheses)
   const splitTopLevelConcat = (expr: string): string[] => {
@@ -455,8 +453,8 @@ export function markdownLinkFactory(
     const base = opts?.base === undefined
       ? defaultBase
       : opts.base === false
-      ? ""
-      : fragToSql(opts.base);
+        ? ""
+        : fragToSql(opts.base);
 
     const encodedUrlParts = encodeEachNonLiteral(url); // encode ONLY non-literal parts
     const fullUrl = base ? `${base} || ${encodedUrlParts}` : encodedUrlParts;
@@ -552,10 +550,8 @@ export const activePageTitle = (spp?: SqlPagePath) => {
  */
 export const activePageSource = (spp: SqlPagePath) => {
   return `
-    SELECT 'text' AS component, '[View ${
-    spp.isRoute ? spp.route.caption : spp.path
-  }](' || ${
-    absUrlQuoted(`/console/sqlpage-files/sqlpage-file.sql?path=${spp.path}`)
-  } || ')' AS contents_md;
+    SELECT 'text' AS component, '[View ${spp.isRoute ? spp.route.caption : spp.path
+    }](' || ${absUrlQuoted(`/console/sqlpage-files/sqlpage-file.sql?path=${spp.path}`)
+    } || ')' AS contents_md;
   `;
 };
