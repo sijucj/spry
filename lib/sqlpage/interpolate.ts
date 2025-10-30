@@ -10,17 +10,169 @@ import {
 import { dedentIfFirstLineBlank } from "../universal/tmpl-literal-aide.ts";
 import { SqlPagePath } from "./content.ts";
 
+/**
+ * Build an unquoted SQLPage template fragment that evaluates to an absolute URL.
+ *
+ * The returned string is an expression (not wrapped in quotes) which uses the
+ * `SQLPAGE_SITE_PREFIX` environment variable when present, falling back to the
+ * provided `path` expression otherwise. Because the fragment is intentionally
+ * unquoted it can be embedded directly into SQLPage templates or SQL snippets
+ * where the template engine will evaluate the expression.
+ *
+ * @param path - A fallback path expression to use when `SQLPAGE_SITE_PREFIX` is
+ *               not defined. Provide a plain expression (not pre-quoted).
+ * @returns A string containing a SQLPage expression that yields the absolute
+ *          URL as an unquoted template fragment.
+ *
+ * Security note:
+ * The function performs direct string interpolation of the provided `path` into
+ * the returned template fragment. Callers must ensure `path` is a safe
+ * expression (or properly escaped) to avoid SQL/template injection.
+ */
 export const absUrlUnquoted = (path: string) =>
   `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
 
+/**
+ * Build a quoted SQLPage template fragment that resolves to an absolute URL string.
+ *
+ * The returned string is an expression that yields a single-quoted URL value
+ * when evaluated by the template engine. It prefers the `SQLPAGE_SITE_PREFIX`
+ * environment variable when present and falls back to the provided literal
+ * `path` otherwise. Use this helper when you need a SQL string literal (quoted)
+ * representing the absolute URL.
+ *
+ * @param path - A fallback path literal (e.g. `/foo/bar`). This value is
+ *               inserted as a single-quoted SQL string; if `path` is derived
+ *               from user input callers should escape single quotes by
+ *               doubling them to avoid breaking the surrounding SQL.
+ * @returns A string containing a SQLPage expression that yields the quoted
+ *          absolute URL when evaluated.
+ *
+ * Security note:
+ * Because the `path` is interpolated into a quoted literal, ensure any
+ * dynamic content is safely escaped (single quotes doubled) prior to calling
+ * this function to avoid injection risks.
+ */
 export const absUrlQuoted = (path: string) =>
   `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
 
+/**
+ * Returns a SQLPage template expression that URL-encodes an absolute site-prefixed path.
+ *
+ * The produced string is a template fragment that calls `sqlpage.url_encode` on the value of the
+ * `SQLPAGE_SITE_PREFIX` environment variable, falling back to the provided `path` if the variable
+ * is not set. The expression is intentionally unquoted so it can be embedded directly into
+ * SQLPage templates or SQL snippets where the template engine will evaluate and encode it.
+ *
+ * @param path - Fallback path expression used when `SQLPAGE_SITE_PREFIX` is not defined. Provide a
+ *   path fragment (relative or absolute) as a plain string expression (not pre-quoted).
+ * @returns A string containing a SQLPage expression that, when evaluated, yields the URL-encoded
+ *   absolute URL. The returned string is an unquoted template fragment.
+ */
 export const absUrlUnquotedEncoded = (path: string) =>
   `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
 
+/**
+ * Generates a SQL expression that constructs an absolute URL by combining the site prefix with a given path.
+ * The result is URL-encoded and quoted for use in SQL queries.
+ *
+ * @param path - The relative path to be appended to the site prefix
+ * @returns A SQL expression string that concatenates the SQLPAGE_SITE_PREFIX environment variable with the provided path,
+ *          and wraps it in a URL encoding function
+ */
 export const absUrlQuotedEncoded = (path: string) =>
   `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
+
+/**
+ * Build a multiline SQL string that produces breadcrumb data for a navigation UI.
+ *
+ * The generated SQL includes multiple statements:
+ *  - A selector that identifies the component as 'breadcrumb'.
+ *  - A row for the root "Home" breadcrumb.
+ *  - A WITH RECURSIVE query that walks the navigation_node table from the given activePath
+ *    up through parent_path to produce title and link rows for each ancestor.
+ *  - A final SELECT that appends the current page as the last breadcrumb entry (unless the activePath is '/').
+ *
+ * Titles are derived from the node basename by removing the ".sql" suffix, replacing '-' and '_' with spaces,
+ * and converting to upper case. Links are the node path when it ends with ".sql", otherwise '#'.
+ *
+ * @param activePath - The path of the currently active node (used as the starting point for the recursive query
+ *   and as the link value for the final breadcrumb). This value is interpolated into the returned SQL.
+ * @param link - The display title for the final breadcrumb entry. This value is interpolated into the returned SQL.
+ *
+ * @returns A string containing the composed SQL statements that, when executed, yield the breadcrumb component
+ *   and ordered breadcrumb rows.
+ *
+ * Security note:
+ * The function performs direct string interpolation of the provided parameters into SQL. To prevent SQL injection,
+ * callers must ensure inputs are properly sanitized or use safe parameter binding before executing the returned SQL.
+ */
+export function breadcrumbsSQL(
+  activePath: string,
+  title: string,
+): string {
+  const escapeSQL = (str: string) => str.replace(/'/g, "''");
+  const path = `'/' || ${escapeSQL(activePath)}`;
+  const baseQuery = `
+    SELECT 'breadcrumb' AS component;    
+    SELECT 
+    'Home' as title,
+    '/'    as link;
+    WITH RECURSIVE crumbs AS (
+      SELECT
+        n.path,
+        UPPER(
+          REPLACE(
+            REPLACE(
+              REPLACE(n.basename, '.sql', ''), 
+              '-', ' '
+            ),
+            '_', ' '
+          )
+        ) AS title,
+        CASE 
+          WHEN n.path LIKE '%.sql' THEN n.path
+          ELSE '#'
+        END AS link,
+        n.parent_path,
+        0 AS depth
+      FROM navigation_node n
+      WHERE n.path = ${path}
+      UNION ALL
+      SELECT
+        p.path,
+        UPPER(
+          REPLACE(
+            REPLACE(
+              REPLACE(p.basename, '.sql', ''), 
+              '-', ' '
+            ),
+            '_', ' '
+          )
+        ) AS title,
+        CASE 
+          WHEN p.path LIKE '%.sql' THEN p.path
+          ELSE '#'
+        END AS link,
+        p.parent_path,
+        c.depth + 1
+      FROM crumbs c
+      JOIN navigation_node p ON p.path = c.parent_path
+    )
+    SELECT
+      title,
+      link
+    FROM crumbs
+    WHERE link <> ${path}
+    ORDER BY depth DESC;
+    SELECT 
+    ${escapeSQL(title)} as title,
+    sqlpage.url_encode(${path})    as link
+    WHERE ${path} <> '/';
+  `;
+
+  return baseQuery;
+}
 
 /**
  * Generates SQL pagination logic including initialization, debugging variables,

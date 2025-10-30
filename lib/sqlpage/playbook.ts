@@ -395,6 +395,7 @@ export function sqlPageInterpolator<Project>(project: Project) {
       absUrlUnquoted: interp.absUrlUnquoted,
       absUrlUnquotedEncoded: interp.absUrlUnquotedEncoded,
       absUrlQuotedEncoded: interp.absUrlQuotedEncoded,
+      breadcrumbsSQL: interp.breadcrumbsSQL,
       sitePrefixed: interp.absUrlQuoted,
       md: markdownLinkFactory({ url_encode: "replace" }),
       rawSQL,
@@ -734,25 +735,25 @@ export class SqlPagePlaybook<Project> {
 
   // deno-fmt-ignore
   protected dropInAutoReadme() {
-     const md = new MarkdownDoc();
-      md.h1("Spry Dropin Resources and Routes");
-      md.pTag`After annotations are parsed and validated, Spry generates the following in \`spry.d/auto\`:`;
-      md.li("`../sql.d/head/*.sql` contains `HEAD` SQL files that are inserted before sqlpage_files upserts")
-      md.li("`../sql.d/tail/*.sql` contains `TAIL` SQL files that are inserted after sqlpage_files upserts")
-      md.li("[`../sql.d/tail/navigation.auto.sql`](../sql.d/tail/navigation.auto.sql) contains `TAIL` SQL file which describes all the JSON content in relational database format")
-      md.li("`auto/cell/` directory contains each markdown source file's cells in JSON.")
-      md.li("`auto/frontmatter/` directory contains each markdown source file's frontmatter in JSON (after it's been interpolated).")
-      md.li("`auto/instructions/` directory contains the markdown source before each SQLPage `sql` fenced blocks individually.")
-      md.li("`auto/resource/` directory contains parsed fence attributes blocks like { route: { ... } } and `@spry.*` with `@route.*` embedded annotations for each route / endpoint individually.")
-      md.li("`auto/route/` directory contains route annotations JSON for each route / endpoint individually.")
-      md.li("[`auto/route/breadcrumbs.auto.json`](auto/route/breadcrumbs.auto.json) contains computed \"breadcrumbs\" for each @route.* annotation.")
-      md.li("[`auto/route/breadcrumbs.schema.auto.json`](auto/route/breadcrumbs.schema.auto.json) contains JSON schema for `route/breadcrumbs.auto.json`")
-      md.li("[`auto/route/edges.auto.json`](auto/route/edges.auto.json) contains route edges to conveniently build graph with `forest.auto.json`.")
-      md.li("[`auto/route/edges.schema.auto.json`](auto/route/edges.schema.auto.json) contains JSON schema for `route/edges.auto.json`")
-      md.li("[`auto/route/forest.auto.json`](auto/route/forest.auto.json) contains full routes ('forest') in JSON format.")
-      md.li("[`auto/route/forest.schema.auto.json`](auto/route/forest.schema.auto.json) JSON schema for `route/forest.auto.json`.")
-      md.li("[`auto/route/tree.auto.txt`](auto/route/tree.auto.txt) contains route tree in ASCII text format.")
-      return md;
+    const md = new MarkdownDoc();
+    md.h1("Spry Dropin Resources and Routes");
+    md.pTag`After annotations are parsed and validated, Spry generates the following in \`spry.d/auto\`:`;
+    md.li("`../sql.d/head/*.sql` contains `HEAD` SQL files that are inserted before sqlpage_files upserts")
+    md.li("`../sql.d/tail/*.sql` contains `TAIL` SQL files that are inserted after sqlpage_files upserts")
+    md.li("[`../sql.d/tail/navigation.auto.sql`](../sql.d/tail/navigation.auto.sql) contains `TAIL` SQL file which describes all the JSON content in relational database format")
+    md.li("`auto/cell/` directory contains each markdown source file's cells in JSON.")
+    md.li("`auto/frontmatter/` directory contains each markdown source file's frontmatter in JSON (after it's been interpolated).")
+    md.li("`auto/instructions/` directory contains the markdown source before each SQLPage `sql` fenced blocks individually.")
+    md.li("`auto/resource/` directory contains parsed fence attributes blocks like { route: { ... } } and `@spry.*` with `@route.*` embedded annotations for each route / endpoint individually.")
+    md.li("`auto/route/` directory contains route annotations JSON for each route / endpoint individually.")
+    md.li("[`auto/route/breadcrumbs.auto.json`](auto/route/breadcrumbs.auto.json) contains computed \"breadcrumbs\" for each @route.* annotation.")
+    md.li("[`auto/route/breadcrumbs.schema.auto.json`](auto/route/breadcrumbs.schema.auto.json) contains JSON schema for `route/breadcrumbs.auto.json`")
+    md.li("[`auto/route/edges.auto.json`](auto/route/edges.auto.json) contains route edges to conveniently build graph with `forest.auto.json`.")
+    md.li("[`auto/route/edges.schema.auto.json`](auto/route/edges.schema.auto.json) contains JSON schema for `route/edges.auto.json`")
+    md.li("[`auto/route/forest.auto.json`](auto/route/forest.auto.json) contains full routes ('forest') in JSON format.")
+    md.li("[`auto/route/forest.schema.auto.json`](auto/route/forest.schema.auto.json) JSON schema for `route/forest.auto.json`.")
+    md.li("[`auto/route/tree.auto.txt`](auto/route/tree.auto.txt) contains route tree in ASCII text format.")
+    return md;
   }
 
   static instance<Project>(project: Project) {

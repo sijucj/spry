@@ -3,7 +3,11 @@ import {
   PlaybookCodeCell,
 } from "../markdown/notebook/mod.ts";
 import { isAsyncIterator } from "../universal/collectable.ts";
-import { hexOfUint8, literal } from "../universal/sql-text.ts";
+import {
+  hexOfUint8,
+  hexOfUint8Postgres,
+  literal,
+} from "../universal/sql-text.ts";
 import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 import { SqlPageProvenance } from "./playbook.ts";
 import { PageRoute, RouteSupplier } from "./route.ts";
@@ -222,11 +226,11 @@ export async function* normalizeSPC(
 export async function sqlPageFilesUpsertDML(
   spcStream: SqlPageContentStream,
   opts: {
-    dialect: "sqlite";
+    dialect: "sqlite" | "postgres";
     includeSqlPageFilesTable?: boolean;
   },
 ) {
-  if (opts.dialect !== "sqlite") {
+  if (opts.dialect !== "sqlite" && opts.dialect !== "postgres") {
     throw new Error(`Unsupported dialect: ${opts.dialect}`);
   }
 
@@ -235,7 +239,11 @@ export async function sqlPageFilesUpsertDML(
     s: string | Uint8Array | ReadableStream<Uint8Array>,
   ): Promise<string> => {
     if (typeof s === "string") return `'${esc(s)}'`;
-    if (s instanceof Uint8Array) return hexOfUint8(s);
+    if (s instanceof Uint8Array) {
+      return opts.dialect === "postgres"
+        ? hexOfUint8Postgres(s)
+        : hexOfUint8(s);
+    }
 
     const reader = s.getReader();
     const chunks: Uint8Array[] = [];
@@ -250,7 +258,9 @@ export async function sqlPageFilesUpsertDML(
       bytes.set(c, offset);
       offset += c.length;
     }
-    return hexOfUint8(bytes);
+    return opts.dialect === "postgres"
+      ? hexOfUint8Postgres(bytes)
+      : hexOfUint8(bytes);
   };
 
   const list = await Array.fromAsync(normalizeSPC(spcStream));
@@ -268,7 +278,11 @@ export async function sqlPageFilesUpsertDML(
       .map(async (f) => {
         const pathLit = `'${esc(f.path)}'`;
         const bodyLit = await quoted(f.contents);
-        return `INSERT INTO sqlpage_files (path, contents, last_modified) VALUES (${pathLit}, ${bodyLit}, CURRENT_TIMESTAMP) ` +
+        return `INSERT INTO sqlpage_files (path, contents, last_modified) VALUES (${pathLit}, ${
+          (opts.dialect === "postgres" && typeof f.contents === "string")
+            ? `convert_to(${bodyLit}, 'UTF8')`
+            : bodyLit
+        }, CURRENT_TIMESTAMP) ` +
           `ON CONFLICT(path) DO UPDATE SET contents = excluded.contents, last_modified = CURRENT_TIMESTAMP ` +
           `WHERE sqlpage_files.contents <> excluded.contents;`;
       }),
@@ -276,7 +290,9 @@ export async function sqlPageFilesUpsertDML(
 
   return [
     opts.includeSqlPageFilesTable
-      ? `CREATE TABLE IF NOT EXISTS "sqlpage_files" ("path" VARCHAR PRIMARY KEY NOT NULL, "contents" TEXT NOT NULL, "last_modified" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);`
+      ? `CREATE TABLE IF NOT EXISTS "sqlpage_files" ("path" VARCHAR PRIMARY KEY NOT NULL, "contents" ${
+        opts.dialect === "postgres" ? "BYTEA" : "TEXT"
+      } NOT NULL, "last_modified" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);`
       : "-- sqlpage_files DDL not requested",
     ...headSql,
     ...upserts,
