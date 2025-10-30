@@ -264,7 +264,7 @@ export class CLI<Project> {
       sfMD.p("POSIX-style example (bash/zsh):");
       sfMD.codeTag(
         `bash`,
-      )`# .envrc (bash/zsh)\nexport SPRY_DB="sqlite://sqlpage.db?mode=rwc"\nexport PORT=9227`;
+      )`# .envrc (bash/zsh)\nexport SPRY_DB=${init?.dialect === "postgres" ? `"postgresql://<username>:<password>@<host>:<port>/<database>"` : `"sqlite://sqlpage.db?mode=rwc"`}\nexport PORT=9227`;
       sfMD.p(
         "Then run `direnv allow` in this project directory to load the `.envrc` into your shell environment. direnv will evaluate `.envrc` only after you explicitly allow it.",
       );
@@ -301,11 +301,9 @@ export class CLI<Project> {
       );
       sfMD.codeTag(
         `bash deploy --descr "Generate sqlpage_files table upsert SQL and push them to ${init?.dialect}"`,
-      )`rm -rf dev-src.auto\n./spry.ts spc --package ${
-        init?.dialect ? `--dialect ${init?.dialect}` : ``
-      } --conf sqlpage/sqlpage.json | ${
-        init?.dialect === "postgres" ? `psql` : `sqlite3`
-      } "$SPRY_DB"`;
+      )`rm -rf dev-src.auto\n./spry.ts spc --package ${init?.dialect ? `--dialect ${init?.dialect}` : ``
+      } --conf sqlpage/sqlpage.json | ${init?.dialect === "postgres" ? `psql` : `sqlite3`
+        } "$SPRY_DB"`;
       sfMD.title(2, "Start the SQLPage server");
       sfMD.codeTag(
         `bash`,
@@ -367,10 +365,10 @@ export class CLI<Project> {
         v === "head_sql"
           ? green(v)
           : v === "tail_sql"
-          ? yellow(v)
-          : v === "sqlpage_file_upsert"
-          ? brightYellow(v)
-          : cyan(v),
+            ? yellow(v)
+            : v === "sqlpage_file_upsert"
+              ? brightYellow(v)
+              : cyan(v),
     };
   }
 
@@ -621,8 +619,7 @@ export class CLI<Project> {
       "run:begin",
       (ev) =>
         console.log(
-          `[watch] build ${ev.runIndex} begin with SQLPage: ${
-            opts.withSqlPage?.enabled ?? "no"
+          `[watch] build ${ev.runIndex} begin with SQLPage: ${opts.withSqlPage?.enabled ?? "no"
           }`,
         ),
     );
