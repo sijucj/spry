@@ -200,7 +200,7 @@ export class CLI<Project> {
 
   async init(
     projectHome = Deno.cwd(),
-    init?: { dbName: string; force?: boolean },
+    init?: { dbName: string; force?: boolean; dialect?: string },
   ) {
     const {
       absPathToSpryTsLocal,
@@ -244,15 +244,73 @@ export class CLI<Project> {
     const webRoot = "dev-src.auto";
     if (!await exists(absPathToSpryfileLocal)) {
       const sfMD = new MarkdownDoc();
-      sfMD.frontMatterOnce({
+      const frontMatter = {
         "sqlpage-conf": {
           allow_exec: true,
-          port: 9227,
-          database_url: `sqlite://${init?.dbName ?? "sqlpage.db"}?mode=rwc`,
+          port: "${env.PORT}",
+          database_url: "${env.SPRY_DB}",
           web_root: `./${webRoot}`,
+          ...(init?.dialect === "postgres"
+            ? { listen_on: "0.0.0.0:${env.PORT}" }
+            : {}),
         },
-      });
+      };
+      sfMD.frontMatterOnce(frontMatter);
       sfMD.h1("Sample Spryfile.md");
+      sfMD.title(2, "Environment variables and .envrc");
+      sfMD.p(
+        "Recommended practice is to keep these values in a local, directory-scoped environment file. If you use direnv (recommended), create a file named `.envrc` in this directory.",
+      );
+      sfMD.p("POSIX-style example (bash/zsh):");
+      sfMD.codeTag(
+        `bash`,
+      )`# .envrc (bash/zsh)\nexport SPRY_DB="sqlite://sqlpage.db?mode=rwc"\nexport PORT=9227`;
+      sfMD.p(
+        "Then run `direnv allow` in this project directory to load the `.envrc` into your shell environment. direnv will evaluate `.envrc` only after you explicitly allow it.",
+      );
+      sfMD.title(2, "SQLPage Dev / Watch mode");
+      sfMD.p(
+        "While you're developing, Spry's `dev-src.auto` generator should be used:",
+      );
+      sfMD.codeTag(
+        `bash prepare-sqlpage-dev --descr "Generate the dev-src.auto directory to work in ${init?.dialect} dev mode"`,
+      )`./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json`;
+      sfMD.codeTag(
+        `bash clean --descr "Clean up the project directory's generated artifacts"`,
+      )`rm -rf dev-src.auto`;
+      sfMD.p(
+        "In development mode, here’s the `--watch` convenience you can use so that\nwhenever you update `Spryfile.md`, it regenerates the SQLPage `dev-src.auto`,\nwhich is then picked up automatically by the SQLPage server:",
+      );
+      sfMD.codeTag(
+        `bash`,
+      )`./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json --watch --with-sqlpage`;
+      sfMD.ul(
+        "--watch` turns on watching all `--md` files passed in (defaults to `Spryfile.md`)",
+      );
+      sfMD.ul("--with-sqlpage` starts and stops SQLPage after each build");
+      sfMD.p(
+        "Restarting SQLPage after each re-generation of dev-src.auto is **not**\nnecessary, so you can also use `--watch` without `--with-sqlpage` in one\nterminal window while keeping the SQLPage server running in another terminal\nwindow.",
+      );
+      sfMD.p("If you're running SQLPage in another terminal window, use:");
+      sfMD.codeTag(
+        `bash`,
+      )`./spry.ts spc --fs dev-src.auto --destroy-first --conf sqlpage/sqlpage.json --watch`;
+      sfMD.title(2, "SQLPage single database deployment mode");
+      sfMD.p(
+        "After development is complete, the `dev-src.auto` can be removed and single-database deployment can be used:",
+      );
+      sfMD.codeTag(
+        `bash deploy --descr "Generate sqlpage_files table upsert SQL and push them to ${init?.dialect}"`,
+      )`rm -rf dev-src.auto\n./spry.ts spc --package ${
+        init?.dialect ? `--dialect ${init?.dialect}` : ``
+      } --conf sqlpage/sqlpage.json | ${
+        init?.dialect === "postgres" ? `psql` : `sqlite3`
+      } "$SPRY_DB"`;
+      sfMD.title(2, "Start the SQLPage server");
+      sfMD.codeTag(
+        `bash`,
+      )`SQLPAGE_SITE_PREFIX="" sqlpage`;
+
       sfMD.p("You can create fenced cells for `bash`, `sql`, etc. here.");
       sfMD.p("TODO: add examples with `doctor`, `prepare-db`, etc.");
       sfMD.codeTag(
@@ -608,12 +666,17 @@ export class CLI<Project> {
         "init",
         "Setup Spryfile.md and spry.ts for local dev environment",
       )
-      .option("--db-name <file>", "name of SQLite database", {
+      /* .option("--db-name <file>", "name of SQLite database", {
         default: "sqlpage.db",
-      })
+      }) */
       .option("--force", "Remove existing and recreate from latest tag", {
         default: false,
       })
+      .option(
+        "-d, --dialect <dialect:string>",
+        "SQL dialect for package generation (sqlite or postgres)",
+        { default: "sqlite" },
+      )
       .action(async (opts) => {
         const { created, removed, ignored, gitignore: gi } = await this.init(
           Deno.cwd(),
@@ -644,8 +707,13 @@ export class CLI<Project> {
           .option(...srcRelToOpt)
           .option(
             "-p, --package",
-            "Emit SQL package (sqlite) to stdout from the given markdown path.",
+            "Emit SQL package to stdout from the given markdown path",
             { conflicts: ["fs"] },
+          )
+          .option(
+            "-d, --dialect <dialect:string>",
+            "SQL dialect for package generation (sqlite or postgres)",
+            { default: "sqlite" },
           )
           // Materialize files to a target directory
           .option(
@@ -707,7 +775,7 @@ export class CLI<Project> {
                     state: sqlPagePlaybookState(),
                   }),
                   {
-                    dialect: "sqlite",
+                    dialect: opts.dialect ? opts.dialect : "sqlite",
                     includeSqlPageFilesTable: true,
                   },
                 )
