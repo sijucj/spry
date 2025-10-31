@@ -1,8 +1,8 @@
 #!/bin/sh
 # SpryMD.org quick init
 # Usage:
-#   curl -fsSL https://sprymd.rg/init.sh | sh
-#   curl -fsSL https://sprymd.rg/init.sh --target-dir [dir] --dialect [dialect]
+#   curl -fsSL https://sprymd.org/init.sh | sh
+#   curl -fsSL https://sprymd.org/init.sh | sh -s -- --target-dir [dir] --dialect [dialect]
 #
 # Arguments:
 #   target-dir: Directory to initialize Spry in (default: current directory)
@@ -13,8 +13,7 @@
 # - Runs the Spry CLI init in the current dir (or optional target dir)
 # - Prints next-step commands
 set -eu
-CLI_URL="https://raw.githubusercontent.com/programmablemd/spry/main/lib/sqlpage/cli.ts"
-
+CLI_URL="https://cdn.jsdelivr.net/gh/programmablemd/spry@latest/lib/sqlpage/cli.ts"
 say() { printf '%s\n' "$*"; }
 err() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 command -v deno >/dev/null 2>&1 || err "Deno not found.
@@ -68,8 +67,8 @@ if [ "$DIALECT" != "sqlite" ] && [ "$DIALECT" != "postgres" ]; then
   err "Invalid dialect: $DIALECT
 Supported dialects: sqlite, postgres
 Usage:
-  curl -fsSL https://sprymd.rg/init.sh --target-dir [dir]
-  curl -fsSL https://sprymd.rg/init.sh --target-dir [dir] --dialect [dialect]"
+  curl -fsSL https://sprymd.org/init.sh | sh
+  curl -fsSL https://sprymd.org/init.sh | sh -s -- --target-dir [dir] --dialect [dialect]"
 fi
 
 # Normalize and ensure target dir exists
@@ -98,4 +97,4 @@ say "  1) curl -fsSL https://deno.land/install.sh | sh"
 say "  2) curl -fsSL https://sprymd.org/init.sh | sh"
 say ""
 say "For PostgreSQL:"
-say "  curl -fsSL https://sprymd.rg/init.sh --target-dir . --dialect postgres"
+say "  curl -fsSL https://sprymd.org/init.sh | sh -s -- --target-dir . --dialect postgres"
