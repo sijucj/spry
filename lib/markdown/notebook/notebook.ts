@@ -92,6 +92,11 @@ import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import remarkStringify from "npm:remark-stringify@^11";
 import { remark } from "npm:remark@^15";
+import {
+  hasEitherFlagOfType,
+  hasFlagOfType,
+  parseClineFlags,
+} from "../../universal/cline.ts";
 import { isAsyncIterator } from "../../universal/collectable.ts";
 
 /* =========================== Public Types =========================== */
@@ -581,195 +586,116 @@ async function parseDocument<
   } satisfies Notebook<Provenance, FM, Attrs, I>;
 }
 
-/** Minimal POSIX-like tokenizer:
- * - Splits on whitespace.
- * - Respects single quotes: everything literal until next `'`.
- * - Respects double quotes: everything literal until next `"`, supports `\"` and `\\` escaping within.
- * - Outside quotes, `\x` becomes `x` (escapes next char).
- */
-function tokenizePosix(s: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let i = 0;
-  let q: '"' | "'" | null = null;
-
-  const isSpace = (c: string) => /\s/.test(c);
-
-  while (i < s.length) {
-    const ch = s[i];
-
-    if (q) {
-      // Inside quotes
-      if (q === '"' && ch === "\\") {
-        // In double quotes, allow \" and \\ (treat \X as X)
-        if (i + 1 < s.length) {
-          cur += s[i + 1];
-          i += 2;
-          continue;
-        }
-      }
-      if (ch === q) {
-        q = null;
-        i++;
-        continue;
-      }
-      cur += ch;
-      i++;
-      continue;
-    }
-
-    // Outside quotes
-    if (isSpace(ch)) {
-      if (cur) {
-        out.push(cur);
-        cur = "";
-      }
-      // skip contiguous spaces
-      i++;
-      while (i < s.length && isSpace(s[i])) i++;
-      continue;
-    }
-
-    if (ch === "'" || ch === '"') {
-      q = ch as '"' | "'";
-      i++;
-      continue;
-    }
-
-    if (ch === "\\") {
-      if (i + 1 < s.length) {
-        cur += s[i + 1];
-        i += 2;
-        continue;
-      }
-      // trailing backslash -> treat literally
-      cur += ch;
-      i++;
-      continue;
-    }
-
-    cur += ch;
-    i++;
-  }
-
-  if (cur) out.push(cur);
-  return out;
-}
-
 /**
- * Parse POSIX-style CLI args into `{ bareTokens, flags }`.
+ * Convenience wrapper around parseClineFlags() that also exposes
+ * `firstToken`, `secondToken`, and an embedded `hasFlagOfType` helper.
  *
- * Input may be either:
- *  - `string[]` (e.g., `Deno.args`) — processed directly, or
- *  - `string`  — tokenized internally using a minimal POSIX-like tokenizer
- *                (whitespace splits; supports single/double quotes; backslash
- *                escapes outside and inside double-quotes).
+ * Example:
+ *   const r = parsedTextFlags(
+ *     'deploy service-A --env prod --debug',
+ *     { env: "" as string, debug: false as boolean },
+ *   );
  *
- * Supports:
- * - Long flags: `--key value` or `--key=value`
- * - Short flags: `-k value` or `-k=value`
- * - Bare flags: `--key` or `-k` (boolean true)
- * - Bare tokens (no leading `-`): collected into `bareTokens: string[]`
+ *   r.firstToken      // "deploy"
+ *   r.secondToken     // "service-A"
+ *   r.flags.env       // "prod"
+ *   r.flags.debug     // true
  *
- * Behavior:
- * - `flags` merges onto an optional `base` record; first occurrence wins vs base.
- * - Repeated flags are promoted/collected into `string[]`.
- * - Bare tokens that are not consumed as flag values are captured in `bareTokens`.
+ *   if (r.hasFlagOfType("debug", "boolean")) {
+ *     // here TS knows r.flags.debug is boolean
+ *   }
  *
- * @example
- * ```ts
- * const a1 = ["build", "--out=dist", "-v", "src/main.ts", "--tag", "a", "--tag", "b"];
- * const r1 = parsedTextFlags(a1, { v: false as boolean });
- * // r1.bareTokens: ["build", "src/main.ts"]
- * // r1.flags: { out: "dist", v: true, tag: ["a", "b"] }
- *
- * const a2 = `build "src/main.ts" --out=dist --tag a --tag "b c" -v`;
- * const r2 = parsedTextFlags(a2);
- * // r2.bareTokens: ["build", "src/main.ts"]
- * // r2.flags: { out: "dist", tag: ["a", "b c"], v: true }
- * ```
- *
- * @template T - Optional initial record type for flags.
- * @param argv - CLI as array or single string to be tokenized.
- * @param base - Optional defaults or to drive the flags result typing.
- * @returns Object with `bareTokens` and `flags`.
+ *   if (r.hasEitherFlagOfType("debug", "D", "boolean")) {
+ *     // here TS knows r.flags.debug and r.flags.D is boolean
+ *   }
  */
 export function parsedTextFlags<
-  T extends Record<string, string | string[] | boolean> = Record<
-    string,
-    string | string[] | boolean
-  >,
+  B extends Record<string, unknown> = Record<string, unknown>,
 >(
   argv: readonly string[] | string,
-  base?: T,
+  base?: B,
 ) {
-  const tokens = Array.isArray(argv)
-    ? argv as readonly string[]
-    : tokenizePosix(argv as string);
-  const flagsOut: Record<string, string | string[] | boolean> = base
-    ? { ...base }
-    : {};
-  const seenFromArg = new Set<string>();
-  const bareTokens: string[] = [];
+  const { bareTokens, flags } = parseClineFlags(argv, base);
 
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
+  const firstToken = bareTokens[0];
+  const secondToken = bareTokens[1];
 
-    // Non-flag token: either a bare token or a value consumed by a previous flag.
-    if (!token.startsWith("-")) {
-      // Only recorded as bare when encountered standalone.
-      bareTokens.push(token);
-      continue;
-    }
+  function boundHasFlagOfType<
+    K extends string,
+    Expected extends
+      | "string"
+      | "number"
+      | "boolean"
+      | "object"
+      | "function"
+      | "undefined",
+    F extends Record<string, unknown> = typeof flags,
+  >(
+    key: K,
+    expectedType: Expected,
+    flagsParam: F = flags as F,
+  ): flagsParam is
+    & F
+    & {
+      [P in K]: Expected extends "string" ? string
+        : Expected extends "number" ? number
+        : Expected extends "boolean" ? boolean
+        : Expected extends "object" ? object
+        // deno-lint-ignore ban-types
+        : Expected extends "function" ? Function
+        : Expected extends "undefined" ? undefined
+        : never;
+    } {
+    return hasFlagOfType(
+      flagsParam as Record<string, unknown>,
+      key,
+      expectedType,
+    );
+  }
 
-    const isLong = token.startsWith("--");
-    const prefixLen = isLong ? 2 : 1;
-
-    const eqIdx = token.indexOf("=");
-    const key = eqIdx === -1
-      ? token.slice(prefixLen)
-      : token.slice(prefixLen, eqIdx);
-    if (!key) continue;
-
-    // Resolve value:
-    // 1) --k=v or -k=v  => value after '='
-    // 2) --k v or -k v  => next token if not a flag (also consumes it)
-    // 3) --k or -k      => boolean true
-    let val: string | boolean;
-    if (eqIdx !== -1) {
-      val = token.slice(eqIdx + 1);
-    } else if (i + 1 < tokens.length && !tokens[i + 1].startsWith("-")) {
-      val = tokens[++i]; // consume next token as the flag value
-      // Note: Because we only push non-dash tokens to bareTokens when encountered,
-      // consumed values won't appear among bareTokens.
-    } else {
-      val = true;
-    }
-
-    const current = flagsOut[key];
-
-    if (Array.isArray(current)) {
-      flagsOut[key] = [...current, String(val)];
-    } else if (seenFromArg.has(key)) {
-      if (typeof current === "string") {
-        flagsOut[key] = [current, String(val)];
-      } else if (current === true) {
-        flagsOut[key] = ["true", String(val)];
-      } else {
-        flagsOut[key] = [String(val)];
-      }
-    } else {
-      flagsOut[key] = val;
-    }
-
-    seenFromArg.add(key);
+  function boundHasEitherFlagOfType<
+    K1 extends string,
+    K2 extends string,
+    Expected extends
+      | "string"
+      | "number"
+      | "boolean"
+      | "object"
+      | "function"
+      | "undefined",
+    F extends Record<string, unknown> = typeof flags,
+  >(
+    key1: K1,
+    key2: K2,
+    expectedType: Expected,
+    flagsParam: F = flags as F,
+  ): flagsParam is
+    & F
+    & {
+      [P in K1 | K2]: Expected extends "string" ? string
+        : Expected extends "number" ? number
+        : Expected extends "boolean" ? boolean
+        : Expected extends "object" ? object
+        // deno-lint-ignore ban-types
+        : Expected extends "function" ? Function
+        : Expected extends "undefined" ? undefined
+        : never;
+    } {
+    return hasEitherFlagOfType(
+      flagsParam as Record<string, unknown>,
+      key1,
+      key2,
+      expectedType,
+    );
   }
 
   return {
-    firstToken: bareTokens.length > 0 ? bareTokens[0] : undefined,
-    secondToken: bareTokens.length > 1 ? bareTokens[1] : undefined,
+    firstToken,
+    secondToken,
     bareTokens,
-    flags: flagsOut as T,
+    flags,
+    hasFlagOfType: boundHasFlagOfType,
+    hasEitherFlagOfType: boundHasEitherFlagOfType,
   };
 }
 
