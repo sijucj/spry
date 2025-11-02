@@ -100,12 +100,12 @@ Deno.test("Markdown Notebook core - complex fixture", async (t) => {
     ]);
   });
 
-  await t.step("sql code cell - language, info, attrs, and content", () => {
+  await t.step("sql code cell - language, PI, attrs, and content", () => {
     const cell = nb.cells[3];
     assert(isCode(cell as Cell<string, Record<string, unknown>>));
     if (isCode(cell)) {
       assertEquals(cell.language, "sql");
-      assertEquals(cell.info, "INFO MORE_INFO");
+      assertEquals(cell.pi, "INFO MORE_INFO");
       assertEquals(cell.attrs, { id: 1, name: "patients", dryRun: true });
       assertMatch(cell.source, /SELECT\s+id/i);
       assert(
@@ -158,11 +158,11 @@ Deno.test("Markdown Notebook core - complex fixture", async (t) => {
     assertMatch(cell.source, /^id,name,qty/m);
   });
 
-  await t.step("fish code cell - info meta and content", () => {
+  await t.step("fish code cell - PI meta and content", () => {
     const cell = nb.cells[13];
     assert(isCode(cell));
     assertEquals(cell.language, "fish");
-    assertEquals(cell.info, "meta");
+    assertEquals(cell.pi, "meta");
     assertMatch(cell.source, /echo "hello from fish"/);
   });
 

@@ -93,7 +93,7 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
       notebook: String(t.provenance),
       language: t.language,
       deps: (t.taskDeps?.() ?? []).join(", "),
-      descr: (String(t.parsedInfo?.flags["descr"]) ?? "").replace(
+      descr: (String(t.parsedPI?.flags["descr"]) ?? "").replace(
         "undefined",
         "",
       ),

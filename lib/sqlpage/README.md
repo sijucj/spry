@@ -12,7 +12,7 @@ Spry lets you maintain a whole SQLPage site from one or more Markdown playbooks:
 Under the hood this is driven by:
 
 - `lib/sqlpage/playbook.ts` — parses playbooks and emits file entries (and DML).
-- `lib/sqlpage/directives.ts` — parses fence `info` into directives: `HEAD`,
+- `lib/sqlpage/directives.ts` — parses fence `PI` into directives: `HEAD`,
   `TAIL`, `PARTIAL`, or default `sqlpage_file`.
 - `lib/sqlpage/route.ts` — validates and renders navigation routes from
   per-block `route` attrs.
@@ -144,7 +144,7 @@ caches and ranks by wildcard count and length).
 
 ### Regular SQL files (default: `sqlpage_file`)
 
-If `info` is not `HEAD|TAIL|PARTIAL`, Spry treats the **first token** as a
+If `PI` is not `HEAD|TAIL|PARTIAL`, Spry treats the **first token** as a
 **relative path** to write:
 
 ```sql admin/index.sql { route: { caption: 'Admin', description: 'Admin landing' } }
@@ -193,7 +193,7 @@ Any **regular SQL file** can also declare a route via attrs:
 SELECT 'Docs' AS section;
 ```
 
-If you omit `route.path`, Spry defaults it to the fence `info` path. Route attrs
+If you omit `route.path`, Spry defaults it to the fence `PI` path. Route attrs
 are validated and enriched with derived fields (basename, dirname, extension(s),
 etc.). All routes across your playbooks are assembled into:
 
@@ -217,7 +217,7 @@ You’ll typically see:
 
 - `sql.d/head/*.sql` — from `HEAD` fences.
 - `sql.d/tail/*.sql` — from `TAIL` fences.
-- `admin/index.sql`, `docs/*.sql`, … — from regular SQL fences (`info` as path).
+- `admin/index.sql`, `docs/*.sql`, … — from regular SQL fences (`PI` as path).
 - `spry.d/auto/resource/<path>.auto.json` — JSON dump of each fence’s **attrs**
   (handy for debugging and automations).
 - `spry.d/auto/partial/*.auto.sql` — partial definitions (echoed back so you can
@@ -262,7 +262,7 @@ starter example.
 
 ## Tips & gotchas
 
-- For **regular SQL** fences, always set a valid **path** in the fence `info`
+- For **regular SQL** fences, always set a valid **path** in the fence `PI`
   (`path.sql`), otherwise Spry will warn and skip.
 - Use **JSON5** in attrs (trailing commas are NOT allowed if they break JSON5
   rules — errors will surface in `spry.d/issues/*.auto.json`).

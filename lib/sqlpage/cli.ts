@@ -400,7 +400,7 @@ export class CLI<Project> {
       md: string[];
       srcRelTo: SourceRelativeTo;
       conf?: boolean;
-      info?: boolean;
+      pi?: boolean;
       infoAttrs?: boolean;
       tree?: boolean;
     },
@@ -462,7 +462,7 @@ export class CLI<Project> {
         .byPath({ pathKey: "path", separator: "/" })
         .treeOn("name");
       await tree.ls(true);
-    } else if (opts.info || opts.infoAttrs) {
+    } else if (opts.pi || opts.infoAttrs) {
       const pc = await this.spn.populateContent({
         mdSources: opts.md,
         srcRelTo: opts.srcRelTo,
@@ -472,7 +472,7 @@ export class CLI<Project> {
         {
           line: number;
           language: string;
-          info: string;
+          pi: string;
           virtual: string;
           binary: string;
           notebook: string;
@@ -481,7 +481,7 @@ export class CLI<Project> {
         .declareColumns(
           "line",
           "language",
-          "info",
+          "pi",
           "virtual",
           "binary",
           "notebook",
@@ -490,7 +490,7 @@ export class CLI<Project> {
           pc.state.directives.tasks.map((cell) => ({
             line: cell.startLine ?? -1,
             language: cell.language ?? "?",
-            info: cell.info ?? "?",
+            pi: cell.pi ?? "?",
             virtual: cell.isVirtual ? "V" : " ",
             binary: cell.sourceElaboration?.isRefToBinary ? "B" : " ",
             notebook: cell.provenance ?? "",
@@ -500,7 +500,7 @@ export class CLI<Project> {
         .field("language", "language", { header: "Lang" })
         .field("virtual", "virtual", { header: "V" })
         .field("binary", "binary", { header: "B" })
-        .field("info", "info", { header: "Cell Info" })
+        .field("pi", "pi", { header: "Cell PI" })
         .field("notebook", "notebook", this.lsColorPathField("Notebook"))
         .build()
         .ls(true);
@@ -838,11 +838,11 @@ export class CLI<Project> {
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option(
-            "-i, --info",
+            "-i, --pi",
             "Show just the cell names and INFO lines for each cell",
           )
           .option(
-            "-I, --info-attrs",
+            "-I, --pi-attrs",
             "Show just the cell names and INFO and attributes for each cell",
           )
           .option("-t, --tree", "Show as tree")
