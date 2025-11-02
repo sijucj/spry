@@ -210,6 +210,11 @@ export async function* normalizeSPC(
   }
 }
 
+export enum SqlPageFilesUpsertDialect {
+  SQLite = "sqlite",
+  PostgreSQL = "postgres",
+}
+
 /**
  * Build DML statements to upsert files into a SQLPage virtual-files table.
  * dialect "sqlite":
@@ -226,11 +231,14 @@ export async function* normalizeSPC(
 export async function sqlPageFilesUpsertDML(
   spcStream: SqlPageContentStream,
   opts: {
-    dialect: "sqlite" | "postgres";
+    dialect: SqlPageFilesUpsertDialect;
     includeSqlPageFilesTable?: boolean;
   },
 ) {
-  if (opts.dialect !== "sqlite" && opts.dialect !== "postgres") {
+  if (
+    opts.dialect !== SqlPageFilesUpsertDialect.SQLite &&
+    opts.dialect !== SqlPageFilesUpsertDialect.PostgreSQL
+  ) {
     throw new Error(`Unsupported dialect: ${opts.dialect}`);
   }
 
@@ -240,7 +248,7 @@ export async function sqlPageFilesUpsertDML(
   ): Promise<string> => {
     if (typeof s === "string") return `'${esc(s)}'`;
     if (s instanceof Uint8Array) {
-      return opts.dialect === "postgres"
+      return opts.dialect === SqlPageFilesUpsertDialect.PostgreSQL
         ? hexOfUint8Postgres(s)
         : hexOfUint8(s);
     }
@@ -258,7 +266,7 @@ export async function sqlPageFilesUpsertDML(
       bytes.set(c, offset);
       offset += c.length;
     }
-    return opts.dialect === "postgres"
+    return opts.dialect === SqlPageFilesUpsertDialect.PostgreSQL
       ? hexOfUint8Postgres(bytes)
       : hexOfUint8(bytes);
   };
@@ -279,7 +287,8 @@ export async function sqlPageFilesUpsertDML(
         const pathLit = `'${esc(f.path)}'`;
         const bodyLit = await quoted(f.contents);
         return `INSERT INTO sqlpage_files (path, contents, last_modified) VALUES (${pathLit}, ${
-          (opts.dialect === "postgres" && typeof f.contents === "string")
+          (opts.dialect === SqlPageFilesUpsertDialect.PostgreSQL &&
+              typeof f.contents === "string")
             ? `convert_to(${bodyLit}, 'UTF8')`
             : bodyLit
         }, CURRENT_TIMESTAMP) ` +
@@ -291,7 +300,7 @@ export async function sqlPageFilesUpsertDML(
   return [
     opts.includeSqlPageFilesTable
       ? `CREATE TABLE IF NOT EXISTS "sqlpage_files" ("path" VARCHAR PRIMARY KEY NOT NULL, "contents" ${
-        opts.dialect === "postgres" ? "BYTEA" : "TEXT"
+        opts.dialect === SqlPageFilesUpsertDialect.PostgreSQL ? "BYTEA" : "TEXT"
       } NOT NULL, "last_modified" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);`
       : "-- sqlpage_files DDL not requested",
     ...headSql,
