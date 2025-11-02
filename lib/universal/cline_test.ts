@@ -23,6 +23,8 @@ import {
   assertStrictEquals,
 } from "jsr:@std/assert@^1";
 import {
+  amendClineFlags,
+  clineFlagsAsCLI,
   type ClineFlagValue,
   hasEitherFlagOfType,
   hasFlagOfType,
@@ -432,4 +434,97 @@ Deno.test("hasFlagOfType narrow checks", async (t) => {
       );
     },
   );
+});
+
+Deno.test("amendClineFlags behavior", async (t) => {
+  await t.step(
+    "overrides scalars, preserves old bareTokens, carries forward old booleans",
+    () => {
+      // Original parse
+      const base = parseClineFlags(
+        "deploy serviceA --env prod --debug",
+      );
+      // Amend with new info
+      const amended = amendClineFlags(
+        base,
+        "--env staging --tag v1",
+      );
+
+      // bareTokens should remain from the original parse (not extended)
+      assertEquals(amended.bareTokens, base.bareTokens);
+
+      // env should now be "staging" (new overrides old)
+      assertStrictEquals(amended.flags.env, "staging");
+
+      // debug should still be true even though we didn't mention it in the amendment
+      assertStrictEquals(amended.flags.debug, true);
+
+      // new flag should appear
+      assertStrictEquals(amended.flags.tag, "v1");
+    },
+  );
+
+  await t.step("extends repeated flags without losing prior values", () => {
+    // Start with a single --tag one
+    const first = parseClineFlags("cmd --tag one");
+
+    // Now append two more tags
+    const second = amendClineFlags(
+      first,
+      "--tag two --tag three",
+    );
+
+    // We expect ["one","two","three"] not just ["two","three"]
+    assertEquals(second.flags.tag, ["one", "two", "three"]);
+
+    // bareTokens remain from original
+    assertEquals(second.bareTokens, first.bareTokens);
+  });
+
+  await t.step("adds entirely new flags if missing", () => {
+    const start = parseClineFlags("run --debug");
+    const next = amendClineFlags(start, "--level high");
+
+    assertStrictEquals(next.flags.debug, true);
+    assertStrictEquals(next.flags.level, "high");
+
+    // bareTokens still from 'run'
+    assertEquals(next.bareTokens, start.bareTokens);
+  });
+});
+
+Deno.test("clineFlagsAsCLI round-trip", async (t) => {
+  await t.step(
+    "recreates flags/bareTokens for mixed booleans/strings/arrays",
+    () => {
+      const original = parseClineFlags(
+        `build "src/main lib.ts" --out dist --tag a --tag "b c" -v`,
+      );
+
+      // Turn it back into a CLI string
+      const cli = clineFlagsAsCLI(original);
+
+      // Parse that CLI string again
+      const roundTripped = parseClineFlags(cli);
+
+      // bareTokens should match exactly
+      assertEquals(roundTripped.bareTokens, original.bareTokens);
+
+      // flags should deep-equal for all representable cases
+      assertEquals(roundTripped.flags, original.flags);
+    },
+  );
+
+  await t.step("handles boolean-only flags", () => {
+    const original = parseClineFlags("run --debug -v taskX");
+    // Note: because `-v taskX` treats `v` as "taskX" (string),
+    // and `taskX` is *not* positional in that scenario,
+    // this gives us a nice coverage of boolean + string.
+
+    const cli = clineFlagsAsCLI(original);
+    const again = parseClineFlags(cli);
+
+    assertEquals(again.bareTokens, original.bareTokens);
+    assertEquals(again.flags, original.flags);
+  });
 });

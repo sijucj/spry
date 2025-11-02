@@ -566,3 +566,154 @@ export function parseClineFlags<
     flags: flagsOut as Readonly<ClineFlagRecord> & B,
   };
 }
+
+/**
+ * amendClineFlags()
+ *
+ * Takes an existing parseClineFlags() result and an additional argv
+ * (string or string[]) and returns a new parse-style result where the
+ * new argv "amends" the flags.
+ *
+ * Rules:
+ * - Existing bareTokens are preserved (we're only amending flags, not the
+ *   original positional intent).
+ * - New flags from `argv` are merged in.
+ *   - If the flag didn't exist before, we add it.
+ *   - If it existed and either side is an array, we concatenate arrays
+ *     (promoting scalars to arrays).
+ *   - Otherwise, the new value overrides the old value.
+ * - Booleans, strings, and string[] are handled.
+ *
+ * This does NOT mutate the original objects.
+ */
+export function amendClineFlags(
+  existing: ReturnType<typeof parseClineFlags>,
+  argv: readonly string[] | string,
+): ReturnType<typeof parseClineFlags> {
+  // Parse just the amendment argv on its own
+  const patch = parseClineFlags(argv);
+
+  // Start merged flags as a shallow clone of existing.flags so we don't mutate
+  const merged: Record<string, ClineFlagValue> = {
+    ...existing.flags,
+  };
+
+  for (const [key, incomingVal] of Object.entries(patch.flags)) {
+    const currentVal = merged[key];
+
+    // If the key didn't exist before, just take the incoming value
+    if (currentVal === undefined) {
+      merged[key] = incomingVal as ClineFlagValue;
+      continue;
+    }
+
+    // If either side is already an array, concat (promoting scalars to arrays)
+    if (Array.isArray(currentVal) || Array.isArray(incomingVal)) {
+      const curArr = Array.isArray(currentVal)
+        ? currentVal
+        : [currentVal as Exclude<typeof currentVal, string[]>];
+
+      const incArr = Array.isArray(incomingVal)
+        ? incomingVal
+        : [incomingVal as Exclude<typeof incomingVal, string[]>];
+
+      merged[key] = [...curArr, ...incArr] as ClineFlagValue;
+      continue;
+    }
+
+    // Otherwise both sides are scalars (string | boolean).
+    // Latest (incoming) wins.
+    merged[key] = incomingVal as ClineFlagValue;
+  }
+
+  return {
+    bareTokens: [...existing.bareTokens],
+    flags: merged as Readonly<ClineFlagRecord>,
+  };
+}
+
+/**
+ * clineFlagsAsCLI()
+ *
+ * Produce a deterministic CLI-ish string from a parseClineFlags() result.
+ *
+ * The output is intended so that:
+ *
+ *   parseClineFlags(clineFlagsAsCLI(r))
+ *
+ * recreates the *same* final shape of `r` (same bareTokens, same flags),
+ * with the following caveat:
+ *
+ * - `false` booleans cannot be faithfully represented as booleans purely
+ *   from CLI text, because parseClineFlags can only create `true` booleans
+ *   from argv. If we encounter `false`, we emit `--flag false`, which will
+ *   come back as a string "false". This is the best possible round-trip
+ *   without carrying a `base`.
+ *
+ * Quoting rules:
+ * - Bare tokens are emitted first, in order.
+ * - Then flags are emitted. Each key becomes `--key`.
+ * - String values are emitted as `--key value`.
+ * - Array-of-string values become repeated `--key value1 --key value2 ...`.
+ * - Values that contain whitespace, quotes, or backslashes are wrapped in
+ *   double quotes with `\` and `"` escaped so that tokenizeCline() will
+ *   hand parseClineFlags() the same string value.
+ */
+export function clineFlagsAsCLI(
+  parsed: ReturnType<typeof parseClineFlags>,
+): string {
+  function quoteToken(tok: string): string {
+    // Always use a conservative double-quote strategy if it's "weird".
+    // Weird = empty OR contains whitespace OR contains quote OR contains backslash.
+    if (
+      tok === "" ||
+      /[\s"']/.test(tok) ||
+      tok.includes("\\")
+    ) {
+      const escaped = tok
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"');
+      return `"${escaped}"`;
+    }
+    // Safe as-is
+    return tok;
+  }
+
+  const parts: string[] = [];
+
+  // 1. bare tokens first, in order as provided originally
+  for (const bt of parsed.bareTokens) {
+    parts.push(quoteToken(bt));
+  }
+
+  // 2. flags
+  for (const [key, val] of Object.entries(parsed.flags)) {
+    if (Array.isArray(val)) {
+      // repeated --key value
+      for (const v of val) {
+        parts.push(`--${key}`);
+        parts.push(quoteToken(v));
+      }
+      continue;
+    }
+
+    if (typeof val === "boolean") {
+      if (val) {
+        // true boolean => bare flag
+        parts.push(`--${key}`);
+      } else {
+        // cannot really round-trip `false` boolean as boolean
+        // emit "--key false" which comes back as string "false"
+        parts.push(`--${key}`);
+        parts.push("false");
+      }
+      continue;
+    }
+
+    // string
+    parts.push(`--${key}`);
+    parts.push(quoteToken(val));
+  }
+
+  return parts.join(" ");
+}
