@@ -15,7 +15,7 @@ import {
   type MarkdownCell,
   type Notebook,
   notebooks,
-  parsedTextFlags,
+  parsedProcessingInstructions,
 } from "./notebook.ts";
 
 // Generic, attrs-preserving type guards
@@ -190,7 +190,7 @@ Deno.test("Markdown Notebook core - complex fixture", async (t) => {
 Deno.test("parsedTextFlags — array & string input with POSIX-style tokenization", async (t) => {
   await t.step("array input: collects bare tokens and simple flags", () => {
     const argv = ["build", "src/main.ts", "--out=dist", "--verbose"];
-    const { bareTokens, flags } = parsedTextFlags(argv);
+    const { bareTokens, flags } = parsedProcessingInstructions(argv);
 
     assertEquals(bareTokens, ["build", "src/main.ts"]);
     assertEquals(flags.out, "dist");
@@ -199,7 +199,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
 
   await t.step("array input: spaced values and equals values", () => {
     const argv = ["--out", "dist", "-t=release", "-k", "value"];
-    const { bareTokens, flags } = parsedTextFlags(argv);
+    const { bareTokens, flags } = parsedProcessingInstructions(argv);
 
     assertEquals(bareTokens, []);
     assertEquals(flags.out, "dist");
@@ -209,7 +209,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
 
   await t.step("array input: repeated flags promote and append", () => {
     const argv = ["--tag", "a", "--tag=b", "--tag", "c"];
-    const { bareTokens, flags } = parsedTextFlags(argv);
+    const { bareTokens, flags } = parsedProcessingInstructions(argv);
 
     assertEquals(bareTokens, []);
     assert(Array.isArray(flags.tag));
@@ -218,7 +218,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
 
   await t.step("array input: boolean flags repeat -> array of 'true'", () => {
     const argv = ["--force", "--force"];
-    const { flags } = parsedTextFlags(argv);
+    const { flags } = parsedProcessingInstructions(argv);
 
     assert(Array.isArray(flags.force));
     assertEquals(flags.force, ["true", "true"]);
@@ -226,7 +226,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
 
   await t.step("array input: short flags with/without values", () => {
     const argv = ["-v", "-o=dist", "-t", "debug"];
-    const { bareTokens, flags } = parsedTextFlags(argv);
+    const { bareTokens, flags } = parsedProcessingInstructions(argv);
 
     assertEquals(bareTokens, []);
     assertEquals(flags.v, true);
@@ -236,7 +236,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
 
   await t.step("array input: bare tokens exclude consumed values", () => {
     const argv = ["run", "--file", "app.ts", "extra", "-m", "fast"];
-    const { bareTokens, flags } = parsedTextFlags(argv);
+    const { bareTokens, flags } = parsedProcessingInstructions(argv);
 
     assertEquals(bareTokens, ["run", "extra"]);
     assertEquals(flags.file, "app.ts");
@@ -246,7 +246,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
   await t.step("array input: base defaults and overwrite + append", () => {
     const base = { out: "build", v: false as boolean, tag: ["x"] as string[] };
     const argv = ["--out", "dist", "--v", "--tag", "a"];
-    const { bareTokens, flags } = parsedTextFlags(argv, base);
+    const { bareTokens, flags } = parsedProcessingInstructions(argv, base);
 
     assertEquals(bareTokens, []);
     assertEquals(flags.out, "dist");
@@ -257,7 +257,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
 
   await t.step("array input: repeat after first -> array continuation", () => {
     const argv = ["--mode=dev", "--mode", "prod"];
-    const { flags } = parsedTextFlags(argv);
+    const { flags } = parsedProcessingInstructions(argv);
 
     assert(Array.isArray(flags.mode));
     assertEquals(flags.mode, ["dev", "prod"]);
@@ -268,7 +268,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
     () => {
       const line = String
         .raw`build "src/main.ts" --out=dist --tag a --tag "b c" -v --path "C:\\Program Files\\X" --msg \"ok\" plain`;
-      const { bareTokens, flags } = parsedTextFlags(line);
+      const { bareTokens, flags } = parsedProcessingInstructions(line);
 
       // tokenization expectations
       assertEquals(bareTokens, ["build", "src/main.ts", "plain"]);
@@ -285,7 +285,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
     "string input: values after flags are consumed, not bare",
     () => {
       const line = `run --file app.ts extra -m fast`;
-      const { bareTokens, flags } = parsedTextFlags(line);
+      const { bareTokens, flags } = parsedProcessingInstructions(line);
 
       assertEquals(bareTokens, ["run", "extra"]);
       assertEquals(flags.file, "app.ts");
@@ -297,7 +297,7 @@ Deno.test("parsedTextFlags — array & string input with POSIX-style tokenizatio
     "string input: handles end-of-options markers & lone dashes as bare",
     () => {
       const line = `-- - --`;
-      const { bareTokens, flags } = parsedTextFlags(line);
+      const { bareTokens, flags } = parsedProcessingInstructions(line);
 
       assertEquals(bareTokens, []);
       assertEquals(Object.keys(flags).length, 0);

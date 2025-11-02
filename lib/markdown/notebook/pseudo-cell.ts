@@ -6,7 +6,7 @@ import {
   lazyUrlBytesReader,
   relativeUrlAsFsPath,
 } from "../../universal/content-acquisition.ts";
-import { CodeCell, Issue, parsedTextFlags } from "./notebook.ts";
+import { CodeCell, Issue, parsedProcessingInstructions } from "./notebook.ts";
 import { Playbook, PlaybookCell } from "./playbook.ts";
 
 export function isVirtualDirective<
@@ -235,7 +235,7 @@ export function pseudoCellsGenerator<
         provenance: pb.notebook.provenance,
         source,
         pi: pi,
-        parsedPI: parsedTextFlags(pi),
+        parsedPI: parsedProcessingInstructions(pi),
         sourceElaboration,
         isVirtual: true,
         suppliedBase,

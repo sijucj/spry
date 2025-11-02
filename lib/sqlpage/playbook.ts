@@ -5,7 +5,7 @@ import {
   fbPartialsCollection,
   Issue,
   isVirtualDirective,
-  parsedTextFlags,
+  parsedProcessingInstructions,
   PlaybookCodeCell,
   Source,
 } from "../markdown/notebook/mod.ts";
@@ -224,7 +224,9 @@ export function mutateRouteInCellAttrs(
   return false;
 }
 
-export function typicalCellFlags(pi: ReturnType<typeof parsedTextFlags>) {
+export function typicalCellFlags(
+  pi: ReturnType<typeof parsedProcessingInstructions>,
+) {
   return {
     isUnsafeInterpolatable: "I" in pi.flags || "interpolate" in pi.flags,
     isInjectableCandidate: "J" in pi.flags || "injectable" in pi.flags,

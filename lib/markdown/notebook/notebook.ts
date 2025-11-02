@@ -170,7 +170,7 @@ export type CodeCell<
   source: string; // fence body
   attrs: Attrs; // JSON5 from fence meta {...}
   pi?: string; // processing instructions are CLI-ish tokens before {...}
-  parsedPI?: ReturnType<typeof parsedTextFlags>; // meta prefix before {...}
+  parsedPI?: ReturnType<typeof parsedProcessingInstructions>; // meta prefix before {...}
   startLine?: number;
   endLine?: number;
   sourceElaboration?:
@@ -500,7 +500,7 @@ async function parseDocument<
       // Extract trailing {...} JSON5 as attrs; prefix (if any) as processing instructions (PI)
       let attrs = {} as Attrs;
       let pi: string | undefined;
-      let parsedPI: ReturnType<typeof parsedTextFlags> | undefined;
+      let parsedPI: ReturnType<typeof parsedProcessingInstructions> | undefined;
       if (metaRaw) {
         const m = metaRaw.match(/\{.*\}$/);
         if (m) {
@@ -509,7 +509,7 @@ async function parseDocument<
         } else {
           pi = metaRaw.trim();
         }
-        parsedPI = pi ? parsedTextFlags(pi) : undefined;
+        parsedPI = pi ? parsedProcessingInstructions(pi) : undefined;
       }
 
       const codeCell: CodeCell<Provenance, Attrs> = {
@@ -592,7 +592,7 @@ async function parseDocument<
  * `firstToken`, `secondToken`, and an embedded `hasFlagOfType` helper.
  *
  * Example:
- *   const r = parsedTextFlags(
+ *   const r = parsedProcessingInstructions(
  *     'deploy service-A --env prod --debug',
  *     { env: "" as string, debug: false as boolean },
  *   );
@@ -610,7 +610,7 @@ async function parseDocument<
  *     // here TS knows r.flags.debug and r.flags.D is boolean
  *   }
  */
-export function parsedTextFlags<
+export function parsedProcessingInstructions<
   B extends Record<string, unknown> = Record<string, unknown>,
 >(
   argv: readonly string[] | string,
