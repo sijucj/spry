@@ -46,9 +46,9 @@ export const mdFencedBlockPartialSchema = z.object({
 export type FencedBlockPartial = z.infer<typeof mdFencedBlockPartialSchema>;
 
 /**
- * Build a (possibly injectable) Partial from the fenced block’s `info` and `content`.
+ * Build a (possibly injectable) Partial from the fenced block’s `PI` and `content`.
  *
- * Flags parsed from `info` (via parsedTextComponents):
+ * Flags parsed from `PI` (via parsedTextComponents):
  *   --inject <glob>   (repeatable; optional – if absent, the partial is "plain")
  *   --prepend         (optional; if neither --prepend/--append given, default "prepend")
  *   --append          (optional; --prepend + --append => "both")

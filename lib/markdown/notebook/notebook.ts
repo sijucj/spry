@@ -21,9 +21,10 @@
  *   - Delimiters: H2 headings (##) and thematic breaks (---) start a new
  *     markdown cell; the delimiter belongs to the following slice.
  * - Fence meta:
- *   - Language is captured from the fence info string (defaults to "text").
- *   - Trailing "{ ... }" in the fence info is parsed with JSON5 into attrs.
- *   - Any leading text before "{ ... }" is preserved as `info`.
+ *   - Language is captured from the fence processing instructions (PI) string
+ *     (defaults to "text").
+ *   - Trailing "{ ... }" in the fence PI is parsed with JSON5 into attrs.
+ *   - Any leading text before "{ ... }" is preserved as `pi`.
  *   - JSON5 parse errors are reported as "fence-issue" issues and attrs
  *     falls back to {}.
  * - Locations: all cells include best-effort startLine and endLine based on
@@ -44,7 +45,7 @@
  *   - issues: structured parse/lint findings (extensible)
  *   - ast: mdast cache (per-cell and pre/post-code ranges)
  *   - provenance: identifier for the document source
- * - CodeCell: { kind: "code", language, source, attrs, info?, startLine?, endLine? }
+ * - CodeCell: { kind: "code", language, source, attrs, pi?, parsedPI?, startLine?, endLine? }
  * - MarkdownCell: { kind: "markdown", markdown, text, startLine?, endLine? }
  * - IssueDisposition: "error" | "warning" | "lint"
  * - Issue union: "frontmatter-parse" | "fence-issue" | "fence-attrs-json5-parse"
@@ -161,15 +162,15 @@ export type ImportInstructionInfoFlags = {
 export type CodeCell<
   Provenance,
   Attrs extends Record<string, unknown> = Record<string, unknown>,
-> // TODO: strongly type parsedInfo record?
+> // TODO: strongly type parsedPI record?
  = {
   kind: "code";
   provenance: Provenance;
   language: string; // fence lang or "text"
   source: string; // fence body
   attrs: Attrs; // JSON5 from fence meta {...}
-  info?: string; // meta prefix before {...}
-  parsedInfo?: ReturnType<typeof parsedTextFlags>; // meta prefix before {...}
+  pi?: string; // processing instructions are CLI-ish tokens before {...}
+  parsedPI?: ReturnType<typeof parsedTextFlags>; // meta prefix before {...}
   startLine?: number;
   endLine?: number;
   sourceElaboration?:
@@ -496,19 +497,19 @@ async function parseDocument<
       const lang = node.lang ?? "text";
       const metaRaw = typeof node.meta === "string" ? node.meta : undefined;
 
-      // Extract trailing {...} JSON5 as attrs; prefix (if any) as info
+      // Extract trailing {...} JSON5 as attrs; prefix (if any) as processing instructions (PI)
       let attrs = {} as Attrs;
-      let info: string | undefined;
-      let parsedInfo: ReturnType<typeof parsedTextFlags> | undefined;
+      let pi: string | undefined;
+      let parsedPI: ReturnType<typeof parsedTextFlags> | undefined;
       if (metaRaw) {
         const m = metaRaw.match(/\{.*\}$/);
         if (m) {
           attrs = tryParseFenceAttrs(m[0]);
-          info = metaRaw.replace(m[0], "").trim() || undefined;
+          pi = metaRaw.replace(m[0], "").trim() || undefined;
         } else {
-          info = metaRaw.trim();
+          pi = metaRaw.trim();
         }
-        parsedInfo = info ? parsedTextFlags(info) : undefined;
+        parsedPI = pi ? parsedTextFlags(pi) : undefined;
       }
 
       const codeCell: CodeCell<Provenance, Attrs> = {
@@ -517,17 +518,17 @@ async function parseDocument<
         language: lang,
         source: String(node.value ?? ""),
         attrs,
-        info,
-        parsedInfo,
+        pi: pi,
+        parsedPI: parsedPI,
         startLine: posStartLine(node),
         endLine: posEndLine(node),
         isVirtual: false,
       };
 
-      if (srcSupplied.import && parsedInfo && "import" in parsedInfo.flags) {
-        const importSrc = parsedInfo.flags["import"];
+      if (srcSupplied.import && parsedPI && "import" in parsedPI.flags) {
+        const importSrc = parsedPI.flags["import"];
         if (typeof importSrc !== "boolean") {
-          const isRefToBinary = parsedInfo.flags["is-binary"] ? true : false;
+          const isRefToBinary = parsedPI.flags["is-binary"] ? true : false;
           if (isRefToBinary) {
             codeCell.sourceElaboration = {
               isRefToBinary: true,

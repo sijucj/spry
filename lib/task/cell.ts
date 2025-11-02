@@ -86,7 +86,7 @@ export function isAnnotationsSupplier<Anns extends Record<string, unknown>>(
   return "annotations" in o && "annsCatalog" in o ? true : false;
 }
 
-/** Schema for typed TaskDirective from `Cell.info?` property */
+/** Schema for typed TaskDirective from `Cell.pi?` property */
 export const taskDirectiveSchema = z.discriminatedUnion("nature", [
   z.object({
     nature: z.literal("TASK"),
@@ -164,12 +164,12 @@ export function partialsInspector<
   I extends Issue<Provenance> = Issue<Provenance>,
 >(): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
   return ({ cell, registerIssue }) => {
-    if (!cell.parsedInfo) return false;
-    const pi = cell.parsedInfo;
+    if (!cell.parsedPI) return false;
+    const pi = cell.parsedPI;
     if (pi && pi.firstToken?.toLocaleUpperCase() == "PARTIAL") {
       const fbc = {
         nature: "PARTIAL",
-        partial: fbPartialCandidate(cell.parsedInfo, cell.source, cell.attrs, {
+        partial: fbPartialCandidate(cell.parsedPI, cell.source, cell.attrs, {
           registerIssue,
         }),
       };
@@ -178,7 +178,7 @@ export function partialsInspector<
         return parsed.data;
       } else {
         registerIssue(
-          `Zod error parsing task directive '${cell.info}': ${
+          `Zod error parsing task directive '${cell.pi}': ${
             z.prettifyError(parsed.error)
           }`,
           parsed.error,
@@ -213,8 +213,8 @@ export function spawnableTDI<
   return ({ cell }) => {
     const language = isValidLanguage(cell);
     if (!language) return false;
-    if (!cell.info) return false;
-    const pi = cell.parsedInfo;
+    if (!cell.pi) return false;
+    const pi = cell.parsedPI;
     if (!pi || !pi.firstToken) return false;
     return {
       nature: "TASK",

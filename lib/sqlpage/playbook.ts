@@ -82,7 +82,7 @@ export function counter<Identifier>(identifier: Identifier, padValue = 4) {
 }
 
 /**
- * Adjust the `parsedInfo` of a virtual import cell when it matches
+ * Adjust the `parsedPI` of a virtual import cell when it matches
  * a **virtual HEAD or TAIL directive**.
  *
  * This helper normalizes generated import cells that come from
@@ -97,7 +97,7 @@ export function counter<Identifier>(identifier: Identifier, padValue = 4) {
  *
  * When an imported cell is marked as "virtual" and its first token in
  * `restParts` equals the provided `match` value (case-insensitive),
- * the function rewrites its `parsedInfo` tokens to follow a canonical
+ * the function rewrites its `parsedPI` tokens to follow a canonical
  * structure:
  *
  * - `firstToken` → `"HEAD"` or `"TAIL"`
@@ -107,7 +107,7 @@ export function counter<Identifier>(identifier: Identifier, padValue = 4) {
  * This makes it easier for downstream SQLPage or Spry emitters to
  * distinguish special pseudo-cells (HEAD/TAIL) from normal SQL imports.
  *
- * @param cell The virtual code cell to modify (must have `parsedInfo`)
+ * @param cell The virtual code cell to modify (must have `parsedPI`)
  * @param match The directive keyword to look for (e.g. `"HEAD"` or `"TAIL"`)
  *
  * @example
@@ -124,18 +124,18 @@ export function fixupVirtualHeadTail(
   cell: PlaybookCodeCell<string, SqlPageCellAttrs>,
   match: string,
 ) {
-  if (isVirtualDirective(cell) && cell.parsedInfo) {
+  if (isVirtualDirective(cell) && cell.parsedPI) {
     // might look like `sql **/*.sql HEAD` or `sql **/*.sql TAIL`
     // restParts is string tokens that come after the glob / remote
     const firstGenDirecToken = cell.virtualDirective.restParts[0];
     if (firstGenDirecToken.toUpperCase() == match.toUpperCase()) {
       // switch to `sql HEAD file.sql` or `sql TAIL file.sql`
-      cell.parsedInfo.secondToken =
-        `sql.d/${match.toLowerCase()}/${cell.parsedInfo.firstToken}`;
-      cell.parsedInfo.firstToken = match;
-      cell.parsedInfo.bareTokens = [
-        cell.parsedInfo.firstToken,
-        cell.parsedInfo.secondToken,
+      cell.parsedPI.secondToken =
+        `sql.d/${match.toLowerCase()}/${cell.parsedPI.firstToken}`;
+      cell.parsedPI.firstToken = match;
+      cell.parsedPI.bareTokens = [
+        cell.parsedPI.firstToken,
+        cell.parsedPI.secondToken,
       ];
     }
   }
@@ -146,7 +146,7 @@ export function sqlHeadCellTDI(): SqlPageTDI {
   return ({ cell }) => {
     if (cell.language != sqlCodeCellLangId) return false;
     fixupVirtualHeadTail(cell, sqlTaskHead);
-    const pi = cell.parsedInfo;
+    const pi = cell.parsedPI;
     if (!pi) return false; // no identity, ignore
     if (pi.firstToken?.toLocaleUpperCase() != sqlTaskHead) return false;
     const identity = pi.bareTokens[1] ?? `sql.d/head/${heads.nextText()}.sql`;
@@ -169,7 +169,7 @@ export function sqlTailCellTDI(): SqlPageTDI {
   return ({ cell }) => {
     if (cell.language != sqlCodeCellLangId) return false;
     fixupVirtualHeadTail(cell, sqlTaskTail);
-    const pi = cell.parsedInfo;
+    const pi = cell.parsedPI;
     if (!pi) return false; // no identity, ignore
     if (pi.firstToken?.toLocaleUpperCase() != sqlTaskTail) return false;
     const identity = pi.bareTokens[1] ?? `sql.d/tail/${tails.nextText()}.sql`;
@@ -244,7 +244,7 @@ export function sqlPageFileLangCellTDI(
     const langs = [language.id];
     if (language.aliases) langs.push(...language.aliases);
     if (!langs.find((l) => l === cell.language)) return false;
-    const pi = cell.parsedInfo;
+    const pi = cell.parsedPI;
     if (!pi || !pi.firstToken) return false; // no identity, ignore
     const path = pi.firstToken;
     if (spfi.isRoutable) mutateRouteInCellAttrs(cell, path, registerIssue);
@@ -295,7 +295,7 @@ export function sqlPageFileJsCellTDI() {
 
 export function sqlPageFileAnyCellWithSpcFlagTDI(): SqlPageTDI {
   return ({ cell }) => {
-    const pi = cell.parsedInfo;
+    const pi = cell.parsedPI;
     if (!pi || !pi.firstToken) return false; // no identity, ignore
     if (!("spc" in pi.flags)) return false;
     const path = pi.firstToken;
