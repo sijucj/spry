@@ -492,7 +492,7 @@ export class TaskDirectives<
 
     // Merge explicit + injected dependencies, ensuring uniqueness and order
     const merged = Array.from(
-      new Set([...(taskDeps ?? []), ...injected]),
+      new Set([...injected, ...(taskDeps ?? [])]),
     );
 
     // Cache and return result
