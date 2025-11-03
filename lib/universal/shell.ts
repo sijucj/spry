@@ -495,7 +495,7 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
 
   bus.on("spawn:done", ({ cmd, args, code, success, stderr, stdout }) => {
     if (stdout.length > 0) {
-      console.info(dim(indent(decode(stdout))));
+      console.info(decode(stdout));
     }
     if (!success) {
       console.error(
@@ -510,7 +510,7 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
 
   bus.on("task:line:done", ({ index, line, code, success, stdout, stderr }) => {
     if (stdout.length > 0) {
-      console.info(dim(indent(decode(stdout))));
+      console.info(decode(stdout));
     }
     if (!success) {
       console.error(
