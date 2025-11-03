@@ -9,6 +9,7 @@ import {
   yellow,
 } from "jsr:@std/fmt@1/colors";
 import { eventBus } from "./event-bus.ts";
+import { indent } from "./tmpl-literal-aide.ts";
 
 /** Events the shell factory can emit */
 export type ShellBusEvents = {
@@ -303,6 +304,7 @@ export function shell(init?: {
 export function verboseInfoShellEventBus(init: { style: "plain" | "rich" }) {
   const fancy = init.style === "rich";
   const bus = eventBus<ShellBusEvents>();
+  const te = new TextDecoder();
 
   const E = {
     rocket: "🚀",
@@ -363,13 +365,24 @@ export function verboseInfoShellEventBus(init: { style: "plain" | "rich" }) {
     console.info(line);
   });
 
-  bus.on("spawn:done", ({ cmd, args, code, success, durationMs }) => {
-    const line =
-      `${c.tag("[spawn]")} ${em.done(c.cmd(cmd), success)} ${fmtArgs(args)} ` +
-      (success ? c.ok(`code=${code}`) : c.err(`code=${code}`)) +
-      em.timer(durationMs);
-    console.info(line);
-  });
+  bus.on(
+    "spawn:done",
+    ({ cmd, args, code, success, durationMs, stdout, stderr }) => {
+      const line =
+        `${c.tag("[spawn]")} ${em.done(c.cmd(cmd), success)} ${
+          fmtArgs(args)
+        } ` +
+        (success ? c.ok(`code=${code}`) : c.err(`code=${code}`)) +
+        em.timer(durationMs);
+      console.info(line);
+      if (stdout.length > 0) {
+        console.info(dim(indent(te.decode(stdout))));
+      }
+      if (stderr.length > 0) {
+        console.info(red(indent(te.decode(stderr))));
+      }
+    },
+  );
 
   bus.on("spawn:error", ({ cmd, args, error }) => {
     const line =
@@ -383,13 +396,22 @@ export function verboseInfoShellEventBus(init: { style: "plain" | "rich" }) {
     console.info(msg);
   });
 
-  bus.on("task:line:done", ({ index, line, code, success, durationMs }) => {
-    const msg = `${c.tag("[task]")} ${em.done(`L${index}`, success)} ` +
-      (success ? c.ok(`code=${code}`) : c.err(`code=${code}`)) +
-      ` ${c.gray(line)}` +
-      em.timer(durationMs);
-    console.info(msg);
-  });
+  bus.on(
+    "task:line:done",
+    ({ index, line, code, success, durationMs, stdout, stderr }) => {
+      const msg = `${c.tag("[task]")} ${em.done(`L${index}`, success)} ` +
+        (success ? c.ok(`code=${code}`) : c.err(`code=${code}`)) +
+        ` ${c.gray(line)}` +
+        em.timer(durationMs);
+      console.info(msg);
+      if (stdout.length > 0) {
+        console.info(dim(indent(te.decode(stdout))));
+      }
+      if (stderr.length > 0) {
+        console.info(red(indent(te.decode(stderr))));
+      }
+    },
+  );
 
   bus.on("shebang:tempfile", ({ path }) => {
     console.info(`${c.tag("[shebang]")} ${em.page("temp")} ${c.path(path)}`);
@@ -471,7 +493,10 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
     );
   });
 
-  bus.on("spawn:done", ({ cmd, args, code, success, stderr }) => {
+  bus.on("spawn:done", ({ cmd, args, code, success, stderr, stdout }) => {
+    if (stdout.length > 0) {
+      console.info(dim(indent(decode(stdout))));
+    }
     if (!success) {
       console.error(
         `${c.tag("[spawn]")} ${em.fail(c.cmd(cmd))} ${args.join(" ")} ${
@@ -483,7 +508,10 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
     }
   });
 
-  bus.on("task:line:done", ({ index, line, code, success, stderr }) => {
+  bus.on("task:line:done", ({ index, line, code, success, stdout, stderr }) => {
+    if (stdout.length > 0) {
+      console.info(dim(indent(decode(stdout))));
+    }
     if (!success) {
       console.error(
         `${c.tag("[task]")} ${em.fail(`L${index}`)} ${
