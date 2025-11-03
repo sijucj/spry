@@ -891,6 +891,7 @@ export class CLI<Project> {
             if (tasks.find((t) => t.taskId() == taskId)) {
               const runbook = await executeTasks(
                 executionSubplan(executionPlan(tasks), [taskId]),
+                pp.state.directives,
                 opts.verbose ? "rich" : false,
               );
               if (opts.summarize) {
@@ -943,6 +944,7 @@ export class CLI<Project> {
                   t.taskDirective.nature === "TASK"
                 ),
               ),
+              pp.state.directives,
               opts.verbose ? "rich" : false,
             );
             if (opts.summarize) {

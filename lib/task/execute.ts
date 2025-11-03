@@ -15,10 +15,14 @@ import {
   verboseInfoTaskEventBus,
 } from "../universal/task.ts";
 import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
-import { matchTaskNature, TaskCell } from "./cell.ts";
+import { matchTaskNature, TaskCell, TaskDirectives } from "./cell.ts";
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 export async function executeTasks<T extends Task>(
   plan: TaskExecutionPlan<T>,
+  directives: TaskDirectives<Any, Any, Any, Any>,
   verbose?: false | Parameters<typeof verboseInfoShellEventBus>[0]["style"],
   summarize?: boolean,
 ) {
@@ -48,7 +52,34 @@ export async function executeTasks<T extends Task>(
     try {
       // NOTE: This is intentionally unsafe. Do not feed untrusted content.
       // Assume you're treating code cell blocks as fully trusted source code.
-      const mutated = await unsafeInterp.interpolate(source, { ...ctx, cell });
+      const mutated = await unsafeInterp.interpolate(source, {
+        ...ctx,
+        cell,
+        partial: async (
+          name: string,
+          partialLocals?: Record<string, unknown>,
+        ) => {
+          const found = directives.partials.get(name);
+          if (found) {
+            const partialCell = directives.partialDirectives.find((pd) =>
+              pd.partialDirective.partial.identity == found.identity
+            );
+            const { content: partial, interpolate, locals } = await found
+              .content({
+                cell,
+                ...ctx,
+                ...partialLocals,
+                partial: partialCell,
+              });
+            if (!interpolate) return partial;
+            return await unsafeInterp.interpolate(partial, locals, [{
+              template: partial,
+            }]);
+          } else {
+            return `/* partial '${name}' not found */`;
+          }
+        },
+      });
       if (mutated !== source) return { status: "mutated", source: mutated };
       return { status: "unmodified", source };
     } catch (error) {
