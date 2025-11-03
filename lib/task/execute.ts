@@ -21,22 +21,71 @@ import { markdownShellEventBus } from "./mdbus.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-export async function executeTasks<T extends Task>(
-  plan: TaskExecutionPlan<T>,
+export type TaskExecContext = { runId: string };
+
+export function taskExecInterpolator(
   directives: TaskDirectives<Any, Any, Any, Any>,
-  verbose?:
-    | false
-    | Parameters<typeof verboseInfoShellEventBus>[0]["style"]
-    | ReturnType<typeof markdownShellEventBus>,
-  summarize?: boolean,
+  unsafeInterp = unsafeInterpolator({ directives, safeJsonStringify }),
 ) {
-  type Context = { runId: string };
-  const unsafeInterp = unsafeInterpolator({ safeJsonStringify });
+  const td = new TextDecoder();
+
+  const isCapturable = (cell: TaskCell<string>) =>
+    cell.parsedPI &&
+    ("capture" in cell.parsedPI.flags || "C" in cell.parsedPI.flags);
+
+  type TaskExecCapture = {
+    cell: TaskCell<string>;
+    ctx: TaskExecContext;
+    interpResult: Awaited<ReturnType<typeof interpolateUnsafely>>;
+    execResult: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
+
+    text: () => string;
+    json: () => unknown;
+  };
+
+  const prepTaskExecCapture = (
+    tec: Pick<TaskExecCapture, "cell" | "ctx" | "interpResult" | "execResult">,
+  ) => {
+    const text = () => {
+      if (Array.isArray(tec.execResult)) {
+        return tec.execResult.map((er) => td.decode(er.stdout)).join("\n");
+      } else {
+        return td.decode(tec.execResult.stdout);
+      }
+    };
+    const json = () => JSON.parse(text());
+    return { ...tec, text, json } satisfies TaskExecCapture;
+  };
+
+  const capturedTaskExecs = {} as Record<string, TaskExecCapture>;
+  const captureTaskExec = async (cap: TaskExecCapture) => {
+    const { cell: { parsedPI } } = cap;
+    const captureFlags = [
+      parsedPI?.flags.capture,
+      parsedPI?.flags.C,
+    ].filter((v) => v !== undefined);
+
+    const captureInstructions = captureFlags.flatMap((v) =>
+      typeof v === "boolean"
+        ? [parsedPI?.firstToken]
+        : Array.isArray(v)
+        ? v
+        : [v]
+    ).filter((v) => v !== undefined);
+
+    for (const ci of captureInstructions) {
+      if (ci.startsWith("./")) {
+        await Deno.writeTextFile(ci, cap.text());
+      } else {
+        capturedTaskExecs[ci] = cap;
+      }
+    }
+  };
 
   // "unsafely" means we're using JavaScript "eval"
   async function interpolateUnsafely(
     cell: TaskCell<string>,
-    ctx: Context,
+    ctx: TaskExecContext,
   ): Promise<
     & { status: false | "unmodified" | "mutated" }
     & ({ status: "mutated"; source: string } | {
@@ -59,6 +108,7 @@ export async function executeTasks<T extends Task>(
       const mutated = await unsafeInterp.interpolate(source, {
         ...ctx,
         cell,
+        captured: capturedTaskExecs,
         partial: async (
           name: string,
           partialLocals?: Record<string, unknown>,
@@ -71,6 +121,7 @@ export async function executeTasks<T extends Task>(
             const { content: partial, interpolate, locals } = await found
               .content({
                 cell,
+                captured: capturedTaskExecs,
                 ...ctx,
                 ...partialLocals,
                 partial: partialCell,
@@ -91,6 +142,28 @@ export async function executeTasks<T extends Task>(
     }
   }
 
+  return {
+    isCapturable,
+    unsafeInterp,
+    interpolateUnsafely,
+    capturedTaskExecs,
+    captureTaskExec,
+    prepTaskExecCapture,
+  };
+}
+
+export async function executeTasks<T extends Task>(
+  plan: TaskExecutionPlan<T>,
+  directives: TaskDirectives<Any, Any, Any, Any>,
+  verbose?:
+    | false
+    | Parameters<typeof verboseInfoShellEventBus>[0]["style"]
+    | ReturnType<typeof markdownShellEventBus>,
+  summarize?: boolean,
+) {
+  const tei = taskExecInterpolator(directives);
+  const { isCapturable, captureTaskExec, prepTaskExecCapture } = tei;
+
   const sh = shell({
     bus: verbose
       ? typeof verbose === "string"
@@ -99,18 +172,21 @@ export async function executeTasks<T extends Task>(
       : errorOnlyShellEventBus({ style: verbose ? verbose : "rich" }),
   });
 
-  const exec = new TaskExecutorBuilder<Task, Context>()
+  const exec = new TaskExecutorBuilder<Task, TaskExecContext>()
     .handle(
-      // if is task of nature "TASK" and does not handle its own execute process
-      // then check if it's spawnable and handle spawning via shebang or Deno
       matchTaskNature("TASK"),
       async (cell, ctx) => {
-        const ir = await interpolateUnsafely(cell, ctx);
-        if (ir.status) {
-          await sh.auto(ir.source);
+        const interpResult = await tei.interpolateUnsafely(cell, ctx);
+        if (interpResult.status) {
+          const execResult = await sh.auto(interpResult.source);
+          if (isCapturable(cell)) {
+            await captureTaskExec(
+              prepTaskExecCapture({ cell, ctx, interpResult, execResult }),
+            );
+          }
           return ok(ctx);
         } else {
-          return fail(ctx, ir.error);
+          return fail(ctx, interpResult.error);
         }
       },
     )
@@ -118,8 +194,8 @@ export async function executeTasks<T extends Task>(
 
   const summary = await executeDAG(plan, exec, {
     eventBus: verbose
-      ? verboseInfoTaskEventBus<T, Context>({ style: "rich" })
-      : errorOnlyTaskEventBus<T, Context>({
+      ? verboseInfoTaskEventBus<T, TaskExecContext>({ style: "rich" })
+      : errorOnlyTaskEventBus<T, TaskExecContext>({
         style: verbose ? verbose : "rich",
       }),
   });
