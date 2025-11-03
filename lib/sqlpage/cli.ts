@@ -20,6 +20,7 @@ import {
 } from "jsr:@std/path@^1";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import * as taskCLI from "../task/cli.ts";
+import { executeTasks } from "../task/mod.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
 import { doctor } from "../universal/doctor.ts";
@@ -35,6 +36,7 @@ import { sqlPageConf } from "./conf.ts";
 import {
   normalizeSPC,
   SqlPageContent,
+  SqlPageFilesUpsertDialect,
   sqlPageFilesUpsertDML,
 } from "./content.ts";
 import { SqlPagePlaybook, sqlPagePlaybookState } from "./playbook.ts";
@@ -200,7 +202,10 @@ export class CLI<Project> {
 
   async init(
     projectHome = Deno.cwd(),
-    init?: { dbName: string; force?: boolean; dialect?: string },
+    init?: {
+      force?: boolean;
+      dialect?: SqlPageFilesUpsertDialect;
+    },
   ) {
     const {
       absPathToSpryTsLocal,
@@ -250,7 +255,7 @@ export class CLI<Project> {
           port: "${env.PORT}",
           database_url: "${env.SPRY_DB}",
           web_root: `./${webRoot}`,
-          ...(init?.dialect === "postgres"
+          ...(init?.dialect === SqlPageFilesUpsertDialect.PostgreSQL
             ? { listen_on: "0.0.0.0:${env.PORT}" }
             : {}),
         },
@@ -265,7 +270,7 @@ export class CLI<Project> {
       sfMD.codeTag(
         `bash`,
       )`# .envrc (bash/zsh)\nexport SPRY_DB=${
-        init?.dialect === "postgres"
+        init?.dialect === SqlPageFilesUpsertDialect.PostgreSQL
           ? `"postgresql://<username>:<password>@<host>:<port>/<database>"`
           : `"sqlite://sqlpage.db?mode=rwc"`
       }\nexport PORT=9227`;
@@ -395,7 +400,7 @@ export class CLI<Project> {
       md: string[];
       srcRelTo: SourceRelativeTo;
       conf?: boolean;
-      info?: boolean;
+      pi?: boolean;
       infoAttrs?: boolean;
       tree?: boolean;
     },
@@ -457,7 +462,7 @@ export class CLI<Project> {
         .byPath({ pathKey: "path", separator: "/" })
         .treeOn("name");
       await tree.ls(true);
-    } else if (opts.info || opts.infoAttrs) {
+    } else if (opts.pi || opts.infoAttrs) {
       const pc = await this.spn.populateContent({
         mdSources: opts.md,
         srcRelTo: opts.srcRelTo,
@@ -467,7 +472,7 @@ export class CLI<Project> {
         {
           line: number;
           language: string;
-          info: string;
+          pi: string;
           virtual: string;
           binary: string;
           notebook: string;
@@ -476,7 +481,7 @@ export class CLI<Project> {
         .declareColumns(
           "line",
           "language",
-          "info",
+          "pi",
           "virtual",
           "binary",
           "notebook",
@@ -485,7 +490,7 @@ export class CLI<Project> {
           pc.state.directives.tasks.map((cell) => ({
             line: cell.startLine ?? -1,
             language: cell.language ?? "?",
-            info: cell.info ?? "?",
+            pi: cell.pi ?? "?",
             virtual: cell.isVirtual ? "V" : " ",
             binary: cell.sourceElaboration?.isRefToBinary ? "B" : " ",
             notebook: cell.provenance ?? "",
@@ -495,7 +500,7 @@ export class CLI<Project> {
         .field("language", "language", { header: "Lang" })
         .field("virtual", "virtual", { header: "V" })
         .field("binary", "binary", { header: "B" })
-        .field("info", "info", { header: "Cell Info" })
+        .field("pi", "pi", { header: "Cell PI" })
         .field("notebook", "notebook", this.lsColorPathField("Notebook"))
         .build()
         .ls(true);
@@ -642,6 +647,7 @@ export class CLI<Project> {
   command(name = "spry.ts") {
     // Enum type with enum.
     const srcRelTo = new EnumType(SourceRelativeTo);
+    const dialect = new EnumType(SqlPageFilesUpsertDialect);
     const mdOpt = [
       "-m, --md <mdPath:string>",
       "Use the given Markdown source(s), multiple allowed",
@@ -661,6 +667,7 @@ export class CLI<Project> {
 
     return new Command()
       .name(name)
+      .type("dialect", dialect)
       .version(() => computeSemVerSync(import.meta.url))
       .description(
         "SQLPage Markdown Notebook: emit SQL package, write sqlpage.json, or materialize filesystem.",
@@ -677,9 +684,9 @@ export class CLI<Project> {
         default: false,
       })
       .option(
-        "-d, --dialect <dialect:string>",
+        "-d, --dialect <dialect:dialect>",
         "SQL dialect for package generation (sqlite or postgres)",
-        { default: "sqlite" },
+        { default: SqlPageFilesUpsertDialect.SQLite },
       )
       .action(async (opts) => {
         const { created, removed, ignored, gitignore: gi } = await this.init(
@@ -707,6 +714,7 @@ export class CLI<Project> {
         new Command() // Emit SQL package (sqlite) to stdout; accepts md path
           .description("SQLPage Content (spc) CLI")
           .type("sourceRelTo", srcRelTo)
+          .type("dialect", dialect)
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option(
@@ -715,9 +723,9 @@ export class CLI<Project> {
             { conflicts: ["fs"] },
           )
           .option(
-            "-d, --dialect <dialect:string>",
+            "-d, --dialect <dialect:dialect>",
             "SQL dialect for package generation (sqlite or postgres)",
-            { default: "sqlite" },
+            { default: SqlPageFilesUpsertDialect.SQLite },
           )
           // Materialize files to a target directory
           .option(
@@ -779,7 +787,9 @@ export class CLI<Project> {
                     state: sqlPagePlaybookState(),
                   }),
                   {
-                    dialect: opts.dialect ? opts.dialect : "sqlite",
+                    dialect: opts.dialect
+                      ? opts.dialect
+                      : SqlPageFilesUpsertDialect.SQLite,
                     includeSqlPageFilesTable: true,
                   },
                 )
@@ -828,11 +838,11 @@ export class CLI<Project> {
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option(
-            "-i, --info",
+            "-i, --pi",
             "Show just the cell names and INFO lines for each cell",
           )
           .option(
-            "-I, --info-attrs",
+            "-I, --pi-attrs",
             "Show just the cell names and INFO and attributes for each cell",
           )
           .option("-t, --tree", "Show as tree")
@@ -879,8 +889,9 @@ export class CLI<Project> {
               t.taskDirective.nature === "TASK"
             );
             if (tasks.find((t) => t.taskId() == taskId)) {
-              const runbook = await taskCLI.executeTasks(
+              const runbook = await executeTasks(
                 executionSubplan(executionPlan(tasks), [taskId]),
+                pp.state.directives,
                 opts.verbose ? "rich" : false,
               );
               if (opts.summarize) {
@@ -927,12 +938,13 @@ export class CLI<Project> {
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            const runbook = await taskCLI.executeTasks(
+            const runbook = await executeTasks(
               executionPlan(
                 pp.state.directives.tasks.filter((t) =>
                   t.taskDirective.nature === "TASK"
                 ),
               ),
+              pp.state.directives,
               opts.verbose ? "rich" : false,
             );
             if (opts.summarize) {

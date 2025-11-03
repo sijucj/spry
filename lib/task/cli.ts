@@ -9,21 +9,7 @@ import {
 } from "jsr:@std/fmt@^1/colors";
 import { relative } from "jsr:@std/path@^1";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
-import {
-  errorOnlyShellEventBus,
-  shell,
-  verboseInfoShellEventBus,
-} from "../universal/shell.ts";
-import {
-  errorOnlyTaskEventBus,
-  executeDAG,
-  ok,
-  Task,
-  TaskExecutionPlan,
-  TaskExecutorBuilder,
-  verboseInfoTaskEventBus,
-} from "../universal/task.ts";
-import { matchTaskNature, TaskCell } from "./cell.ts";
+import { TaskCell } from "./cell.ts";
 
 export type LsTaskRow = {
   name: string;
@@ -93,7 +79,7 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
       notebook: String(t.provenance),
       language: t.language,
       deps: (t.taskDeps?.() ?? []).join(", "),
-      descr: (String(t.parsedInfo?.flags["descr"]) ?? "").replace(
+      descr: (String(t.parsedPI?.flags["descr"]) ?? "").replace(
         "undefined",
         "",
       ),
@@ -112,35 +98,4 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
     .sortBy("name").sortDir("asc")
     .build()
     .ls(true);
-}
-
-export async function executeTasks<T extends Task>(
-  plan: TaskExecutionPlan<T>,
-  verbose?: false | Parameters<typeof verboseInfoShellEventBus>[0]["style"],
-  summarize?: boolean,
-) {
-  type Context = { runId: string };
-
-  const sh = shell({
-    bus: verbose
-      ? verboseInfoShellEventBus({ style: verbose })
-      : errorOnlyShellEventBus({ style: verbose ? verbose : "rich" }),
-  });
-
-  const exec = new TaskExecutorBuilder<Task, Context>()
-    .handle(matchTaskNature("TASK"), async (cell, ctx) => {
-      await sh.auto(cell.source);
-      return ok(ctx);
-    })
-    .build();
-
-  const summary = await executeDAG(plan, exec, {
-    eventBus: verbose
-      ? verboseInfoTaskEventBus<T, Context>({ style: verbose })
-      : errorOnlyTaskEventBus<T, Context>({
-        style: verbose ? verbose : "rich",
-      }),
-  });
-  if (summarize) console.dir({ summary });
-  return summary;
 }
