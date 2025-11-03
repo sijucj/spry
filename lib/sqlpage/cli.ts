@@ -675,34 +675,39 @@ export class CLI<Project> {
       .command("help", new HelpCommand().global())
       .command(
         "init",
-        "Setup Spryfile.md and spry.ts for local dev environment",
-      )
-      /* .option("--db-name <file>", "name of SQLite database", {
-        default: "sqlpage.db",
-      }) */
-      .option("--force", "Remove existing and recreate from latest tag", {
-        default: false,
-      })
-      .option(
-        "-d, --dialect <dialect:dialect>",
-        "SQL dialect for package generation (sqlite or postgres)",
-        { default: SqlPageFilesUpsertDialect.SQLite },
-      )
-      .action(async (opts) => {
-        const { created, removed, ignored, gitignore: gi } = await this.init(
-          Deno.cwd(),
-          opts,
-        );
-        removed.forEach((r) => console.warn(`❌ Removed ${r}`));
-        created.forEach((c) => console.info(`📄 Created ${c}`));
-        ignored.forEach((i) => console.info(`🆗 Preserved ${i}`));
+        new Command()
+          .description(
+            "Setup Spryfile.md and spry.ts for local dev environment",
+          )
+          .type("dialect", dialect)
+          /* .option("--db-name <file>", "name of SQLite database", {
+            default: "sqlpage.db",
+          }) */
+          .option("--force", "Remove existing and recreate from latest tag", {
+            default: false,
+          })
+          .option(
+            "-d, --dialect <dialect:dialect>",
+            "SQL dialect for package generation (sqlite or postgres)",
+            { default: SqlPageFilesUpsertDialect.SQLite },
+          )
+          .action(async (opts) => {
+            const { created, removed, ignored, gitignore: gi } = await this
+              .init(
+                Deno.cwd(),
+                opts,
+              );
+            removed.forEach((r) => console.warn(`❌ Removed ${r}`));
+            created.forEach((c) => console.info(`📄 Created ${c}`));
+            ignored.forEach((i) => console.info(`🆗 Preserved ${i}`));
 
-        const { added, preserved } = gi;
-        added.forEach((c) => console.info(`📄 Added ${c} to .gitignore`));
-        preserved.forEach((p) =>
-          console.info(`🆗 Preserved ${p} in .gitignore`)
-        );
-      })
+            const { added, preserved } = gi;
+            added.forEach((c) => console.info(`📄 Added ${c} to .gitignore`));
+            preserved.forEach((p) =>
+              console.info(`🆗 Preserved ${p} in .gitignore`)
+            );
+          }),
+      )
       .command("doctor", "Show dependencies and their availability")
       .action(async () => {
         const diags = doctor(["deno --version", "sqlpage --version"]);
