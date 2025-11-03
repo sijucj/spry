@@ -16,6 +16,7 @@ import {
 } from "../universal/task.ts";
 import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 import { matchTaskNature, TaskCell, TaskDirectives } from "./cell.ts";
+import { markdownShellEventBus } from "./mdbus.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -23,7 +24,10 @@ type Any = any;
 export async function executeTasks<T extends Task>(
   plan: TaskExecutionPlan<T>,
   directives: TaskDirectives<Any, Any, Any, Any>,
-  verbose?: false | Parameters<typeof verboseInfoShellEventBus>[0]["style"],
+  verbose?:
+    | false
+    | Parameters<typeof verboseInfoShellEventBus>[0]["style"]
+    | ReturnType<typeof markdownShellEventBus>,
   summarize?: boolean,
 ) {
   type Context = { runId: string };
@@ -89,7 +93,9 @@ export async function executeTasks<T extends Task>(
 
   const sh = shell({
     bus: verbose
-      ? verboseInfoShellEventBus({ style: verbose })
+      ? typeof verbose === "string"
+        ? verboseInfoShellEventBus({ style: verbose })
+        : verbose.bus
       : errorOnlyShellEventBus({ style: verbose ? verbose : "rich" }),
   });
 
@@ -112,7 +118,7 @@ export async function executeTasks<T extends Task>(
 
   const summary = await executeDAG(plan, exec, {
     eventBus: verbose
-      ? verboseInfoTaskEventBus<T, Context>({ style: verbose })
+      ? verboseInfoTaskEventBus<T, Context>({ style: "rich" })
       : errorOnlyTaskEventBus<T, Context>({
         style: verbose ? verbose : "rich",
       }),
