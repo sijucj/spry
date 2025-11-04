@@ -282,7 +282,7 @@ export function hasFlagOfType<
 >(
   flags: T,
   key: K,
-  expectedType: Expected,
+  expectedType?: Expected,
 ): flags is
   & T
   & {
@@ -295,7 +295,9 @@ export function hasFlagOfType<
       : Expected extends "undefined" ? undefined
       : never;
   } {
-  return key in flags && typeof flags[key] === expectedType;
+  return expectedType
+    ? (key in flags && typeof flags[key] === expectedType)
+    : key in flags;
 }
 
 /**
@@ -353,7 +355,7 @@ export function hasEitherFlagOfType<
   flags: T,
   keyA: K1,
   keyB: K2,
-  expectedType: Expected,
+  expectedType?: Expected,
 ): flags is
   & T
   & {
@@ -373,10 +375,13 @@ export function hasEitherFlagOfType<
     ? flags[keyB]
     : undefined;
 
-  const matchA = vA !== undefined && typeof vA === expectedType;
-  const matchB = vB !== undefined && typeof vB === expectedType;
+  if (expectedType) {
+    const matchA = vA !== undefined && typeof vA === expectedType;
+    const matchB = vB !== undefined && typeof vB === expectedType;
+    return matchA || matchB;
+  }
 
-  return matchA || matchB;
+  return vA !== undefined || vB !== undefined;
 }
 
 /**
