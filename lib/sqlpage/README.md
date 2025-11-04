@@ -166,8 +166,8 @@ support simple composition. It provides a context with:
 
 - `partial(name: string)` → the source of a `PARTIAL` of that identity.
 - `absURL(sqlClause: string)` and `sitePrefixed(sqlClause: string)` → expands to
-  `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || <sqlClause>)` (handy
-  when you need dynamic site prefixing).
+  `(COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || <sqlClause>)`
+  (handy when you need dynamic site prefixing).
 - All fence **attrs** (so you can inline small values).
 - The file entry (`path`, `kind`, `cell`, …) if you need them.
 

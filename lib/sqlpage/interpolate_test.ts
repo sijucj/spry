@@ -6,13 +6,13 @@ Deno.test("markdownLinkFactory — basics", async (t) => {
   await t.step(
     "default base: base unencoded; ONLY non-literal url parts encoded",
     () => {
-      const md = markdownLinkFactory({ url_encode: "sqlpage" }); // base = SQLPAGE_SITE_PREFIX (unencoded)
+      const md = markdownLinkFactory({ url_encode: "sqlpage" }); // base = COALESCE(SQLPAGE_SITE_PREFIX, '') (unencoded)
       const text = sqlCat`${"label"}`; // → label
       const url = sqlCat`/details?id=${"id"}`; // → ('/details?id=' || id)
 
       const got = md.link(text, url);
       const expect = "('[' || label || '](' || " +
-        "sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || " +
+        "COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || " +
         "'/details?id=' || sqlpage.url_encode(id) || ')')";
 
       assertEquals(got, expect);

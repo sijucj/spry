@@ -30,7 +30,7 @@ import { SqlPagePath } from "./content.ts";
  * expression (or properly escaped) to avoid SQL/template injection.
  */
 export const absUrlUnquoted = (path: string) =>
-  `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
+  `(COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || ${path})`;
 
 /**
  * Build a quoted SQLPage template fragment that resolves to an absolute URL string.
@@ -54,7 +54,7 @@ export const absUrlUnquoted = (path: string) =>
  * this function to avoid injection risks.
  */
 export const absUrlQuoted = (path: string) =>
-  `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
+  `(COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || '${path}')`;
 
 /**
  * Returns a SQLPage template expression that URL-encodes an absolute site-prefixed path.
@@ -70,7 +70,7 @@ export const absUrlQuoted = (path: string) =>
  *   absolute URL. The returned string is an unquoted template fragment.
  */
 export const absUrlUnquotedEncoded = (path: string) =>
-  `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${path})`;
+  `sqlpage.url_encode(COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || ${path})`;
 
 /**
  * Generates a SQL expression that constructs an absolute URL by combining the site prefix with a given path.
@@ -81,7 +81,7 @@ export const absUrlUnquotedEncoded = (path: string) =>
  *          and wraps it in a URL encoding function
  */
 export const absUrlQuotedEncoded = (path: string) =>
-  `sqlpage.url_encode(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')`;
+  `sqlpage.url_encode(COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || '${path}')`;
 
 /**
  * Build a multiline SQL string that produces breadcrumb data for a navigation UI.
@@ -333,20 +333,20 @@ export const pagination = (
  * --------------
  * markdownLinkFactory(init?: { base?: SQLFrag | false })
  *  - `base`: left **unencoded** and prefixed to all `mdLink()` results
- *     • `undefined` → defaults to `sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')`
+ *     • `undefined` → defaults to `COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '')`
  *     • `false`     → no base (use only encoded URL parts)
  *     • `SQLFrag`   → a custom base expression (verbatim)
  *
  * Usage examples (see unit tests for more)
  * ----------------------------------------
  * ```ts
- * const md = markdownLinkFactory(); // default base = env('SQLPAGE_SITE_PREFIX')
+ * const md = markdownLinkFactory(); // default base = COALESCE(env('SQLPAGE_SITE_PREFIX'), '')
  *
  * // Basic: label is an identifier; URL = literal + identifier (only id encoded)
  * const label = md.cat`${"name"}`;           // → name
  * const url   = md.cat`/p/${"id"}`;          // → ('/p/' || id)
  * md.mdLink(label, url);
- * // → ('[' || name || '](' || sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')
+ * // → ('[' || name || '](' || COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '')
  * //    || '/p/' || sqlpage.url_encode(id) || ')')
  *
  * // Custom base for all links built by this factory
@@ -375,7 +375,7 @@ export function markdownLinkFactory(
   const defaultBase = init?.base === false
     ? ""
     : init?.base === undefined
-    ? "sqlpage.environment_variable('SQLPAGE_SITE_PREFIX')"
+    ? "COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '')"
     : fragToSql(init.base);
 
   // Split top-level a || b || c (respects quotes & parentheses)

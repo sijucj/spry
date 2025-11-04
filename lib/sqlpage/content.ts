@@ -16,7 +16,7 @@ export type SqlPagePath =
   & {
     readonly path: string;
     readonly sql: string; // usually '${path}'
-    readonly absURL: () => string; // usually (sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || '${path}')
+    readonly absURL: () => string; // usually (COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || '${path}')
     readonly homePath: () => string; // usually ('${path}' || '/index.sql')
     readonly isRoute: boolean;
   }
@@ -36,7 +36,7 @@ export function sqlPagePath(candidate: string | PageRoute): SqlPagePath {
     typeof candidate === "string" ? candidate : candidate.path,
   );
   const absURL = () =>
-    `(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX') || ${sql})`;
+    `(COALESCE(sqlpage.environment_variable('SQLPAGE_SITE_PREFIX'), '') || ${sql})`;
   const homePath = () => `(${sql} || '/index.sql')`;
 
   if (typeof candidate === "string") {
