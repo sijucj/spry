@@ -37,7 +37,7 @@ export function taskExecInterpolator(
     cell: TaskCell<string>;
     ctx: TaskExecContext;
     interpResult: Awaited<ReturnType<typeof interpolateUnsafely>>;
-    execResult: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
+    execResult?: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
 
     text: () => string;
     json: () => unknown;
@@ -47,10 +47,14 @@ export function taskExecInterpolator(
     tec: Pick<TaskExecCapture, "cell" | "ctx" | "interpResult" | "execResult">,
   ) => {
     const text = () => {
-      if (Array.isArray(tec.execResult)) {
-        return tec.execResult.map((er) => td.decode(er.stdout)).join("\n");
+      if (tec.execResult) {
+        if (Array.isArray(tec.execResult)) {
+          return tec.execResult.map((er) => td.decode(er.stdout)).join("\n");
+        } else {
+          return td.decode(tec.execResult.stdout);
+        }
       } else {
-        return td.decode(tec.execResult.stdout);
+        return tec.interpResult.source;
       }
     };
     const json = () => JSON.parse(text());
@@ -182,6 +186,27 @@ export async function executeTasks<T extends Task>(
           if (isCapturable(cell)) {
             await captureTaskExec(
               prepTaskExecCapture({ cell, ctx, interpResult, execResult }),
+            );
+          }
+          return ok(ctx);
+        } else {
+          return fail(ctx, interpResult.error);
+        }
+      },
+    )
+    .handle(
+      matchTaskNature("CONTENT"),
+      async (cell, ctx) => {
+        const interpResult = await tei.interpolateUnsafely(cell, ctx);
+        if (interpResult.status) {
+          if (isCapturable(cell)) {
+            await captureTaskExec(
+              prepTaskExecCapture({
+                cell,
+                ctx,
+                interpResult,
+                /* just content, no execResult */
+              }),
             );
           }
           return ok(ctx);

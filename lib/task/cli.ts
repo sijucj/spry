@@ -17,6 +17,7 @@ export type LsTaskRow = {
   language: string;
   descr: string;
   flags: {
+    isContent: boolean;
     isInterpolatable: boolean;
     isCapturable: boolean;
   };
@@ -85,7 +86,7 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
       defaultColor: gray,
       // deno-fmt-ignore
       format: (v) =>
-          `${brightYellow(v.isInterpolatable ? "I" : " ")} ${yellow(v.isCapturable ? "C" : " ")}`,
+          `${brightYellow(v.isContent ? " " : "T")} ${brightYellow(v.isInterpolatable ? "I" : " ")} ${yellow(v.isCapturable ? "C" : " ")}`,
     };
   }
 
@@ -100,13 +101,13 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
         "",
       ),
       flags: {
-        isCapturable: t.parsedPI?.hasEitherFlagOfType("capture", "C", "boolean")
+        isContent: t.taskDirective.nature === "CONTENT",
+        isCapturable: t.parsedPI?.hasEitherFlagOfType("capture", "C")
           ? true
           : false,
-        isInterpolatable:
-          t.parsedPI?.hasEitherFlagOfType("interpolate", "I", "boolean")
-            ? true
-            : false,
+        isInterpolatable: t.parsedPI?.hasEitherFlagOfType("interpolate", "I")
+          ? true
+          : false,
       },
     } satisfies LsTaskRow;
   });

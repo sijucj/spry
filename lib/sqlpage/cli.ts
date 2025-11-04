@@ -20,7 +20,7 @@ import {
 } from "jsr:@std/path@^1";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import * as taskCLI from "../task/cli.ts";
-import { executeTasks } from "../task/mod.ts";
+import { executeTasks, TaskCell } from "../task/mod.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
 import { doctor } from "../universal/doctor.ts";
@@ -34,6 +34,7 @@ import { computeSemVerSync } from "../universal/version.ts";
 import { SidecarOpts, watcher, WatcherEvents } from "../universal/watcher.ts";
 import { sqlPageConf } from "./conf.ts";
 import {
+  isSqlPageContent,
   normalizeSPC,
   SqlPageContent,
   SqlPageFilesUpsertDialect,
@@ -644,6 +645,13 @@ export class CLI<Project> {
     await run(opts.watch);
   }
 
+  executableTasksFilter() {
+    return (t: TaskCell<string>) =>
+      t.taskDirective.nature === "TASK" ||
+      (t.taskDirective.nature === "CONTENT" &&
+        isSqlPageContent(t.taskDirective.content) == false);
+  }
+
   command(name = "spry.ts") {
     // Enum type with enum.
     const srcRelTo = new EnumType(SourceRelativeTo);
@@ -890,8 +898,8 @@ export class CLI<Project> {
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            const tasks = pp.state.directives.tasks.filter((t) =>
-              t.taskDirective.nature === "TASK"
+            const tasks = pp.state.directives.tasks.filter(
+              this.executableTasksFilter(),
             );
             if (tasks.find((t) => t.taskId() == taskId)) {
               const runbook = await executeTasks(
@@ -906,13 +914,13 @@ export class CLI<Project> {
               console.warn(`Task '${taskId}' not found.`);
             }
           })
-          .command("ls", "List SQLPage file entries")
+          .command("ls", "List task cells")
           .type("sourceRelTo", srcRelTo)
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option(
-            "-c, --content",
-            "List CONTENT cells in addition to executables",
+            "-a, --all",
+            "List all cells in addition to executables",
           )
           .action(async (opts) => {
             const pp = await this.spn.populateContent({
@@ -921,10 +929,10 @@ export class CLI<Project> {
               state: sqlPagePlaybookState(),
             });
             taskCLI.ls(
-              opts.content
+              opts.all
                 ? pp.state.directives.tasks
-                : pp.state.directives.tasks.filter((t) =>
-                  t.taskDirective.nature === "TASK"
+                : pp.state.directives.tasks.filter(
+                  this.executableTasksFilter(),
                 ),
             );
           }),
@@ -945,9 +953,7 @@ export class CLI<Project> {
             });
             const runbook = await executeTasks(
               executionPlan(
-                pp.state.directives.tasks.filter((t) =>
-                  t.taskDirective.nature === "TASK"
-                ),
+                pp.state.directives.tasks.filter(this.executableTasksFilter()),
               ),
               pp.state.directives,
               opts.verbose ? "rich" : false,
@@ -967,9 +973,7 @@ export class CLI<Project> {
               state: sqlPagePlaybookState(),
             });
             taskCLI.ls(
-              pp.state.directives.tasks.filter((t) =>
-                t.taskDirective.nature === "TASK"
-              ),
+              pp.state.directives.tasks.filter(this.executableTasksFilter()),
             );
           }),
       );

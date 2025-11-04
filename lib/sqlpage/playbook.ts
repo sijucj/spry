@@ -11,6 +11,7 @@ import {
 } from "../markdown/notebook/mod.ts";
 import {
   annotationsFactory,
+  anyNamedContentTDI,
   TaskDirectiveInspector,
   TaskDirectives,
   TasksProvenance,
@@ -336,6 +337,7 @@ export function sqlPagePlaybookState() {
   directives.use(sqlPageFileCssCellTDI());
   directives.use(sqlPageFileJsCellTDI());
   directives.use(sqlPageFileAnyCellWithSpcFlagTDI());
+  directives.use(anyNamedContentTDI()); // put this last as a "catch all"
   const routes = new RoutesBuilder();
   const spp = sqlPagePathsFactory();
   return { directives, routes, spp, partials };

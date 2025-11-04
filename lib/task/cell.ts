@@ -232,6 +232,51 @@ export function spawnableTDI<
   };
 }
 
+// use this as a "catch all" when "unknown" cells just mean "any content"
+export function anyNamedContentTDI<
+  Provenance,
+  Frontmatter extends Record<string, unknown> = Record<string, unknown>,
+  CellAttrs extends Record<string, unknown> = Record<string, unknown>,
+  I extends Issue<Provenance> = Issue<Provenance>,
+>(
+  langIfNotRegistered: (
+    cell: PlaybookCodeCell<Provenance, CellAttrs>,
+  ) => LanguageSpec = (cell) => ({
+    id: cell.language,
+    extensions: [
+      cell.language.startsWith(".") ? cell.language : "." + cell.language,
+    ],
+    comment: { line: [], block: [] },
+  }),
+): TaskDirectiveInspector<Provenance, Frontmatter, CellAttrs, I> {
+  return ({ cell }) => {
+    const language =
+      languageRegistry.values().find((lang) =>
+        lang.id == cell.language ||
+        lang.aliases?.find((a) => a == cell.language)
+      ) ?? langIfNotRegistered(cell);
+    if (!language) return false;
+    const pi = cell.parsedPI;
+    if (!pi || !pi.firstToken) return false;
+    return {
+      nature: "CONTENT",
+      identity: pi.firstToken,
+      source: cell.source,
+      language,
+      deps: pi
+        ? "dep" in pi.flags
+          ? (typeof pi.flags.dep === "boolean"
+            ? undefined
+            : typeof pi.flags.dep === "string"
+            ? [pi.flags.dep]
+            : pi.flags.dep)
+          : undefined
+        : undefined,
+      content: {},
+    };
+  };
+}
+
 /**
  * A registry/dispatcher that inspects Markdown playbook code cells and turns them
  * into executable task directives. It aggregates issues, collects discovered tasks,
