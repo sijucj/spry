@@ -45,15 +45,16 @@ Recommended practice is to keep these values in a local, directory-scoped enviro
 
 POSIX-style example (bash/zsh):
 
-```bash prepare-env --descr "Generate a default .envrc file"
-#!/usr/bin/env -S bash
-cat > .envrc <<'EOF'
+```bash prepare-env -C .envrc --descr "Generate a default .envrc file"
+#!/usr/bin/env -S tail -n +2
 export SPRY_DB="sqlite://scf-2025.3.sqlite.db?mode=rwc"
 export PORT=9227
-EOF
+```
 
-# Add to .gitignore if not already present
-grep -qxF '.envrc' .gitignore || printf '\n.envrc\n' >> .gitignore
+```bash show-env -I --dep prepare-env --descr "Show captured.envrc file"
+#!/usr/bin/env -S tail -n +2
+# Here's what was captured:
+${captured[".envrc"].text()}
 ```
 
 Then run `direnv allow` in this project directory to load the `.envrc` into your shell environment. direnv will evaluate `.envrc` only after you explicitly allow it.
@@ -115,7 +116,7 @@ If you're running SQLPage in another terminal window, use:
 After development is complete, the `dev-src.auto` can be removed and
 single-database deployment can be used:
 
-```bash deploy --descr "Generate sqlpage_files table upsert SQL and push them to SQLite"
+```bash deploy -C --descr "Generate sqlpage_files table upsert SQL and push them to SQLite"
 rm -rf dev-src.auto
 ./spry.ts spc --package --conf sqlpage/sqlpage.json | sqlite3 scf-2025.3.sqlite.db
 ```
@@ -160,7 +161,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${path}.auto
 SET page_title  = json_extract($resource_json, '$.route.caption');
 SET page_path = json_extract($resource_json, '$.route.path');
 
-${ctx.breadcrumbsSQL("$page_path","$page_title")}
+${ctx.breadcrumbs()}
 
 -- END: PARTIAL global-layout.sql
 -- this is the `${cell.info}` cell on line ${cell.startLine}
