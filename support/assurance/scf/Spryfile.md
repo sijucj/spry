@@ -45,10 +45,15 @@ Recommended practice is to keep these values in a local, directory-scoped enviro
 
 POSIX-style example (bash/zsh):
 
-```sh
-# .envrc (bash/zsh)
+```bash prepare-env --descr "Generate a default .envrc file"
+#!/usr/bin/env -S bash
+cat > .envrc <<'EOF'
 export SPRY_DB="sqlite://scf-2025.3.sqlite.db?mode=rwc"
 export PORT=9227
+EOF
+
+# Add to .gitignore if not already present
+grep -qxF '.envrc' .gitignore || printf '\n.envrc\n' >> .gitignore
 ```
 
 Then run `direnv allow` in this project directory to load the `.envrc` into your shell environment. direnv will evaluate `.envrc` only after you explicitly allow it.
