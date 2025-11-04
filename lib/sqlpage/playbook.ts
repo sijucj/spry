@@ -397,7 +397,7 @@ export function sqlPageInterpolator<Project>(project: Project) {
       absUrlUnquoted: interp.absUrlUnquoted,
       absUrlUnquotedEncoded: interp.absUrlUnquotedEncoded,
       absUrlQuotedEncoded: interp.absUrlQuotedEncoded,
-      breadcrumbsSQL: interp.breadcrumbsSQL,
+      breadcrumbs: interp.breadcrumbs,
       sitePrefixed: interp.absUrlQuoted,
       md: markdownLinkFactory({ url_encode: "replace" }),
       rawSQL,

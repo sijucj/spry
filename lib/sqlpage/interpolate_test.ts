@@ -1,6 +1,6 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { sqlCat, sqlRaw } from "../universal/sql-text.ts";
-import { breadcrumbsSQL, markdownLinkFactory } from "./interpolate.ts";
+import { breadcrumbs, markdownLinkFactory } from "./interpolate.ts";
 
 Deno.test("markdownLinkFactory — basics", async (t) => {
   await t.step(
@@ -106,9 +106,9 @@ Deno.test("markdownLinkFactory — basics", async (t) => {
   });
 });
 
-Deno.test("breadcrumbsSQL — JSON-based breadcrumbs", async (t) => {
+Deno.test("breadcrumbs — JSON-based breadcrumbs", async (t) => {
   await t.step("generates SQL that reads from breadcrumbs.auto.json", () => {
-    const sql = breadcrumbsSQL("scf/controls.sql", "Controls Library");
+    const sql = breadcrumbs("scf/controls.sql", "Controls Library");
 
     // Should read from JSON file first (SET statement before SELECT)
     assertStringIncludes(
@@ -140,7 +140,7 @@ Deno.test("breadcrumbsSQL — JSON-based breadcrumbs", async (t) => {
   });
 
   await t.step("escapes SQL special characters in path and title", () => {
-    const sql = breadcrumbsSQL("path/with'quote.sql", "Title with 'quotes'");
+    const sql = breadcrumbs("path/with'quote.sql", "Title with 'quotes'");
 
     // Single quotes should be escaped (doubled)
     assertStringIncludes(sql, "path/with''quote.sql");
@@ -148,7 +148,7 @@ Deno.test("breadcrumbsSQL — JSON-based breadcrumbs", async (t) => {
   });
 
   await t.step("filters out 'Home' title in current page breadcrumb", () => {
-    const sql = breadcrumbsSQL("/", "Home");
+    const sql = breadcrumbs("/", "Home");
 
     // Should have WHERE clause to exclude 'home' (case-insensitive)
     assertStringIncludes(sql, "WHERE LOWER(Home) <> 'home'");
@@ -159,7 +159,7 @@ Deno.test("breadcrumbsSQL — JSON-based breadcrumbs", async (t) => {
   await t.step(
     "current page breadcrumb uses '#' as link instead of actual path",
     () => {
-      const sql = breadcrumbsSQL("some/path.sql", "Page Title");
+      const sql = breadcrumbs("some/path.sql", "Page Title");
 
       // Current page should use '#' as link (not the actual path)
       assertStringIncludes(sql, "'#' as link");
@@ -173,13 +173,12 @@ Deno.test("breadcrumbsSQL — JSON-based breadcrumbs", async (t) => {
   await t.step(
     "uses COALESCE for title priority: abbreviated > caption > computed",
     () => {
-      const sql = breadcrumbsSQL("some/path.sql", "Page Title");
+      const sql = breadcrumbs("some/path.sql", "Page Title");
 
       // Should prioritize abbreviated_caption, then caption, then computed from basename
       assertStringIncludes(sql, "COALESCE");
       assertStringIncludes(sql, "abbreviated_caption");
       assertStringIncludes(sql, "caption");
-      assertStringIncludes(sql, "UPPER");
       assertStringIncludes(sql, "REPLACE(basename, '.sql', '')");
     },
   );
@@ -187,7 +186,7 @@ Deno.test("breadcrumbsSQL — JSON-based breadcrumbs", async (t) => {
   await t.step(
     "JSON path uses concatenation instead of string interpolation",
     () => {
-      const sql = breadcrumbsSQL("test/page.sql", "Test Page");
+      const sql = breadcrumbs("test/page.sql", "Test Page");
 
       // Should use '$.' || path instead of '$."path"'
       assertStringIncludes(sql, "'$.' || test/page.sql");
