@@ -633,7 +633,7 @@ export function parsedProcessingInstructions<
     F extends Record<string, unknown> = typeof flags,
   >(
     key: K,
-    expectedType: Expected,
+    expectedType?: Expected,
     flagsParam: F = flags as F,
   ): flagsParam is
     & F
@@ -668,7 +668,7 @@ export function parsedProcessingInstructions<
   >(
     key1: K1,
     key2: K2,
-    expectedType: Expected,
+    expectedType?: Expected,
     flagsParam: F = flags as F,
   ): flagsParam is
     & F
