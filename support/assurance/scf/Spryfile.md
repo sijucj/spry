@@ -160,7 +160,7 @@ SET resource_json = sqlpage.read_file_as_text('spry.d/auto/resource/${path}.auto
 SET page_title  = json_extract($resource_json, '$.route.caption');
 SET page_path = json_extract($resource_json, '$.route.path');
 
-/*${ctx.breadcrumbsSQL("$page_path","$page_title")}*/
+${ctx.breadcrumbsSQL("$page_path","$page_title")}
 
 -- END: PARTIAL global-layout.sql
 -- this is the `${cell.info}` cell on line ${cell.startLine}
