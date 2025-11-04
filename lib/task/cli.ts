@@ -16,6 +16,10 @@ export type LsTaskRow = {
   provenance: string;
   language: string;
   descr: string;
+  flags: {
+    isInterpolatable: boolean;
+    isCapturable: boolean;
+  };
   deps?: string;
   error?: unknown;
 };
@@ -73,6 +77,18 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
     };
   }
 
+  function lsFlagsField<Row extends LsTaskRow>():
+    | Partial<ColumnDef<Row, Row["flags"]>>
+    | undefined {
+    return {
+      header: "Flags",
+      defaultColor: gray,
+      // deno-fmt-ignore
+      format: (v) =>
+          `${brightYellow(v.isInterpolatable ? "I" : " ")} ${yellow(v.isCapturable ? "C" : " ")}`,
+    };
+  }
+
   const tasksList = tasks.map((t) => {
     return {
       name: t.taskId(),
@@ -83,13 +99,31 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
         "undefined",
         "",
       ),
+      flags: {
+        isCapturable: t.parsedPI?.hasEitherFlagOfType("capture", "C", "boolean")
+          ? true
+          : false,
+        isInterpolatable:
+          t.parsedPI?.hasEitherFlagOfType("interpolate", "I", "boolean")
+            ? true
+            : false,
+      },
     } satisfies LsTaskRow;
   });
 
   await new ListerBuilder<LsTaskRow>()
-    .declareColumns("name", "provenance", "language", "deps", "descr", "error")
+    .declareColumns(
+      "name",
+      "provenance",
+      "language",
+      "deps",
+      "descr",
+      "error",
+      "flags",
+    )
     .from(tasksList)
     .field("name", "name", lsTaskIdField())
+    .field("flags", "flags", lsFlagsField())
     .field("language", "language", lsLanguageField())
     .field("deps", "deps", { header: "Deps" })
     .field("descr", "descr", { header: "Description" })
