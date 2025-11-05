@@ -129,8 +129,7 @@ export async function ls<Provenance>(tasks: TaskCell<Provenance>[]) {
     .field("deps", "deps", { header: "Deps" })
     .field("descr", "descr", { header: "Description" })
     .field("error", "error", { header: "Err" })
-    .field("provenance", "provenance", lsColorPathField("Provenance"))
-    .sortBy("name").sortDir("asc")
+    .field("provenance", "provenance", lsColorPathField("Provenance"))    
     .build()
     .ls(true);
 }
