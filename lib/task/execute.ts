@@ -43,7 +43,12 @@ export const typicalOnCapture = async (
   capturedTaskExecs: Record<string, TaskExecCapture>,
 ) => {
   if (ci.startsWith("./")) {
-    await Deno.writeTextFile(ci, tec.text());
+    const content = tec.text();
+    // Ensure content ends with a newline to prevent issues when appending
+    const contentWithNewline = content.endsWith("\n")
+      ? content
+      : content + "\n";
+    await Deno.writeTextFile(ci, contentWithNewline);
   } else {
     capturedTaskExecs[ci] = tec;
   }
@@ -55,7 +60,12 @@ export const gitignorableOnCapture = async (
   capturedTaskExecs: Record<string, TaskExecCapture>,
 ) => {
   if (ci.startsWith("./")) {
-    await Deno.writeTextFile(ci, tec.text());
+    const content = tec.text();
+    // Ensure content ends with a newline to prevent issues when appending
+    const contentWithNewline = content.endsWith("\n")
+      ? content
+      : content + "\n";
+    await Deno.writeTextFile(ci, contentWithNewline);
     const flags = tec.cell.parsedPI?.flags;
     if (flags && hasFlagOfType(flags, "gitignore")) {
       const gi = ci.slice("./".length);
