@@ -16,6 +16,7 @@ import {
   TaskExecutorBuilder,
   verboseInfoTaskEventBus,
 } from "../universal/task.ts";
+import { ensureTrailingNewline } from "../universal/text-utils.ts";
 import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 import { matchTaskNature, TaskCell, TaskDirectives } from "./cell.ts";
 import { markdownShellEventBus } from "./mdbus.ts";
@@ -43,12 +44,7 @@ export const typicalOnCapture = async (
   capturedTaskExecs: Record<string, TaskExecCapture>,
 ) => {
   if (ci.startsWith("./")) {
-    const content = tec.text();
-    // Ensure content ends with a newline to prevent issues when appending
-    const contentWithNewline = content.endsWith("\n")
-      ? content
-      : content + "\n";
-    await Deno.writeTextFile(ci, contentWithNewline);
+    await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
   } else {
     capturedTaskExecs[ci] = tec;
   }
@@ -60,12 +56,7 @@ export const gitignorableOnCapture = async (
   capturedTaskExecs: Record<string, TaskExecCapture>,
 ) => {
   if (ci.startsWith("./")) {
-    const content = tec.text();
-    // Ensure content ends with a newline to prevent issues when appending
-    const contentWithNewline = content.endsWith("\n")
-      ? content
-      : content + "\n";
-    await Deno.writeTextFile(ci, contentWithNewline);
+    await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
     const flags = tec.cell.parsedPI?.flags;
     if (flags && hasFlagOfType(flags, "gitignore")) {
       const gi = ci.slice("./".length);
