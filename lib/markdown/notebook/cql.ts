@@ -55,8 +55,8 @@
  *      has(pi.kind) && pi.kind:"virtual" && !(filename~".draft.")
  *
  * API
- *  - compileCqlMini(query: string): (cells: CodeCell[]) => CodeCell[]
- *      Compiles once, then reuse the returned function to filter any CodeCell array.
+ *  - compileCqlMini<T = CodeCell>(query: string): (cells: T[]) => T[]
+ *      Compiles once, then reuse the returned function to filter any T[] where T extends CodeCell.
  *      Throws on syntax errors; otherwise evaluates missing paths to undefined.
  *
  * Path resolution rules
@@ -77,10 +77,10 @@
 
 import * as nb from "./notebook.ts";
 
+// Base CodeCell type from notebook; used as the default constraint.
 // deno-lint-ignore no-explicit-any
-type CodeCell = nb.CodeCell<any>;
+export type CodeCell = nb.CodeCell<any>;
 
-// ---------- Small runtime helpers used by emitted predicates ----------
 type AnyRec = Record<string, unknown>;
 const asRec = (x: unknown): AnyRec => (x as AnyRec) ?? {};
 
@@ -125,22 +125,24 @@ function basename(p?: unknown): string {
   return i >= 0 ? s.slice(i + 1) : s;
 }
 
-// Resolve dotted/ indexed paths with CodeCell-aware aliases.
-// Supports: a.b.c and arr[0]; returns undefined if missing.
-function getPath(c: CodeCell, path: string): unknown {
+// ---------- Path + field helpers (generic over T extends CodeCell) ----------
+
+function getPath<T extends CodeCell>(c: T, path: string): unknown {
   // Aliases demanded by the DSL
   if (path === "lang") return (c as unknown as AnyRec)["language"];
   if (path === "text") return (c as unknown as AnyRec)["source"];
-  if (path === "path") return asRec(c.provenance)["path"];
+  if (path === "path") {
+    return asRec((c as unknown as AnyRec)["provenance"])["path"];
+  }
   if (path === "filename") {
-    const pv = asRec(c.provenance);
+    const pv = asRec((c as unknown as AnyRec)["provenance"]);
     return (pv["filename"] as unknown) ?? basename(pv["path"]);
   }
   if (path === "tags") {
     // Prefer direct tags if present, else attrs.tags
     const direct = (c as unknown as AnyRec)["tags"];
     if (Array.isArray(direct)) return direct;
-    const fromAttrs = asRec(c.attrs)["tags"];
+    const fromAttrs = asRec((c as unknown as AnyRec)["attrs"])["tags"];
     return Array.isArray(fromAttrs) ? fromAttrs : undefined;
   }
   if (path === "flags") {
@@ -191,24 +193,24 @@ function LEN(v: unknown): number {
   return 0;
 }
 
-function tagHas(c: CodeCell, t: string): boolean {
+function tagHas<T extends CodeCell>(c: T, t: string): boolean {
   const tags = getPath(c, "tags");
   return Array.isArray(tags) ? tags.includes(t) : false;
 }
 
-function flagTrue(c: CodeCell, f: string): boolean {
+function flagTrue<T extends CodeCell>(c: T, f: string): boolean {
   const pi = asRec((c as unknown as AnyRec)["parsedPI"]);
   const flags = asRec(pi["flags"]);
   return flags?.[f] === true;
 }
 
-function attrEq(c: CodeCell, k: string, val: unknown): boolean {
-  const a = asRec(c.attrs);
+function attrEq<T extends CodeCell>(c: T, k: string, val: unknown): boolean {
+  const a = asRec((c as unknown as AnyRec)["attrs"]);
   return String(a?.[k]) === String(val);
 }
 
-function attrStr(c: CodeCell, k: string): string {
-  const a = asRec(c.attrs);
+function attrStr<T extends CodeCell>(c: T, k: string): string {
+  const a = asRec((c as unknown as AnyRec)["attrs"]);
   return String(a?.[k]);
 }
 
@@ -427,7 +429,6 @@ class Parser {
     throw new Error("Unexpected token in expression");
   }
 
-  // inside class Parser
   private led(op: string, left: string, lbp: number): string {
     if (op === "&&" || op === "||") {
       const right = this.parseExpr(lbp);
@@ -511,31 +512,29 @@ class Parser {
 }
 
 /**
- * Compile a CQL-mini predicate into a reusable `CodeCell[]` filter.
+ * Compile a CQL-mini predicate into a reusable `T[]` filter.
  *
  * @param query CQL-mini string (see module docs for grammar, operators, helpers).
- * @returns A function that filters a `CodeCell[]` using the compiled predicate.
+ * @returns A function that filters a `T[]` using the compiled predicate.
  *
  * @example
- * import { compileCqlMini } from "./cql.ts";
+ * import { compileCqlMini, type CodeCell } from "./cql.ts";
  *
+ * // Default: T = CodeCell
  * const q = 'lang:"sql" && path~glob("**\/migrations/*.sql") && text~/CREATE\\s+TABLE/i';
  * const filterMigrations = compileCqlMini(q);
  * const results = filterMigrations(cells);
  *
  * @example
- * // Flags and tags:
- * const q = 'tag("example") && flag("capture")';
- * const onlyCapturedExamples = compileCqlMini(q);
- *
- * @example
- * // Attributes and PI:
- * const q = 'attr("env")=="prod" && pi.kind:"virtual"';
- * const prodVirtual = compileCqlMini(q);
+ * // With a subclass/subinterface of CodeCell:
+ * interface MyCell extends CodeCell { owner?: string }
+ * const q = 'attr("env")=="prod" && lang:"sql"';
+ * const filterProdSql = compileCqlMini<MyCell>(q);
+ * const prodSql: MyCell[] = filterProdSql(myCells);
  */
-export function compileCqlMini(
+export function compileCqlMini<T extends CodeCell = CodeCell>(
   query: string,
-): (cells: CodeCell[]) => CodeCell[] {
+): (cells: T[]) => T[] {
   const toks = tokenize(
     // Allow the sugar path~glob("..."): rewrite the RHS token to distinguish
     query.replace(
@@ -548,18 +547,18 @@ export function compileCqlMini(
 
   // Declare the exact signature we’ll pass at callsite
   type PredFn = (
-    c: CodeCell,
+    c: T,
     GET: (field: string) => unknown,
     toStrFn: (x: unknown) => string,
     GLOBfn: (p: string) => RegExp,
     basenameFn: (p?: unknown) => string,
-    getPathFn: (c: CodeCell, path: string) => unknown,
+    getPathFn: (c: T, path: string) => unknown,
     hasValueFn: (v: unknown) => boolean,
     LENfn: (v: unknown) => number,
-    tagHasFn: (c: CodeCell, t: string) => boolean,
-    flagTrueFn: (c: CodeCell, f: string) => boolean,
-    attrEqFn: (c: CodeCell, k: string, v: unknown) => boolean,
-    attrStrFn: (c: CodeCell, k: string) => string,
+    tagHasFn: (c: T, t: string) => boolean,
+    flagTrueFn: (c: T, f: string) => boolean,
+    attrEqFn: (c: T, k: string, v: unknown) => boolean,
+    attrStrFn: (c: T, k: string) => string,
   ) => boolean;
 
   const pred = new Function(
@@ -578,7 +577,7 @@ export function compileCqlMini(
     `return (${jsExpr});`,
   ) as PredFn;
 
-  return (cells: CodeCell[]) =>
+  return (cells: T[]) =>
     cells.filter((c) =>
       pred(
         c,
