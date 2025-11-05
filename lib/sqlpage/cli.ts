@@ -19,6 +19,7 @@ import {
   relative,
 } from "jsr:@std/path@^1";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
+import { compileCqlMini } from "../markdown/notebook/cql.ts";
 import * as taskCLI from "../task/cli.ts";
 import { execTasksState, gitignorableOnCapture } from "../task/execute.ts";
 import { executeTasks, TaskCell } from "../task/mod.ts";
@@ -928,19 +929,28 @@ export class CLI<Project> {
             "-a, --all",
             "List all cells in addition to executables",
           )
+          .option(
+            "-s, --select <cql:string>",
+            "Use Cell Query Language (CQL) to select cells to list",
+          )
           .action(async (opts) => {
             const pp = await this.spn.populateContent({
               mdSources: opts.md.map((f) => String(f)),
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            taskCLI.ls(
-              opts.all
-                ? pp.state.directives.tasks
-                : pp.state.directives.tasks.filter(
-                  this.executableTasksFilter(),
-                ),
-            );
+            if (opts.select) {
+              const filterCQL = compileCqlMini<TaskCell<string>>(opts.select);
+              taskCLI.ls(filterCQL(pp.state.directives.tasks));
+            } else {
+              taskCLI.ls(
+                opts.all
+                  ? pp.state.directives.tasks
+                  : pp.state.directives.tasks.filter(
+                    this.executableTasksFilter(),
+                  ),
+              );
+            }
           }),
       ).command(
         "runbook",
@@ -951,16 +961,27 @@ export class CLI<Project> {
           .option(...srcRelToOpt)
           .option("--verbose", "Emit information messages verbosely")
           .option("--summarize", "Emit summary after execution in JSON")
+          .option(
+            "-s, --select <cql:string>",
+            "Use Cell Query Language (CQL) to select cells to run as part of runbook",
+          )
           .action(async (opts) => {
             const pp = await this.spn.populateContent({
               mdSources: opts.md.map((f) => String(f)),
               srcRelTo: opts.srcRelTo,
               state: sqlPagePlaybookState(),
             });
-            const runbook = await executeTasks(
-              executionPlan(
+            let plan: ReturnType<typeof executionPlan>;
+            if (opts.select) {
+              const filterCQL = compileCqlMini<TaskCell<string>>(opts.select);
+              plan = executionPlan(filterCQL(pp.state.directives.tasks));
+            } else {
+              plan = executionPlan(
                 pp.state.directives.tasks.filter(this.executableTasksFilter()),
-              ),
+              );
+            }
+            const runbook = await executeTasks(
+              plan,
               execTasksState(pp.state.directives, {
                 onCapture: gitignorableOnCapture,
               }),
