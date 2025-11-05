@@ -1,3 +1,5 @@
+import { hasFlagOfType } from "../universal/cline.ts";
+import { gitignore } from "../universal/gitignore.ts";
 import { unsafeInterpolator } from "../universal/interpolate.ts";
 import {
   errorOnlyShellEventBus,
@@ -23,25 +25,81 @@ type Any = any;
 
 export type TaskExecContext = { runId: string };
 
-export function taskExecInterpolator(
+export type TaskExecCapture = {
+  cell: TaskCell<string>;
+  ctx: TaskExecContext;
+  interpResult: Awaited<
+    ReturnType<ReturnType<typeof execTasksState>["interpolateUnsafely"]>
+  >;
+  execResult?: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
+
+  text: () => string;
+  json: () => unknown;
+};
+
+export const typicalOnCapture = async (
+  ci: string,
+  tec: TaskExecCapture,
+  capturedTaskExecs: Record<string, TaskExecCapture>,
+) => {
+  if (ci.startsWith("./")) {
+    await Deno.writeTextFile(ci, tec.text());
+  } else {
+    capturedTaskExecs[ci] = tec;
+  }
+};
+
+export const gitignorableOnCapture = async (
+  ci: string,
+  tec: TaskExecCapture,
+  capturedTaskExecs: Record<string, TaskExecCapture>,
+) => {
+  if (ci.startsWith("./")) {
+    await Deno.writeTextFile(ci, tec.text());
+    const flags = tec.cell.parsedPI?.flags;
+    if (flags && hasFlagOfType(flags, "gitignore")) {
+      const gi = ci.slice("./".length);
+      console.log({ gi, flags });
+      if (hasFlagOfType(flags, "gitignore", "string")) {
+        await gitignore(gi, flags.gitignore);
+      } else {
+        await gitignore(gi);
+      }
+    }
+  } else {
+    capturedTaskExecs[ci] = tec;
+  }
+};
+
+export function execTasksState(
   directives: TaskDirectives<Any, Any, Any, Any>,
-  unsafeInterp = unsafeInterpolator({ directives, safeJsonStringify }),
+  opts?: {
+    unsafeInterp?: ReturnType<typeof unsafeInterpolator>;
+    onCapture?: (
+      ci: string,
+      tec: TaskExecCapture,
+      capturedTaskExecs: Record<string, TaskExecCapture>,
+    ) => void | Promise<void>;
+  },
 ) {
+  const capturedTaskExecs = {} as Record<string, TaskExecCapture>;
+  const defaults: Required<typeof opts> = {
+    unsafeInterp: unsafeInterpolator({
+      directives,
+      safeJsonStringify,
+      capturedTaskExecs,
+    }),
+    onCapture: typicalOnCapture,
+  };
+  const {
+    unsafeInterp = defaults.unsafeInterp,
+    onCapture = defaults.onCapture,
+  } = opts ?? {};
   const td = new TextDecoder();
 
   const isCapturable = (cell: TaskCell<string>) =>
     cell.parsedPI &&
     ("capture" in cell.parsedPI.flags || "C" in cell.parsedPI.flags);
-
-  type TaskExecCapture = {
-    cell: TaskCell<string>;
-    ctx: TaskExecContext;
-    interpResult: Awaited<ReturnType<typeof interpolateUnsafely>>;
-    execResult?: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
-
-    text: () => string;
-    json: () => unknown;
-  };
 
   const prepTaskExecCapture = (
     tec: Pick<TaskExecCapture, "cell" | "ctx" | "interpResult" | "execResult">,
@@ -61,7 +119,6 @@ export function taskExecInterpolator(
     return { ...tec, text, json } satisfies TaskExecCapture;
   };
 
-  const capturedTaskExecs = {} as Record<string, TaskExecCapture>;
   const captureTaskExec = async (cap: TaskExecCapture) => {
     const { cell: { parsedPI } } = cap;
     const captureFlags = [
@@ -78,11 +135,7 @@ export function taskExecInterpolator(
     ).filter((v) => v !== undefined);
 
     for (const ci of captureInstructions) {
-      if (ci.startsWith("./")) {
-        await Deno.writeTextFile(ci, cap.text());
-      } else {
-        capturedTaskExecs[ci] = cap;
-      }
+      await onCapture(ci, cap, capturedTaskExecs);
     }
   };
 
@@ -148,6 +201,7 @@ export function taskExecInterpolator(
 
   return {
     isCapturable,
+    onCapture,
     unsafeInterp,
     interpolateUnsafely,
     capturedTaskExecs,
@@ -156,16 +210,20 @@ export function taskExecInterpolator(
   };
 }
 
+export type ExecTasksState = ReturnType<typeof execTasksState>;
+
 export async function executeTasks<T extends Task>(
   plan: TaskExecutionPlan<T>,
-  directives: TaskDirectives<Any, Any, Any, Any>,
-  verbose?:
-    | false
-    | Parameters<typeof verboseInfoShellEventBus>[0]["style"]
-    | ReturnType<typeof markdownShellEventBus>,
-  summarize?: boolean,
+  tei: ExecTasksState,
+  opts?: {
+    verbose?:
+      | false
+      | Parameters<typeof verboseInfoShellEventBus>[0]["style"]
+      | ReturnType<typeof markdownShellEventBus>;
+    summarize?: boolean;
+  },
 ) {
-  const tei = taskExecInterpolator(directives);
+  const { verbose, summarize } = opts ?? {};
   const { isCapturable, captureTaskExec, prepTaskExecCapture } = tei;
 
   const sh = shell({
