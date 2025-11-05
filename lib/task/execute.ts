@@ -1,25 +1,20 @@
 import { hasFlagOfType } from "../universal/cline.ts";
+import { eventBus } from "../universal/event-bus.ts";
 import { gitignore } from "../universal/gitignore.ts";
 import { unsafeInterpolator } from "../universal/interpolate.ts";
+import { shell, ShellBusEvents } from "../universal/shell.ts";
 import {
-  errorOnlyShellEventBus,
-  shell,
-  verboseInfoShellEventBus,
-} from "../universal/shell.ts";
-import {
-  errorOnlyTaskEventBus,
   executeDAG,
   fail,
   ok,
   Task,
+  TaskExecEventMap,
   TaskExecutionPlan,
   TaskExecutorBuilder,
-  verboseInfoTaskEventBus,
 } from "../universal/task.ts";
 import { ensureTrailingNewline } from "../universal/text-utils.ts";
 import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 import { matchTaskNature, TaskCell, TaskDirectives } from "./cell.ts";
-import { markdownShellEventBus } from "./mdbus.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -60,7 +55,6 @@ export const gitignorableOnCapture = async (
     const flags = tec.cell.parsedPI?.flags;
     if (flags && hasFlagOfType(flags, "gitignore")) {
       const gi = ci.slice("./".length);
-      console.log({ gi, flags });
       if (hasFlagOfType(flags, "gitignore", "string")) {
         await gitignore(gi, flags.gitignore);
       } else {
@@ -213,29 +207,21 @@ export function execTasksState(
 
 export type ExecTasksState = ReturnType<typeof execTasksState>;
 
-export async function executeTasks<T extends Task>(
+export async function executeTasks<
+  T extends Task,
+  Context extends TaskExecContext = TaskExecContext,
+>(
   plan: TaskExecutionPlan<T>,
   tei: ExecTasksState,
   opts?: {
-    verbose?:
-      | false
-      | Parameters<typeof verboseInfoShellEventBus>[0]["style"]
-      | ReturnType<typeof markdownShellEventBus>;
-    summarize?: boolean;
+    shellBus?: ReturnType<typeof eventBus<ShellBusEvents>>;
+    tasksBus?: ReturnType<typeof eventBus<TaskExecEventMap<T, Context>>>;
   },
 ) {
-  const { verbose, summarize } = opts ?? {};
   const { isCapturable, captureTaskExec, prepTaskExecCapture } = tei;
 
-  const sh = shell({
-    bus: verbose
-      ? typeof verbose === "string"
-        ? verboseInfoShellEventBus({ style: verbose })
-        : verbose.bus
-      : errorOnlyShellEventBus({ style: verbose ? verbose : "rich" }),
-  });
-
-  const exec = new TaskExecutorBuilder<Task, TaskExecContext>()
+  const sh = shell({ bus: opts?.shellBus });
+  const exec = new TaskExecutorBuilder<Task, Context>()
     .handle(
       matchTaskNature("TASK"),
       async (cell, ctx) => {
@@ -276,13 +262,5 @@ export async function executeTasks<T extends Task>(
     )
     .build();
 
-  const summary = await executeDAG(plan, exec, {
-    eventBus: verbose
-      ? verboseInfoTaskEventBus<T, TaskExecContext>({ style: "rich" })
-      : errorOnlyTaskEventBus<T, TaskExecContext>({
-        style: verbose ? verbose : "rich",
-      }),
-  });
-  if (summarize) console.dir({ summary });
-  return summary;
+  return await executeDAG(plan, exec, { eventBus: opts?.tasksBus });
 }

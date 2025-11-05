@@ -22,7 +22,8 @@ import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import { compileCqlMini } from "../markdown/notebook/cql.ts";
 import * as taskCLI from "../task/cli.ts";
 import { execTasksState, gitignorableOnCapture } from "../task/execute.ts";
-import { executeTasks, TaskCell } from "../task/mod.ts";
+import { markdownShellEventBus } from "../task/mdbus.ts";
+import { executeTasks, TaskCell, TaskExecContext } from "../task/mod.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
 import { doctor } from "../universal/doctor.ts";
@@ -30,7 +31,17 @@ import { eventBus } from "../universal/event-bus.ts";
 import { gitignore } from "../universal/gitignore.ts";
 import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../universal/lister-tree-tui.ts";
-import { executionPlan, executionSubplan } from "../universal/task.ts";
+import {
+  errorOnlyShellEventBus,
+  verboseInfoShellEventBus,
+} from "../universal/shell.ts";
+import {
+  errorOnlyTaskEventBus,
+  executionPlan,
+  executionSubplan,
+  Task,
+  verboseInfoTaskEventBus,
+} from "../universal/task.ts";
 import { dedentIfFirstLineBlank } from "../universal/tmpl-literal-aide.ts";
 import { computeSemVerSync } from "../universal/version.ts";
 import { SidecarOpts, watcher, WatcherEvents } from "../universal/watcher.ts";
@@ -62,6 +73,49 @@ export type LsCommandRow = SqlPageContent & {
   };
   error?: unknown;
 };
+
+export enum VerboseStyle {
+  Plain = "plain",
+  Rich = "rich",
+  Markdown = "markdown",
+}
+
+export function informationalEventBuses<T extends Task, Context>(
+  verbose?: VerboseStyle,
+) {
+  if (!verbose) {
+    return {
+      shellEventBus: errorOnlyShellEventBus({ style: "rich" }),
+      tasksEventBus: errorOnlyTaskEventBus<T, Context>({ style: "rich" }),
+    };
+  }
+
+  switch (verbose) {
+    case VerboseStyle.Plain:
+      return {
+        shellEventBus: verboseInfoShellEventBus({ style: "plain" }),
+        tasksEventBus: verboseInfoTaskEventBus<T, Context>({ style: "plain" }),
+      };
+
+    case VerboseStyle.Rich:
+      return {
+        shellEventBus: verboseInfoShellEventBus({ style: "rich" }),
+        tasksEventBus: verboseInfoTaskEventBus<T, Context>({ style: "rich" }),
+      };
+
+    case VerboseStyle.Markdown: {
+      const md = new MarkdownDoc();
+      const mdSEB = markdownShellEventBus({ md });
+      return {
+        mdSEB,
+        shellEventBus: mdSEB.bus,
+        tasksEventBus: undefined, // TODO: add tasks to markdown
+        md,
+        emit: () => console.log(md.write()),
+      };
+    }
+  }
+}
 
 const flagsFrom = (spc: SqlPageContent) => {
   switch (spc.kind) {
@@ -658,9 +712,9 @@ export class CLI<Project> {
   }
 
   command(name = "spry.ts") {
-    // Enum type with enum.
     const srcRelTo = new EnumType(SourceRelativeTo);
     const dialect = new EnumType(SqlPageFilesUpsertDialect);
+    const verboseStyle = new EnumType(VerboseStyle);
     const mdOpt = [
       "-m, --md <mdPath:string>",
       "Use the given Markdown source(s), multiple allowed",
@@ -676,6 +730,10 @@ export class CLI<Project> {
       {
         default: SourceRelativeTo.LocalFs,
       },
+    ] as const;
+    const verboseOpt = [
+      "--verbose <style:verboseStyle>",
+      "Emit information messages verbosely",
     ] as const;
 
     return new Command()
@@ -892,10 +950,11 @@ export class CLI<Project> {
             "Spry Task CLI (execute a specific cell and dependencies)",
           )
           .type("sourceRelTo", srcRelTo)
+          .type("verboseStyle", verboseStyle)
           .arguments("<taskId>")
           .option(...mdOpt)
           .option(...srcRelToOpt)
-          .option("--verbose", "Emit information messages")
+          .option(...verboseOpt)
           .option("--summarize", "Emit summary after execution in JSON")
           .action(async (opts, taskId) => {
             const pp = await this.spn.populateContent({
@@ -907,13 +966,18 @@ export class CLI<Project> {
               this.executableTasksFilter(),
             );
             if (tasks.find((t) => t.taskId() == taskId)) {
+              const ieb = informationalEventBuses<
+                TaskCell<string>,
+                TaskExecContext
+              >(opts?.verbose);
               const runbook = await executeTasks(
                 executionSubplan(executionPlan(tasks), [taskId]),
                 execTasksState(pp.state.directives, {
                   onCapture: gitignorableOnCapture,
                 }),
-                { verbose: opts.verbose ? "rich" : false },
+                { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
               );
+              if (ieb.emit) ieb.emit();
               if (opts.summarize) {
                 console.log(runbook);
               }
@@ -957,9 +1021,10 @@ export class CLI<Project> {
         new Command() // Emit SQL package (sqlite) to stdout; accepts md path
           .description("Spry Runbook CLI (execute all cells in DAG order)")
           .type("sourceRelTo", srcRelTo)
+          .type("verboseStyle", verboseStyle)
           .option(...mdOpt)
           .option(...srcRelToOpt)
-          .option("--verbose", "Emit information messages verbosely")
+          .option(...verboseOpt)
           .option("--summarize", "Emit summary after execution in JSON")
           .option(
             "-s, --select <cql:string>",
@@ -980,13 +1045,18 @@ export class CLI<Project> {
                 pp.state.directives.tasks.filter(this.executableTasksFilter()),
               );
             }
+            const ieb = informationalEventBuses<
+              TaskCell<string>,
+              TaskExecContext
+            >(opts?.verbose);
             const runbook = await executeTasks(
               plan,
               execTasksState(pp.state.directives, {
                 onCapture: gitignorableOnCapture,
               }),
-              { verbose: opts.verbose ? "rich" : false },
+              { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
             );
+            if (ieb.emit) ieb.emit();
             if (opts.summarize) {
               console.log(runbook);
             }
