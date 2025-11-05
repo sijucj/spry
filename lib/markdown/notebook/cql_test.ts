@@ -201,3 +201,117 @@ Deno.test("CQL-mini compiler", async (t) => {
     assertEquals(names(out), ["hello.sh", "cleanup.sql"]);
   });
 });
+
+/** Minimal helper to make a CodeCell with flags */
+function mkCellWithFlags(
+  filename: string,
+  capture: boolean | string | string[] | undefined,
+  extraFlags: Record<string, unknown> = {},
+): CodeCell<Any> {
+  return {
+    kind: "code",
+    language: "bash",
+    source: "",
+    provenance: { path: `/tmp/${filename}`, filename, index: 0 },
+    attrs: {},
+    parsedPI: {
+      bareTokens: [],
+      flags: { capture, ...extraFlags },
+      firstToken: "run",
+    },
+    isVirtual: false,
+  } as unknown as CodeCell<Any>;
+}
+
+const FLAG_CELLS: CodeCell<Any>[] = [
+  mkCellWithFlags("true.sh", true),
+  mkCellWithFlags("false.sh", false),
+  mkCellWithFlags("on.sh", "on"),
+  mkCellWithFlags("empty-str.sh", ""),
+  mkCellWithFlags("arr-ab.sh", ["alpha", "beta"]),
+  mkCellWithFlags("arr-empty.sh", []),
+  mkCellWithFlags("unset.sh", undefined),
+  mkCellWithFlags("mode-fast.sh", undefined, { mode: "fast" }),
+];
+
+const N = (xs: CodeCell<Any>[]) =>
+  xs.map((c) => (c.provenance as Any)?.filename ?? "");
+
+Deno.test("CQL-mini flags", async (t) => {
+  await t.step(`flag("capture") → enabled/present`, () => {
+    const q = `flag("capture")`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    // truthy: true, "on", ["alpha","beta"]
+    // falsy: false, "", [], undefined
+    assertEquals(N(out), ["true.sh", "on.sh", "arr-ab.sh"]);
+  });
+
+  await t.step(`bare flags.capture behaves like flag("capture")`, () => {
+    const q = `flags.capture`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    assertEquals(N(out), ["true.sh", "on.sh", "arr-ab.sh"]);
+  });
+
+  await t.step(`flags.capture == true / false`, () => {
+    const qTrue = `flags.capture == true`;
+    const qFalse = `flags.capture == false`;
+    const runTrue = compileCqlMini(qTrue);
+    const runFalse = compileCqlMini(qFalse);
+    assertEquals(N(runTrue(FLAG_CELLS)), ["true.sh"]);
+    assertEquals(N(runFalse(FLAG_CELLS)), ["false.sh"]);
+  });
+
+  await t.step(`flags.capture == "on" (string equality)`, () => {
+    const q = `flags.capture == "on"`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    assertEquals(N(out), ["on.sh"]);
+  });
+
+  await t.step(`has(flags.capture, "beta") (string[] membership)`, () => {
+    const q = `has(flags.capture, "beta")`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    assertEquals(N(out), ["arr-ab.sh"]);
+  });
+
+  await t.step(`has(flags.capture, "on") works for single-string flag`, () => {
+    const q = `has(flags.capture, "on")`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    assertEquals(N(out), ["on.sh"]);
+  });
+
+  await t.step(`negation: !flag("capture")`, () => {
+    const q = `!flag("capture")`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    assertEquals(
+      N(out).sort(),
+      [
+        "arr-empty.sh",
+        "empty-str.sh",
+        "false.sh",
+        "mode-fast.sh",
+        "unset.sh",
+      ].sort(),
+    );
+  });
+
+  await t.step(`empty string and empty array are NOT enabled`, () => {
+    const q = `flag("capture") || flags.capture`;
+    const run = compileCqlMini(q);
+    const names = N(run(FLAG_CELLS));
+    assertFalse(names.includes("empty-str.sh"));
+    assertFalse(names.includes("arr-empty.sh"));
+  });
+
+  await t.step(`unrelated flags still accessible: flags.mode == "fast"`, () => {
+    const q = `flags.mode == "fast"`;
+    const run = compileCqlMini(q);
+    const out = run(FLAG_CELLS);
+    assertEquals(N(out), ["mode-fast.sh"]);
+  });
+});

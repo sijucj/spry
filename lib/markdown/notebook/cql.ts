@@ -24,9 +24,10 @@
  *           | field "~" /regex/flags               // regex test against String(field)
  *           | path  "~" glob("**\/*.sql")           // glob match on String(path)
  *           | tag("x")                             // tags.includes("x")
- *           | flag("capture")                      // flags["capture"] === true
+ *           | flag("capture")                      // boolean/string/string[] “is set”
  *           | attr("env") == "prod"                // String(attrs["env"]) === "prod"
  *           | has(pi.kind)                         // existence check for the *value*
+ *           | has(flags.capture, "value")          // string equality or array membership
  *           | len(tags) > 0                        // length of array/string value
  *
  * Operators
@@ -39,40 +40,14 @@
  * Helpers
  *  - glob("pattern") within `path ~ glob("...")`; supports **, *, ?
  *  - tag("t")  → Array.isArray(tags) && tags.includes("t")
- *  - flag("k") → parsedPI.flags[k] === true
+ *  - flag("k") → flags[k] is enabled/present (boolean true, non-empty string or string[])
  *  - attr("k") → String(attrs[k])  (or use attr("k","v") for equality)
  *  - has(valueExpr) → valueExpr !== undefined && valueExpr !== null
+ *  - has(valueExpr, "needle") → string equality or array membership for strings
  *  - len(valueExpr) → length of array/string, else 0
- *
- * Examples
- *  - SQL migrations that contain CREATE TABLE (glob + regex):
- *      lang:"sql" && path~glob("**\/migrations/*.sql") && text~/CREATE\s+TABLE/i
- *
- *  - Example cells that also have capture flag:
- *      tag("example") && flag("capture")
- *
- *  - Virtual PI, excluding drafts by filename:
- *      has(pi.kind) && pi.kind:"virtual" && !(filename~".draft.")
  *
  * API
  *  - compileCqlMini<T = CodeCell>(query: string): (cells: T[]) => T[]
- *      Compiles once, then reuse the returned function to filter any T[] where T extends CodeCell.
- *      Throws on syntax errors; otherwise evaluates missing paths to undefined.
- *
- * Path resolution rules
- *  - Dotted paths and numeric indices are allowed (e.g., attrs.meta.owner, attrs.arr[1]).
- *  - Missing segments return undefined; use has(...) to test existence safely.
- *
- * Security notes
- *  - The compiler uses a hand-rolled tokenizer + Pratt parser and emits a predicate
- *    that’s executed via `new Function`. The DSL does not allow arbitrary JS and only
- *    emits known helpers and field accessors, but you should still treat the query
- *    string as untrusted input and avoid granting unnecessary capabilities to the
- *    environment where it runs.
- *
- * Performance notes
- *  - Compile once per distinct query and reuse the returned function. Predicate
- *    execution is a pure array filter and is allocation-light.
  */
 
 import * as nb from "./notebook.ts";
@@ -104,11 +79,8 @@ function GLOB(pat: string): RegExp {
         re += ".*";
         i++;
       } else re += "[^/]*";
-    } else if (ch === "?") {
-      re += "[^/]";
-    } else {
-      re += escapeReChar(ch);
-    }
+    } else if (ch === "?") re += "[^/]";
+    else re += escapeReChar(ch);
   }
   re += "$";
   return new RegExp(re);
@@ -128,7 +100,7 @@ function basename(p?: unknown): string {
 // ---------- Path + field helpers (generic over T extends CodeCell) ----------
 
 function getPath<T extends CodeCell>(c: T, path: string): unknown {
-  // Aliases demanded by the DSL
+  // Aliases
   if (path === "lang") return (c as unknown as AnyRec)["language"];
   if (path === "text") return (c as unknown as AnyRec)["source"];
   if (path === "path") {
@@ -139,7 +111,6 @@ function getPath<T extends CodeCell>(c: T, path: string): unknown {
     return (pv["filename"] as unknown) ?? basename(pv["path"]);
   }
   if (path === "tags") {
-    // Prefer direct tags if present, else attrs.tags
     const direct = (c as unknown as AnyRec)["tags"];
     if (Array.isArray(direct)) return direct;
     const fromAttrs = asRec((c as unknown as AnyRec)["attrs"])["tags"];
@@ -148,6 +119,11 @@ function getPath<T extends CodeCell>(c: T, path: string): unknown {
   if (path === "flags") {
     const pi = asRec((c as unknown as AnyRec)["parsedPI"]);
     return asRec(pi["flags"]);
+  }
+  if (path.startsWith("flags.")) {
+    const key = path.slice("flags.".length);
+    const flags = asRec(asRec((c as unknown as AnyRec)["parsedPI"])["flags"]);
+    return flags[key];
   }
   if (path.startsWith("pi.")) {
     const rest = path.slice(3);
@@ -160,7 +136,7 @@ function getPath<T extends CodeCell>(c: T, path: string): unknown {
     return rest ? asRec(pi)[rest] : pi;
   }
 
-  // Generic dotted + indexed path from c.*
+  // Generic dotted + indexed path
   let cur: unknown = c;
   const parts = path.split(".").flatMap((p) => {
     const segs: string[] = [];
@@ -193,15 +169,41 @@ function LEN(v: unknown): number {
   return 0;
 }
 
+// ---- Flexible flags helpers ----
+function flagValue<T extends CodeCell>(c: T, key: string): unknown {
+  const flags = asRec(asRec((c as unknown as AnyRec)["parsedPI"])["flags"]);
+  return flags[key];
+}
+
+/** Predicate semantics for bare flags: true if boolean true, non-empty string, or non-empty string[] */
+function flagPred<T extends CodeCell>(c: T, key: string): boolean {
+  const v = flagValue(c, key);
+  if (v === true) return true;
+  if (typeof v === "string") return v.length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  return false;
+}
+
+/** Legacy sugar: flag("k") -> enabled/present per flagPred */
+function flagOn<T extends CodeCell>(c: T, key: string): boolean {
+  return flagPred(c, key);
+}
+
+/** has(value, needle): for string equality or string[] membership */
+function hasMatch(val: unknown, needle: unknown): boolean {
+  if (typeof val === "string" && typeof needle === "string") {
+    return val === needle;
+  }
+  if (Array.isArray(val) && typeof needle === "string") {
+    return (val as unknown[]).includes(needle);
+  }
+  return false;
+}
+
+// Tag/attr helpers stay the same
 function tagHas<T extends CodeCell>(c: T, t: string): boolean {
   const tags = getPath(c, "tags");
   return Array.isArray(tags) ? tags.includes(t) : false;
-}
-
-function flagTrue<T extends CodeCell>(c: T, f: string): boolean {
-  const pi = asRec((c as unknown as AnyRec)["parsedPI"]);
-  const flags = asRec(pi["flags"]);
-  return flags?.[f] === true;
 }
 
 function attrEq<T extends CodeCell>(c: T, k: string, val: unknown): boolean {
@@ -239,6 +241,9 @@ const OPS = new Set([
   ")",
   ",",
 ]);
+
+// Binary operators that may follow a field reference
+const BINOPS = new Set([":", "==", "!=", ">=", "<=", ">", "<", "~"]);
 
 function tokenize(src: string): Tok[] {
   const out: Tok[] = [];
@@ -285,10 +290,9 @@ function tokenize(src: string): Tok[] {
         } else body += src[i++];
       }
       if (src[i] !== "/") throw new Error("Unterminated regex");
-      i++; // consume trailing /
+      i++;
       let flags = "";
       while (i < src.length && /[a-z]/i.test(src[i])) flags += src[i++];
-
       out.push({ kind: "re", source: body, flags });
       continue;
     }
@@ -408,6 +412,11 @@ class Parser {
     }
 
     if (t.kind === "id") {
+      // boolean/null literals
+      if (t.v === "true") return "true";
+      if (t.v === "false") return "false";
+      if (t.v === "null") return "null";
+
       // function-like helpers
       if (t.v === "tag") return this.parseCall("tag");
       if (t.v === "flag") return this.parseCall("flag");
@@ -418,8 +427,24 @@ class Parser {
         throw new Error('glob(...) only allowed as path~glob("pattern")');
       }
 
-      // a bare identifier is a field path (e.g., lang, text, filename, pi.kind, attrs.foo)
-      return this.emitField(t.v);
+      // bare field path (lang, text, filename, attrs.env, pi.kind, flags.capture, ...)
+      const id = t.v;
+      const next = this.peek();
+      const nextIsOp = next.kind === "op";
+      const followedByBinary = nextIsOp && BINOPS.has(next.v);
+      const followedByArgBoundary = nextIsOp &&
+        (next.v === "," || next.v === ")");
+
+      // Standalone predicate ONLY: `flags.X` → flag semantics
+      // Do NOT rewrite when used in comparisons or as a function argument.
+      if (
+        id.startsWith("flags.") && !followedByBinary && !followedByArgBoundary
+      ) {
+        const key = id.slice("flags.".length);
+        return `(flagPred(c, ${JSON.stringify(key)}))`;
+      }
+
+      return this.emitField(id);
     }
 
     if (t.kind === "str") return JSON.stringify(t.v);
@@ -445,10 +470,8 @@ class Parser {
 
       if (op === "~") {
         // Regex RHS: e.g., text~/CREATE\s+TABLE/i
-        if (right.startsWith("/")) {
-          return `(${right}.test(toStr(${left})))`;
-        }
-        // Special-case path~glob("...") — RHS token rewritten to "glob:pattern"
+        if (right.startsWith("/")) return `(${right}.test(toStr(${left})))`;
+        // path~glob("...") — RHS token rewritten to "glob:pattern"
         if (/^GET\(/.test(left) && right.startsWith('"glob:')) {
           const pat = JSON.parse(right).slice(5); // strip 'glob:'
           return `(GLOB(${JSON.stringify(pat)}).test(toStr(${left})))`;
@@ -475,35 +498,30 @@ class Parser {
       this.eat();
       a2 = this.nud();
     }
-
     this.want("op", ")");
 
     if (name === "tag") return `(tagHas(c, ${a1}))`;
-    if (name === "flag") return `(flagTrue(c, ${a1}))`;
+    if (name === "flag") return `(flagOn(c, ${a1}))`;
 
     if (name === "has") {
-      // Existence of VALUE (not path): works for has(pi.kind) and has("pi.kind")
+      // has(value) or has(value, "needle")
+      if (a2) return `(hasMatch(${a1}, ${a2}))`;
       return `(( ${a1} ) !== undefined && ( ${a1} ) !== null)`;
     }
 
-    if (name === "len") {
-      // Length of VALUE (array/string): len(tags), len(attr("x")), etc.
-      return `(LEN(${a1}))`;
-    }
+    if (name === "len") return `(LEN(${a1}))`;
 
     if (name === "attr") {
-      // Support both forms:
-      //   attr("k") == "v"  (parser will compare returned string)
-      //   attr("k","v")     (direct equality check)
+      // attr("k") == "v"  (parser will compare the returned string)
+      // attr("k","v")     (direct equality check)
       if (a2) return `(attrEq(c, ${a1}, ${a2}))`;
       return `(attrStr(c, ${a1}))`;
     }
-    // exhaustive: no default branch
+
     throw new Error("unreachable");
   }
 
   private emitField(id: string): string {
-    // pi.kind, attrs.env, etc.
     if (id === "glob") {
       throw new Error('glob(...) only allowed with path~glob("pattern")');
     }
@@ -513,24 +531,6 @@ class Parser {
 
 /**
  * Compile a CQL-mini predicate into a reusable `T[]` filter.
- *
- * @param query CQL-mini string (see module docs for grammar, operators, helpers).
- * @returns A function that filters a `T[]` using the compiled predicate.
- *
- * @example
- * import { compileCqlMini, type CodeCell } from "./cql.ts";
- *
- * // Default: T = CodeCell
- * const q = 'lang:"sql" && path~glob("**\/migrations/*.sql") && text~/CREATE\\s+TABLE/i';
- * const filterMigrations = compileCqlMini(q);
- * const results = filterMigrations(cells);
- *
- * @example
- * // With a subclass/subinterface of CodeCell:
- * interface MyCell extends CodeCell { owner?: string }
- * const q = 'attr("env")=="prod" && lang:"sql"';
- * const filterProdSql = compileCqlMini<MyCell>(q);
- * const prodSql: MyCell[] = filterProdSql(myCells);
  */
 export function compileCqlMini<T extends CodeCell = CodeCell>(
   query: string,
@@ -545,7 +545,6 @@ export function compileCqlMini<T extends CodeCell = CodeCell>(
   const parser = new Parser(toks);
   const jsExpr = parser.parse();
 
-  // Declare the exact signature we’ll pass at callsite
   type PredFn = (
     c: T,
     GET: (field: string) => unknown,
@@ -556,9 +555,11 @@ export function compileCqlMini<T extends CodeCell = CodeCell>(
     hasValueFn: (v: unknown) => boolean,
     LENfn: (v: unknown) => number,
     tagHasFn: (c: T, t: string) => boolean,
-    flagTrueFn: (c: T, f: string) => boolean,
+    flagOnFn: (c: T, f: string) => boolean,
     attrEqFn: (c: T, k: string, v: unknown) => boolean,
     attrStrFn: (c: T, k: string) => string,
+    flagPredFn: (c: T, k: string) => boolean,
+    hasMatchFn: (val: unknown, needle: unknown) => boolean,
   ) => boolean;
 
   const pred = new Function(
@@ -571,9 +572,11 @@ export function compileCqlMini<T extends CodeCell = CodeCell>(
     "hasValue",
     "LEN",
     "tagHas",
-    "flagTrue",
+    "flagOn",
     "attrEq",
     "attrStr",
+    "flagPred",
+    "hasMatch",
     `return (${jsExpr});`,
   ) as PredFn;
 
@@ -589,9 +592,11 @@ export function compileCqlMini<T extends CodeCell = CodeCell>(
         hasValue,
         LEN,
         tagHas,
-        flagTrue,
+        flagOn,
         attrEq,
         attrStr,
+        flagPred,
+        hasMatch,
       )
     );
 }
