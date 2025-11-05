@@ -20,6 +20,7 @@ import {
 } from "jsr:@std/path@^1";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import * as taskCLI from "../task/cli.ts";
+import { execTasksState, gitignorableOnCapture } from "../task/execute.ts";
 import { executeTasks, TaskCell } from "../task/mod.ts";
 import { collectAsyncGenerated } from "../universal/collectable.ts";
 import { SourceRelativeTo } from "../universal/content-acquisition.ts";
@@ -42,6 +43,9 @@ import {
 } from "./content.ts";
 import { SqlPagePlaybook, sqlPagePlaybookState } from "./playbook.ts";
 import { isRouteSupplier } from "./route.ts";
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 export type LsCommandRow = SqlPageContent & {
   name: string;
@@ -904,8 +908,10 @@ export class CLI<Project> {
             if (tasks.find((t) => t.taskId() == taskId)) {
               const runbook = await executeTasks(
                 executionSubplan(executionPlan(tasks), [taskId]),
-                pp.state.directives,
-                opts.verbose ? "rich" : false,
+                execTasksState(pp.state.directives, {
+                  onCapture: gitignorableOnCapture,
+                }),
+                { verbose: opts.verbose ? "rich" : false },
               );
               if (opts.summarize) {
                 console.log(runbook);
@@ -955,8 +961,10 @@ export class CLI<Project> {
               executionPlan(
                 pp.state.directives.tasks.filter(this.executableTasksFilter()),
               ),
-              pp.state.directives,
-              opts.verbose ? "rich" : false,
+              execTasksState(pp.state.directives, {
+                onCapture: gitignorableOnCapture,
+              }),
+              { verbose: opts.verbose ? "rich" : false },
             );
             if (opts.summarize) {
               console.log(runbook);
