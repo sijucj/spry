@@ -1,4 +1,5 @@
 import { Command, EnumType } from "jsr:@cliffy/command@1.0.0-rc.8";
+import { CompletionsCommand } from "jsr:@cliffy/command@1.0.0-rc.8/completions";
 import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
 import {
   bold,
@@ -748,6 +749,7 @@ export class CLI<Project> {
         "SQLPage Markdown Notebook: emit SQL package, write sqlpage.json, or materialize filesystem.",
       )
       .command("help", new HelpCommand().global())
+      .command("completions", new CompletionsCommand())
       .command(
         "init",
         new Command()
@@ -956,6 +958,16 @@ export class CLI<Project> {
           .type("sourceRelTo", srcRelTo)
           .type("verboseStyle", verboseStyle)
           .arguments("<taskId>")
+          .complete("taskId", async () => {
+            const pp = await this.spn.populateContent({
+              mdSources: ["Spryfile.md"],
+              srcRelTo: SourceRelativeTo.LocalFs,
+              state: sqlPagePlaybookState(),
+            });
+            return pp.state.directives.tasks.filter(
+              this.executableTasksFilter(),
+            ).map((t) => t.taskDirective.identity);
+          })
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option(...verboseOpt)
