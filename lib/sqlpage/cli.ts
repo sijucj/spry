@@ -325,7 +325,7 @@ export class CLI<Project> {
             : {}),
         },
       };
-      sfMD.frontMatterOnce(frontMatter);
+      sfMD.frontMatterOnceWithQuotes(frontMatter);
       sfMD.h1("Sample Spryfile.md");
       sfMD.title(2, "Environment variables and .envrc");
       sfMD.p(
@@ -333,11 +333,15 @@ export class CLI<Project> {
       );
       sfMD.p("POSIX-style example (bash/zsh):");
       sfMD.codeTag(
-        `bash`,
-      )`# .envrc (bash/zsh)\nexport SPRY_DB=${
+        `envrc prepare-env -C ./.envrc --gitignore --descr "Generate .envrc file and add it to local .gitignore if it's not already there"`,
+      )`${
+        init?.dialect === SqlPageFilesUpsertDialect.SQLite
+          ? `export DB_NAME="sqlpage.db"\n`
+          : ``
+      }export SPRY_DB=${
         init?.dialect === SqlPageFilesUpsertDialect.PostgreSQL
           ? `"postgresql://<username>:<password>@<host>:<port>/<database>"`
-          : `"sqlite://sqlpage.db?mode=rwc"`
+          : `"sqlite://$DB_NAME?mode=rwc"`
       }\nexport PORT=9227`;
       sfMD.p(
         "Then run `direnv allow` in this project directory to load the `.envrc` into your shell environment. direnv will evaluate `.envrc` only after you explicitly allow it.",
@@ -379,17 +383,17 @@ export class CLI<Project> {
         init?.dialect ? `--dialect ${init?.dialect}` : ``
       } --conf sqlpage/sqlpage.json | ${
         init?.dialect === "postgres" ? `psql` : `sqlite3`
-      } "$SPRY_DB"`;
+      } ${init?.dialect === "postgres" ? "$SPRY_DB" : "$DB_NAME"}`;
       sfMD.title(2, "Start the SQLPage server");
       sfMD.codeTag(
         `bash`,
-      )`SQLPAGE_SITE_PREFIX="" sqlpage`;
+      )`sqlpage`;
 
       sfMD.p("You can create fenced cells for `bash`, `sql`, etc. here.");
       sfMD.p("TODO: add examples with `doctor`, `prepare-db`, etc.");
       sfMD.codeTag(
-        "bash",
-      )`# name this section prepare-db and put in your db prep code`;
+        `sql index.sql { route: { caption: "Home" } }`,
+      )`select 'card' as component,\n'Spry' as title,\n1 as columns;\nselect 'Use Markdown to Code, Build, and Orchestrate Intelligence'  as title,\n'https://sprymd.org' as link,\n'Spry turns Markdown into a programmable medium. Every fenced block, directive, and section executes, verifies, and composes reproducible workflows. From SQL pipelines to AI context graphs, Spry unifies your code, data, and documentation into one living system of record.' as description;`;
       await Deno.writeTextFile(absPathToSpryfileLocal, sfMD.write());
       created.push(relativeToCWD(absPathToSpryfileLocal));
     } else {
