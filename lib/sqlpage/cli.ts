@@ -36,6 +36,10 @@ import {
   verboseInfoShellEventBus,
 } from "../universal/shell.ts";
 import {
+  executionPlanVisuals,
+  ExecutionPlanVisualStyle,
+} from "../universal/task-visuals.ts";
+import {
   errorOnlyTaskEventBus,
   executionPlan,
   executionSubplan,
@@ -1022,6 +1026,7 @@ export class CLI<Project> {
           .description("Spry Runbook CLI (execute all cells in DAG order)")
           .type("sourceRelTo", srcRelTo)
           .type("verboseStyle", verboseStyle)
+          .type("visualStyle", new EnumType(ExecutionPlanVisualStyle))
           .option(...mdOpt)
           .option(...srcRelToOpt)
           .option(...verboseOpt)
@@ -1030,6 +1035,7 @@ export class CLI<Project> {
             "-s, --select <cql:string>",
             "Use Cell Query Language (CQL) to select cells to run as part of runbook",
           )
+          .option("--visualize <style:visualStyle>", "Visualize the DAG")
           .action(async (opts) => {
             const pp = await this.spn.populateContent({
               mdSources: opts.md.map((f) => String(f)),
@@ -1045,20 +1051,25 @@ export class CLI<Project> {
                 pp.state.directives.tasks.filter(this.executableTasksFilter()),
               );
             }
-            const ieb = informationalEventBuses<
-              TaskCell<string>,
-              TaskExecContext
-            >(opts?.verbose);
-            const runbook = await executeTasks(
-              plan,
-              execTasksState(pp.state.directives, {
-                onCapture: gitignorableOnCapture,
-              }),
-              { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
-            );
-            if (ieb.emit) ieb.emit();
-            if (opts.summarize) {
-              console.log(runbook);
+            if (opts?.visualize) {
+              const epv = executionPlanVisuals(plan);
+              console.log(epv.visualText(opts.visualize));
+            } else {
+              const ieb = informationalEventBuses<
+                TaskCell<string>,
+                TaskExecContext
+              >(opts?.verbose);
+              const runbook = await executeTasks(
+                plan,
+                execTasksState(pp.state.directives, {
+                  onCapture: gitignorableOnCapture,
+                }),
+                { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
+              );
+              if (ieb.emit) ieb.emit();
+              if (opts.summarize) {
+                console.log(runbook);
+              }
             }
           })
           .command("ls", "List SQLPage file runbook entries")
