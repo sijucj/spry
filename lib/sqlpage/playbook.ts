@@ -3,11 +3,9 @@ import z from "jsr:@zod/zod@4";
 import { MarkdownDoc } from "../markdown/fluent-doc.ts";
 import {
   fbPartialsCollection,
-  Issue,
   isVirtualDirective,
   parsedProcessingInstructions,
   PlaybookCodeCell,
-  Source,
 } from "../markdown/notebook/mod.ts";
 import {
   annotationsFactory,
@@ -46,6 +44,7 @@ import {
   pageRouteSchema,
   RoutesBuilder,
 } from "./route.ts";
+import { Issue, Source } from "../markdown/governedmd.ts";
 
 export type SqlPageProvenance = TasksProvenance;
 export type SqlPageFrontmatter = Record<string, unknown> & {

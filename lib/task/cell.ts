@@ -1,16 +1,13 @@
 import { z } from "jsr:@zod/zod@4";
 import {
-  CodeCell,
   fbPartialCandidate,
   fbPartialsCollection,
-  Issue,
   mdFencedBlockPartialSchema,
   notebooks,
   Playbook,
   PlaybookCodeCell,
   playbooks,
   pseudoCellsGenerator,
-  Source,
 } from "../markdown/notebook/mod.ts";
 import {
   AnnotationCatalog,
@@ -22,6 +19,7 @@ import {
   languageSpecSchema,
 } from "../universal/code.ts";
 import { Task } from "../universal/task.ts";
+import { CodeCell, Issue, Source } from "../markdown/governedmd.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

@@ -1,7 +1,7 @@
 // cql_test.ts
 import { assertEquals, assertFalse } from "jsr:@std/assert@^1";
 import { compileCqlMini } from "./cql.ts";
-import { CodeCell } from "./notebook.ts";
+import { CodeCell } from "../governedmd.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

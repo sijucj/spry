@@ -50,11 +50,11 @@
  *  - compileCqlMini<T = CodeCell>(query: string): (cells: T[]) => T[]
  */
 
-import * as nb from "./notebook.ts";
+import * as gmd from "../governedmd.ts";
 
 // Base CodeCell type from notebook; used as the default constraint.
 // deno-lint-ignore no-explicit-any
-export type CodeCell = nb.CodeCell<any>;
+export type CodeCell = gmd.CodeCell<any>;
 
 type AnyRec = Record<string, unknown>;
 const asRec = (x: unknown): AnyRec => (x as AnyRec) ?? {};

@@ -6,8 +6,9 @@ import {
   lazyUrlBytesReader,
   relativeUrlAsFsPath,
 } from "../../universal/content-acquisition.ts";
-import { CodeCell, Issue, parsedProcessingInstructions } from "./notebook.ts";
+import { parsedProcessingInstructions } from "./notebook.ts";
 import { Playbook, PlaybookCell } from "./playbook.ts";
+import { CodeCell, Issue } from "../governedmd.ts";
 
 export function isVirtualDirective<
   Provenance,

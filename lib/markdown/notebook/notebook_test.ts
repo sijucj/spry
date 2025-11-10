@@ -9,14 +9,8 @@ import {
   safeSourceText,
   SourceRelativeTo,
 } from "../../universal/content-acquisition.ts";
-import {
-  type Cell,
-  type CodeCell,
-  type MarkdownCell,
-  type Notebook,
-  notebooks,
-  parsedProcessingInstructions,
-} from "./notebook.ts";
+import { Cell, CodeCell, MarkdownCell, Notebook } from "../governedmd.ts";
+import { notebooks, parsedProcessingInstructions } from "./notebook.ts";
 
 // Generic, attrs-preserving type guards
 function isCode<T extends Record<string, unknown>>(
