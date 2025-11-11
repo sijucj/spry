@@ -152,10 +152,56 @@ function printMatchHeader(i: number, m: Match<string>, total: number) {
 // CLI
 // ------------------------------
 
+// Here’s the clean way, assuming your pipeline parses with `remark-gfm` (so tasks become `listItem` nodes with a boolean `checked` field):
+
+// * **All task items (checked or not):**
+//   `listItem[checked]`
+
+// * **Completed tasks (`- [x]` / `- [X]`):**
+//   `listItem[checked=true]`
+
+// * **Incomplete tasks (`- [ ]`):**
+//   `listItem[checked=false]`
+
+// * **Only the text inside each task (not the whole list item):**
+//   `listItem[checked=true] > paragraph`
+//   (Increase `--depth` in `mdq` to include nested text if you want more than just the paragraph.)
+
+// * **Tasks within a specific section by heading text:**
+//   `heading:contains('Accounts')::section listItem[checked=false]`
+
+// * **Tasks anywhere under a heading level:**
+//   `h3::section listItem[checked=true]`
+
+// * **Filter by text content (e.g., tasks mentioning “email”):**
+//   `listItem[checked] :contains('email')`
+
+// * **Nested tasks only (tasks that are children of other list items):**
+//   `listItem > list > listItem[checked]`
+
+// Tips:
+
+// * Non-task list items have no `checked` property—`[checked]` is the reliable “taskness” test.
+// * GFM treats `[x]` and `[X]` the same; both become `checked=true`.
+// * If you just want the label text in CLI output, use a small `--depth` (e.g., `--depth 2` to include the immediate `paragraph` child).
+
 if (import.meta.main) {
   const { options } = await new Command()
     .name("mdq")
     .version("1.0.0")
+    .example("typical", `mdq.ts --md Qualityfolio.md --select "h1, h2"`)
+    .example(
+      "all task items",
+      `mdq.ts --md Qualityfolio.md --select "listItem[checked] > paragraph"`,
+    )
+    .example(
+      "all completed items",
+      `mdq.ts --md Qualityfolio.md --select "listItem[checked=true] > paragraph"`,
+    )
+    .example(
+      "all incomplete items",
+      `mdq.ts --md Qualityfolio.md --select "listItem[checked=false] > paragraph"`,
+    )
     .description(
       "Run MDQL selectors over Markdown files and emit matched nodes as Markdown.",
     )
