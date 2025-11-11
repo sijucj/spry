@@ -1,10 +1,5 @@
 import { assert, assertEquals } from "jsr:@std/assert@^1";
-import {
-  applyDiscoveredSchema,
-  discoverSchema,
-  lsSchema,
-  parseOne,
-} from "./folio.ts";
+import { parseOne } from "./folio.ts";
 
 const FIXTURE_URL = new URL("./folio_test-fixture-01.md", import.meta.url);
 
@@ -37,7 +32,7 @@ Deno.test("fixture-01: parse and basic shape", async (t) => {
   });
 });
 
-Deno.test("fixture-01: schema-later projection & grouping", async (t) => {
+Deno.test("fixture-01: schema-later projection & grouping (explicit map)", async (t) => {
   const md = await Deno.readTextFile(FIXTURE_URL);
   const h = await parseOne("fixture-01", md);
 
@@ -84,6 +79,21 @@ Deno.test("fixture-01: schema-later projection & grouping", async (t) => {
       1,
     );
   });
+});
+
+Deno.test("fixture-01: withSchema reads roles from frontmatter key", async () => {
+  const md = await Deno.readTextFile(FIXTURE_URL);
+  const h = await parseOne("fixture-01", md);
+
+  // Use the frontmatter at qualityfolio.schema (array of role names)
+  const v = h.withSchema("qualityfolio.schema");
+
+  // Should behave like the explicit map above for project/suite/plan/case
+  assertEquals(v.atRole("case").length, 9);
+
+  const grouped = v.groupBy("suite");
+  assertEquals(grouped.get("Accounts & Auth E2E Suite")?.length ?? 0, 3);
+  assertEquals(grouped.get("Checkout E2E Suite")?.length ?? 0, 3);
 });
 
 Deno.test("fixture-01: annotations across hierarchy", async (t) => {
@@ -248,10 +258,7 @@ Deno.test("fixture-01: leaf mdast and GFM tasks", async (t) => {
 });
 
 /**
- * These tests serve as live documentation:
- * - The parser is schema-free and detects *leaves* as the deepest headings.
- * - You can apply *any* role mapping at query time with withSchema(... as const).
- * - Works with shallow docs (just a case) and deep docs (project→suite→plan→case).
+ * Doc samples (unchanged): demonstrate parser behavior and explicit schemas.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -303,7 +310,7 @@ Deno.test("doc-samples: A) Just a Case (deepest = h1)", async (t) => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* Sample B: "Suite with Cases" (h1=h1 suite, h2 cases)                       */
+/* Sample B: "Suite with Cases" (h1 suite, h2 cases)                           */
 /* -------------------------------------------------------------------------- */
 
 const SUITE_CASES_MD = String.raw`
@@ -353,229 +360,4 @@ Deno.test("doc-samples: B) Suite (h1) with two Cases (h2)", async (t) => {
       assert(v.atRole("plan")[0].roles.suite === "Authentication Suite");
     },
   );
-});
-
-/* -------------------------------------------------------------------------- */
-/* Smart schema discovery (terminal-first) — executable docs                   */
-/* -------------------------------------------------------------------------- */
-
-const SCH = {
-  h1: "project",
-  h2: "strategy",
-  h3: "plan",
-  h4: "suite",
-  h5: "case",
-  // (steps implied; not a heading)
-} as const;
-
-/** A) One depth only → treat as terminal ("case"). */
-const ONE_LEVEL_MD = String.raw`
-## Single Thing To Test
-
-**Steps**
-- [ ] do a
-- [x] do b
-`;
-
-/** B) Two depths → last two roles ("suite" → "case"). */
-const TWO_LEVELS_MD = String.raw`
-# Auth Suite
-
-## Valid login
-- [ ] enter creds
-- [x] submit
-`;
-
-/** C) Three depths, irregular (h1, h3, h4) → last three roles ("plan","suite","case"). */
-const THREE_LEVELS_IRREGULAR_MD = String.raw`
-# Root Heading (intro)
-
-Some intro text only.
-
-### Plan: Account Creation
-- [ ] story
-
-#### Case: New signup
-- [ ] fill form
-- [x] confirm
-`;
-
-/** D) Stray headings not in any leaf path are ignored for structure. */
-const WITH_STRAYS_MD = String.raw`
-# Top Project
-
-## Stray H2 (no children)
-
-### Real Plan
-- [ ] something
-
-#### Real Case
-- [x] inner
-`;
-
-Deno.test("schema discovery: A) one depth → terminal only ('case')", async (t) => {
-  const h = await parseOne("A", ONE_LEVEL_MD);
-  const d = discoverSchema(h, SCH);
-
-  await t.step("depths & structural", () => {
-    assertEquals(d.leafDepths, [2]);
-    assertEquals(d.structuralDepths, [2]);
-  });
-
-  await t.step("recommended mapping", () => {
-    // One depth present → map to the last role: "case"
-    assertEquals(d.recommended.availableRoles, ["case"]);
-    assertEquals(d.recommended.missingRoles, [
-      "project",
-      "strategy",
-      "plan",
-      "suite",
-    ]);
-    assertEquals(d.recommended.depthToRole["h2"], "case");
-    assertEquals(d.recommended.roleToDepth["case"], 2);
-    assertEquals(d.recommended.terminalRole, "case");
-  });
-
-  await t.step("applyDiscoveredSchema projection", () => {
-    const { view } = applyDiscoveredSchema(h, SCH);
-    // All leaves should be at terminal role "case"
-    assertEquals(view.atRole("case").length, h.leaves().length);
-  });
-});
-
-Deno.test("schema discovery: B) two depths → 'suite' → 'case'", async (t) => {
-  const h = await parseOne("B", TWO_LEVELS_MD);
-  const d = discoverSchema(h, SCH);
-
-  await t.step("depths & structural", () => {
-    assertEquals(d.structuralDepths, [1, 2]); // h1 suite ancestor, h2 case leaves
-    assertEquals(d.leafDepths, [2]);
-  });
-
-  await t.step("recommended mapping", () => {
-    // Two depths → map to last two roles: "suite","case"
-    assertEquals(d.recommended.availableRoles, ["suite", "case"]);
-    assertEquals(d.recommended.missingRoles, ["project", "strategy", "plan"]);
-    assertEquals(d.recommended.depthToRole["h1"], "suite");
-    assertEquals(d.recommended.depthToRole["h2"], "case");
-    assertEquals(d.recommended.terminalRole, "case");
-  });
-
-  await t.step("applyDiscoveredSchema projection", () => {
-    const { view } = applyDiscoveredSchema(h, SCH);
-    const grouped = view.groupBy("suite");
-    assertEquals(grouped.get("Auth Suite")?.length ?? 0, 1);
-    assertEquals(view.atRole("case").length, 1);
-  });
-});
-
-Deno.test("schema discovery: C) three depths irregular → last three ('plan','suite','case')", async (t) => {
-  const h = await parseOne("C", THREE_LEVELS_IRREGULAR_MD);
-  const d = discoverSchema(h, SCH);
-
-  await t.step("depths & structural", () => {
-    // structural depths = ancestor + leaf depths only (h1, h3, h4)
-    assertEquals(d.structuralDepths, [1, 3, 4]);
-    assertEquals(d.leafDepths, [4]);
-  });
-
-  await t.step("recommended mapping order", () => {
-    // We align the LAST 3 roles to these depths shallow→deep:
-    // depths [1,3,4] → roles ["plan","suite","case"]
-    assertEquals(d.recommended.availableRoles, ["plan", "suite", "case"]);
-    assertEquals(d.recommended.depthToRole["h1"], "plan");
-    assertEquals(d.recommended.depthToRole["h3"], "suite");
-    assertEquals(d.recommended.depthToRole["h4"], "case");
-    assertEquals(d.recommended.terminalRole, "case");
-  });
-
-  await t.step("applyDiscoveredSchema projection", () => {
-    const { view } = applyDiscoveredSchema(h, SCH);
-    // Deepest role is "case" at h4
-    assertEquals(view.atRole("case").length, 1);
-    // Group by "plan" which was assigned to h1
-    const byPlan = view.groupBy("plan");
-    assertEquals(byPlan.size, 1);
-    assertEquals(byPlan.get("Root Heading (intro)")?.length ?? 0, 1);
-  });
-});
-
-Deno.test("schema discovery: D) stray headings are ignored for structure", async (t) => {
-  const h = await parseOne("D", WITH_STRAYS_MD);
-  const d = discoverSchema(h, SCH);
-
-  await t.step("depths & structural", () => {
-    // Stray H2 has no descendant leaf; structural depths should be [1,3,4]
-    assertEquals(d.structuralDepths, [1, 3, 4]);
-    assertEquals(d.leafDepths, [4]);
-  });
-
-  await t.step("recommended & apply", () => {
-    assertEquals(d.recommended.availableRoles, ["plan", "suite", "case"]);
-    const { view } = applyDiscoveredSchema(h, SCH);
-    assertEquals(view.atRole("case").length, 1);
-  });
-});
-
-Deno.test("lsSchema (explicit schema): deterministic structure for fixture-01", async () => {
-  const md = await Deno.readTextFile(FIXTURE_URL);
-  const folio = await parseOne("fixture-01", md);
-
-  // Use the explicit schema implied by the fixture:
-  const view = folio.withSchema(
-    {
-      h1: "project",
-      h2: "suite",
-      h3: "plan",
-      h4: "case",
-    } as const,
-  );
-
-  const rows = lsSchema(folio, view);
-
-  // Deterministic expected (natural Markdown order)
-  const expected = [
-    { HL: 1, Nature: "Project", Title: "E2E1 End-to-End Qualityfolio" },
-
-    { HL: 2, Nature: "Suite", Title: "Accounts & Auth E2E Suite" },
-    { HL: 3, Nature: "Plan", Title: "E2E Account Creation Plan" },
-    { HL: 4, Nature: "Case", Title: "New user can sign up and verify email" },
-    { HL: 4, Nature: "Case", Title: "Returning user can login with MFA" },
-    { HL: 3, Nature: "Plan", Title: "Password Recovery Plan" },
-    { HL: 4, Nature: "Case", Title: "Lockout after repeated failures" },
-
-    { HL: 2, Nature: "Suite", Title: "Checkout E2E Suite" },
-    { HL: 3, Nature: "Plan", Title: "E2E Happy Path Checkout Plan" },
-    {
-      HL: 4,
-      Nature: "Case",
-      Title: "Signed-in user can complete checkout with saved card",
-    },
-    {
-      HL: 4,
-      Nature: "Case",
-      Title: "Guest user can checkout with credit card",
-    },
-    { HL: 3, Nature: "Plan", Title: "E2E Edge Cases & Resilience Plan" },
-    {
-      HL: 4,
-      Nature: "Case",
-      Title: "Payment gateway transient failure triggers retry",
-    },
-
-    { HL: 2, Nature: "Suite", Title: "Notifications & Integrations E2E Suite" },
-    { HL: 3, Nature: "Plan", Title: "E2E Notifications Plan" },
-    { HL: 4, Nature: "Case", Title: "Confirmation email sent to customer" },
-    {
-      HL: 4,
-      Nature: "Case",
-      Title: "Webhook is delivered to partner system exactly once",
-    },
-
-    { HL: 2, Nature: "Suite", Title: "Operational Observability E2E Suite" },
-    { HL: 3, Nature: "Plan", Title: "E2E Latency & Error Budget Plan" },
-    { HL: 4, Nature: "Case", Title: "Golden path latency under 3s P95" },
-  ] as const;
-
-  assertEquals(rows, expected);
 });

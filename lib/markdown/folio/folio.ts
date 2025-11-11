@@ -303,13 +303,22 @@ export class Folio<FM extends Dict = Dict, P = string> {
   }
 
   /**
-   * Project this document using a caller-provided depth→role map.
-   * Role names become a *typed* union inferred from the const argument.
+   * Project this document using:
+   *  - an explicit depth→role map, or
+   *  - a frontmatter key path (e.g., "qualityfolio.schema"), or
+   *  - defaults ("L1","L2",...) if nothing is provided/found.
+   *
+   * Overloads:
+   *   withSchema(schema: DepthRoleMap)
+   *   withSchema(frontmatterKeyPath?: string)  // e.g., "qualityfolio.schema"
    */
-  withSchema<const Schema extends DepthRoleMap>(schema: Schema) {
-    type RoleName = RoleNameOf<Schema>;
+  // deno-lint-ignore no-explicit-any
+  withSchema<const Schema extends DepthRoleMap>(schemaOrFmKey?: any) {
+    const schema = this.#resolveSchema(schemaOrFmKey) as Schema;
 
+    type RoleName = RoleNameOf<Schema>;
     const roleDepth: Record<RoleName, HeadingDepth> = {} as Any;
+
     (Object.keys(schema) as Array<keyof Schema>).forEach((k) => {
       const v = schema[k];
       if (!v) return;
@@ -354,6 +363,55 @@ export class Folio<FM extends Dict = Dict, P = string> {
         return buckets;
       },
     } as const;
+  }
+
+  // Resolve a schema from either an explicit map or a frontmatter key path.
+  // - If a DepthRoleMap is given, return it.
+  // - If a string key is given, try fm[key] (dot-notated) for a string[].
+  // - If nothing is given, try "qualityfolio.schema" then "folio.schema".
+  // - Fallback to defaults: "L1","L2","L3","L4","L5","L6".
+  #resolveSchema(input?: DepthRoleMap | string): DepthRoleMap {
+    // If caller already supplied a map, use it verbatim.
+    if (input && typeof input === "object" && !Array.isArray(input)) {
+      return input as DepthRoleMap;
+    }
+
+    const tryKeys: string[] = [];
+    if (typeof input === "string" && input.trim().length > 0) {
+      tryKeys.push(input.trim());
+    } else {
+      tryKeys.push("qualityfolio.schema", "folio.schema");
+    }
+
+    const arr = this.#findFirstStringArrayInFm(tryKeys);
+    if (arr && arr.length) {
+      return this.#rolesArrayToDepthMap(arr);
+    }
+
+    // Fallback defaults
+    return this.#rolesArrayToDepthMap(["L1", "L2", "L3", "L4", "L5", "L6"]);
+  }
+
+  #findFirstStringArrayInFm(paths: string[]): string[] | undefined {
+    for (const p of paths) {
+      const v = deepGet(this.doc.fm as Dict, p);
+      if (Array.isArray(v) && v.every((x) => typeof x === "string")) {
+        return v as string[];
+      }
+    }
+    return undefined;
+  }
+
+  #rolesArrayToDepthMap(names: string[]): DepthRoleMap {
+    const out: DepthRoleMap = {};
+    for (let i = 0; i < Math.min(6, names.length); i++) {
+      const role = names[i];
+      if (role && role.trim().length) {
+        const depth = (i + 1) as HeadingDepth;
+        out[`h${depth}`] = role.trim();
+      }
+    }
+    return out;
   }
 }
 
@@ -486,7 +544,7 @@ export async function parseOne<FM extends Dict = Dict, P = string>(
       annotations,
       codesSelf,
       codesSection,
-      selfHasContent, // <-- ADD THIS
+      selfHasContent,
     } satisfies HeadingNode;
   });
 
@@ -596,12 +654,12 @@ function extractGfmTasks(nodes: ReadonlyArray<RootContent>): TaskItem[] {
 
     // Recurse into containers we care about
     if ("children" in n && Array.isArray(n.children)) {
-      for (const c of n.children as RootContent[]) visit(c);
+      for (const c of (n.children as RootContent[])) visit(c);
     }
   };
 
   for (const n of nodes) visit(n);
-  // Keep only those that actually have a GFM task state (true/false), but we could keep all if desired.
+  // Keep only those that actually have a GFM task state.
   return out.filter((t) => t.checked !== null);
 }
 
@@ -632,320 +690,123 @@ function extractCodeBlocks(nodes: ReadonlyArray<RootContent>): CodeBlock[] {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Smart schema discovery (terminal-first)                                     */
+/* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export interface DiscoveredSchema<Schema extends DepthRoleMap> {
-  /** Count of headings actually present at each depth. */
-  readonly depthsPresent: Readonly<Partial<Record<`h${HeadingDepth}`, number>>>;
-  /** Distinct depths that participate in the folio structure (from leaves + ancestors), shallow→deep. */
-  readonly structuralDepths: ReadonlyArray<HeadingDepth>;
-  /** Depths where *leaves* (terminals) occur. */
-  readonly leafDepths: ReadonlyArray<HeadingDepth>;
-
-  /** Recommended mapping from present depths to the *last k* roles of the provided schema. */
-  readonly recommended: Readonly<{
-    /** depth -> role (only for depths present/used) */
-    depthToRole: Readonly<
-      Partial<Record<`h${HeadingDepth}`, RoleNameOf<Schema>>>
-    >;
-    /** role -> depth (only for roles assigned) */
-    roleToDepth: Readonly<Partial<Record<RoleNameOf<Schema>, HeadingDepth>>>;
-    /** Roles (from your provided schema) that were assigned, shallow→deep. */
-    availableRoles: ReadonlyArray<RoleNameOf<Schema>>;
-    /** Roles (from your provided schema) that were NOT assigned (missing), shallow→deep. */
-    missingRoles: ReadonlyArray<RoleNameOf<Schema>>;
-    /** The inferred terminal role (last assigned role), if any. */
-    terminalRole?: RoleNameOf<Schema>;
-  }>;
-}
-
-/**
- * Terminal-first, “smart” schema discovery.
- *
- * Given a parsed folio and a *desired* schema (e.g.,
- *   { h1: "project", h2: "strategy", h3: "plan", h4: "suite", h5: "case" } as const)
- * we infer which roles are present by anchoring on the *terminal* leaves and mapping upward:
- *
- * - If only one heading depth is present → it is assumed to be the terminal role (e.g., "case").
- * - If two depths are present → they are assumed to be the last two roles (e.g., "suite"→"case").
- * - If k depths are present → we assign them to the last k roles of your schema, in order.
- *
- * Works with mixed/irregular heading depths; we derive “structuralDepths” from leaves and their
- * ancestor trails only, ignoring stray headings that don’t participate in leaf structure.
- */
-export function discoverSchema<
-  const Schema extends DepthRoleMap,
-  FM extends Dict = Dict,
-  P = string,
->(
-  docOrFolio: Folio<FM, P> | FolioDoc<FM, P>,
-  schema: Schema,
-): DiscoveredSchema<Schema> {
-  // Normalize input
-  const doc: FolioDoc<FM, P> = (docOrFolio as Any)?.doc
-    ? (docOrFolio as Folio<FM, P>).doc
-    : (docOrFolio as FolioDoc<FM, P>);
-
-  // 1) Stats: counts by heading depth (present anywhere)
-  const depthsPresent: Partial<Record<`h${HeadingDepth}`, number>> = {};
-  for (const h of doc.headings) {
-    const key = `h${h.depth}` as const;
-    depthsPresent[key] = (depthsPresent[key] ?? 0) + 1;
-  }
-
-  // 2) “Structural” depths = leaf depths plus ancestor depths with a refined rule:
-  //    - Always include the shallowest ancestor for context (even if empty),
-  //    - Include other ancestors only if they are “significant” (own content/annos/code).
-  const structuralSet = new Set<HeadingDepth>();
-  const leafSet = new Set<HeadingDepth>();
-
-  for (const leaf of doc.leaves) {
-    structuralSet.add(leaf.heading.depth);
-    leafSet.add(leaf.heading.depth);
-
-    // Determine shallowest ancestor depth (if any)
-    const trail = leaf.trail;
-    const shallowestAncDepth = trail.length
-      ? Math.min(...trail.map((a) => a.depth)) as HeadingDepth
-      : undefined;
-
-    for (const anc of trail) {
-      const isShallowest = shallowestAncDepth !== undefined &&
-        anc.depth === shallowestAncDepth;
-      const significant = anc.selfHasContent ||
-        Object.keys(anc.annotations).length > 0 ||
-        anc.codesSelf.length > 0;
-
-      if (isShallowest || significant) {
-        structuralSet.add(anc.depth);
-      }
+/** Dot-notated deep getter (e.g., deepGet(obj, "qualityfolio.schema")). */
+function deepGet(obj: Dict | undefined, path: string): unknown {
+  if (!obj) return undefined;
+  const parts = path.split(".").map((s) => s.trim()).filter(Boolean);
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur && typeof cur === "object" && p in (cur as Dict)) {
+      cur = (cur as Dict)[p];
+    } else {
+      return undefined;
     }
   }
-
-  const structuralDepths = Array.from(structuralSet).sort((a, b) =>
-    a - b
-  ) as HeadingDepth[];
-  const leafDepths = Array.from(leafSet).sort((a, b) =>
-    a - b
-  ) as HeadingDepth[];
-
-  // 3) Order the provided schema’s roles by depth (shallow→deep)
-  type RoleName = RoleNameOf<Schema>;
-  const schemaPairs: Array<{ depth: HeadingDepth; role: RoleName }> = [];
-  for (const k of Object.keys(schema) as Array<keyof Schema>) {
-    const role = schema[k];
-    if (!role) continue;
-    const d = parseInt(String(k).slice(1), 10) as HeadingDepth;
-    schemaPairs.push({ depth: d, role: role as RoleName });
-  }
-  schemaPairs.sort((a, b) => a.depth - b.depth);
-  const allRolesOrdered = schemaPairs.map((p) => p.role); // shallow→deep
-
-  // 4) Smart assignment: align the LAST k roles of the provided schema
-  //    to the k structural depths we discovered (shallow→deep).
-  const k = structuralDepths.length;
-  const lastKRoles = allRolesOrdered.slice(-k); // shallow→deep within the bottom slice
-  const depthToRole: Partial<Record<`h${HeadingDepth}`, RoleName>> = {};
-  const roleToDepth: Partial<Record<RoleName, HeadingDepth>> = {};
-  for (let i = 0; i < k; i++) {
-    const d = structuralDepths[i];
-    const r = lastKRoles[i];
-    if (r) {
-      depthToRole[`h${d}` as const] = r;
-      roleToDepth[r] = d;
-    }
-  }
-
-  // 5) Available vs missing roles relative to provided schema
-  const availableRoles = lastKRoles as ReadonlyArray<RoleName>;
-  const missingRoles = allRolesOrdered.slice(
-    0,
-    Math.max(0, allRolesOrdered.length - k),
-  ) as ReadonlyArray<RoleName>;
-  const terminalRole = availableRoles.length
-    ? (availableRoles[availableRoles.length - 1] as RoleName)
-    : undefined;
-
-  return {
-    depthsPresent,
-    structuralDepths,
-    leafDepths,
-    recommended: {
-      depthToRole,
-      roleToDepth,
-      availableRoles,
-      missingRoles,
-      terminalRole,
-    },
-  };
+  return cur;
 }
 
 /* -------------------------------------------------------------------------- */
-/* Convenience: discover + apply                                               */
+/* Tabular view (rows for ancestors + leaves with canonical paths)            */
 /* -------------------------------------------------------------------------- */
 
-export function applyDiscoveredSchema<
-  const Schema extends DepthRoleMap,
-  FM extends Dict = Dict,
-  P = string,
->(
-  docOrHierarchy: Folio<FM, P> | FolioDoc<FM, P>,
-  schema: Schema,
-) {
-  const discovery = discoverSchema(docOrHierarchy, schema);
+export type RowBase<Provenance> = {
+  /** “a::b::c::…” where each segment is the title of a role (e.g. project::suite::plan::case) */
+  path: string;
+  /** The display title for this node (the last segment of `path`) */
+  name: string;
+  /** Source file and starting line "<provenance>:line" */
+  where: string;
+  /** Raw file path (used by tree builder, not shown) */
+  provenance: Provenance;
+};
 
-  // Normalize to a Hierarchy
-  const hierarchy = (docOrHierarchy as Any)?.doc
-    ? (docOrHierarchy as Folio<FM, P>)
-    : new Folio<FM, P>(docOrHierarchy as FolioDoc<FM, P>);
+export type AncestorRow<Provenance> = RowBase<Provenance> & {
+  kind: "ancestor";
+  /** Heading node for this ancestor */
+  heading: HeadingNode;
+};
 
-  // Start with recommended mapping (depth -> role)
-  const base = { ...(discovery.recommended.depthToRole as DepthRoleMap) };
+export type LeafRow<Provenance> = RowBase<Provenance> & {
+  kind: "leaf";
+  /** Leaf node */
+  leaf: LeafNode;
+};
 
-  // ---- Convenience extension: if we only mapped the terminal role (k === 1),
-  // and there is at least one ancestor depth present in the document, add the
-  // immediate parent role (preceding role in the provided schema) onto the
-  // *shallowest ancestor depth* so grouping works (e.g., "suite" in two-level docs).
-  const assignedRoles = discovery.recommended
-    .availableRoles as unknown as string[];
-  const k = assignedRoles.length;
-
-  if (k === 1) {
-    // Order schema roles shallow->deep
-    const schemaPairs: Array<{ depth: HeadingDepth; role: string }> = [];
-    for (const k of Object.keys(schema) as Array<keyof Schema>) {
-      const role = schema[k];
-      if (!role) continue;
-      const d = parseInt(String(k).slice(1), 10) as HeadingDepth;
-      schemaPairs.push({ depth: d, role: String(role) });
-    }
-    schemaPairs.sort((a, b) => a.depth - b.depth);
-    const rolesOrdered = schemaPairs.map((p) => p.role);
-
-    const terminalRole = assignedRoles[0]; // only one
-    const termIdx = rolesOrdered.lastIndexOf(terminalRole);
-    const parentRole = termIdx > 0 ? rolesOrdered[termIdx - 1] : undefined;
-
-    if (parentRole) {
-      // Gather any ancestor depths from actual leaf trails (significant or not).
-      const ancestorDepths = new Set<HeadingDepth>();
-      const doc: FolioDoc<FM, P> = (hierarchy as Any).doc ??
-        (docOrHierarchy as FolioDoc<FM, P>);
-      for (const leaf of doc.leaves) {
-        for (const anc of leaf.trail) ancestorDepths.add(anc.depth);
-      }
-      const shallowestAncestor = [...ancestorDepths].sort((a, b) => a - b)[0];
-
-      if (shallowestAncestor !== undefined) {
-        const key = `h${shallowestAncestor}` as const;
-        // Only add if not already assigned to some role
-        const alreadyMapped = Object.keys(base).some((k) =>
-          base[k as keyof DepthRoleMap] === parentRole
-        );
-        if (!alreadyMapped) base[key] = parentRole;
-      }
-    }
-  }
-
-  const view = hierarchy.withSchema(base);
-  return { discovery, view };
-}
+export type Row<Provenance> = AncestorRow<Provenance> | LeafRow<Provenance>;
 
 /**
- * A single "ls" row describing one role occurrence at a specific heading level.
+ * Create a tabular representation of a folio:
+ * - One row per ancestor heading along the path to each leaf (deduped),
+ * - One row per terminal leaf,
+ * - `path` includes all role levels (from schema resolved via withSchema),
+ *   filling missing titles with "—".
+ *
+ * `schemaOrFmKey` mirrors `withSchema(...)`:
+ *  - DepthRoleMap, or
+ *  - frontmatter key path (e.g., "qualityfolio.schema"), or
+ *  - omitted → frontmatter default or L1..L6.
  */
-export interface LsSchemaRow {
-  readonly HL: HeadingDepth; // Markdown heading level (1..6)
-  readonly Nature: string; // Role name from the applied schema (e.g., "project")
-  readonly Title: string; // Heading text at that level
-}
+/* -------------------------------------------------------------------------- */
+/* Tabular (lineage-only paths)                                               */
+/* -------------------------------------------------------------------------- */
 
-/**
- * List (`ls`) the applied schema across a Folio as simple rows:
- *   HL | Nature  | Title
- *   1  | Project | My Project
- *   2  | Suite   | Authentication
- *
- * This inspects the `view` returned by `folio.withSchema({...} as const)` or
- * `applyDiscoveredSchema(...).view`, derives a consistent role→depth mapping,
- * and then enumerates unique (depth, role title) pairs across the document.
- *
- * Notes:
- * - We do NOT rely on any private properties on the view; we infer role→depth
- *   by matching each role's Title to the heading chain (trail + leaf heading).
- * - Rows are de-duplicated and sorted by `HL` (ascending).
- */
-export function lsSchema<
-  const Schema extends DepthRoleMap,
-  FM extends Dict = Dict,
-  P = string,
->(
-  _folio: Folio<FM, P>,
-  view: {
-    all: () => ReadonlyArray<LeafView<Schema>>;
-    atRole: (
-      role: RoleNameOf<Schema>,
-    ) => ReadonlyArray<LeafView<Schema>>;
-    groupBy: (
-      role: RoleNameOf<Schema>,
-    ) => ReadonlyMap<string, ReadonlyArray<LeafView<Schema>>>;
-  },
-): ReadonlyArray<LsSchemaRow> {
+export function tabularFolio<FM extends Dict = Dict, P = string>(
+  folio: Folio<FM, P>,
+  schemaOrFmKey?: DepthRoleMap | string, // kept for signature parity; not required for lineage
+): ReadonlyArray<Row<P>> {
+  // We still resolve via withSchema() so external consumers can use the same
+  // projection logic if they need it, but lineage-only paths ignore placeholders.
+  const view = folio.withSchema(schemaOrFmKey as unknown as DepthRoleMap);
   const leafViews = view.all();
-  if (leafViews.length === 0) return [];
 
-  // 1) Gather all role names present in this projection
-  const allRoleNames = new Set<string>();
+  const rows = new Map<string, Row<P>>();
+
+  // Build "title-only" lineage path from an ordered chain of headings.
+  const mkPath = (chain: ReadonlyArray<HeadingNode>) =>
+    chain.map((h) => h.text.trim()).filter(Boolean).join("::");
+
   for (const lv of leafViews) {
-    for (const rk of Object.keys(lv.roles)) {
-      allRoleNames.add(rk);
+    const leaf = lv.leaf;
+    const fullChain = [...leaf.trail, leaf.heading];
+
+    // Ancestors
+    for (const anc of leaf.trail) {
+      const chainUpToAnc = fullChain.filter((h) =>
+        h.startLine <= anc.startLine && h.depth <= anc.depth
+      );
+      const path = mkPath(chainUpToAnc);
+      const key = `H|${String(folio.doc.provenance)}|${anc.startLine}`;
+      if (!rows.has(key)) {
+        rows.set(key, {
+          kind: "ancestor",
+          path,
+          name: anc.text,
+          heading: anc,
+          where: `${String(folio.doc.provenance)}:${anc.startLine}`,
+          provenance: folio.doc.provenance,
+        });
+      }
+    }
+
+    // Leaf
+    {
+      const path = mkPath(fullChain);
+      const key = `L|${String(folio.doc.provenance)}|${leaf.heading.startLine}`;
+      if (!rows.has(key)) {
+        rows.set(key, {
+          kind: "leaf",
+          path,
+          name: leaf.heading.text,
+          leaf,
+          where: `${String(folio.doc.provenance)}:${leaf.heading.startLine}`,
+          provenance: folio.doc.provenance,
+        });
+      }
     }
   }
 
-  // 2) Build a consistent role -> depth mapping by inspecting any leaf where that role exists.
-  const roleToDepth = new Map<string, HeadingDepth>();
-  for (const role of allRoleNames) {
-    const lv = leafViews.find((x) =>
-      x.roles[role as keyof typeof x.roles] !== undefined
-    );
-    if (!lv) continue;
-    const title = lv.roles[role as keyof typeof lv.roles];
-    if (!title) continue;
-
-    const chain = [...lv.leaf.trail, lv.leaf.heading];
-    const found = chain.find((h) => h.text.trim() === String(title).trim());
-    if (found) roleToDepth.set(role, found.depth);
-  }
-
-  // 3) Produce unique rows (depth, role, title)
-  const seen = new Set<string>();
-  const rows: LsSchemaRow[] = [];
-
-  for (const lv of leafViews) {
-    for (const role of allRoleNames) {
-      const title = lv.roles[role as keyof typeof lv.roles];
-      if (!title) continue;
-
-      const depth = roleToDepth.get(role);
-      if (!depth) continue;
-
-      const key = `${depth}|${role}|${title}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      // Capitalize Nature for nice display; keep original casing otherwise
-      const naturePretty = role.length
-        ? role.charAt(0).toUpperCase() + role.slice(1)
-        : role;
-
-      rows.push({
-        HL: depth,
-        Nature: naturePretty,
-        Title: String(title),
-      });
-    }
-  }
-
-  return rows;
+  return Array.from(rows.values());
 }

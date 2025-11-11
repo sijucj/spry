@@ -1,3 +1,14 @@
+---
+qualityfolio:
+  version: 1.0
+  schema:
+    - project
+    - suite
+    - plan
+    - case
+    - step
+---
+
 # E2E1 End-to-End Qualityfolio
 
 This project validates the full customer journey: account creation →
