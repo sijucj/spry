@@ -176,7 +176,20 @@ function compileSimple<T extends string>(
       return () => true;
 
     case "Type":
-      return (n: RootContent) => n.type === ss.name;
+      return (n: RootContent) => {
+        // Allow HTML-like shorthands:
+        //   h1..h6  => mdast "heading" with matching depth
+        //   p       => mdast "paragraph"
+        // (Falls back to exact mdast type match otherwise)
+        const name = String(ss.name).toLowerCase();
+        const h = name.match(/^h([1-6])$/);
+        if (h) {
+          return n.type === "heading" &&
+            ((n as unknown as { depth?: number }).depth ?? 0) === Number(h[1]);
+        }
+        if (name === "p") return n.type === "paragraph";
+        return n.type === ss.name;
+      };
 
     case "Attr":
       return compileAttr<T>(ss, opts);
