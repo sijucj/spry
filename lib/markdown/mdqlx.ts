@@ -1,3 +1,4 @@
+// lib/markdown/mdqlx.ts
 // Executor for MDQL selectors over an mdast tree (Root/RootContent).
 // - Works with the AST produced by parseMDQL() from ./mdql.ts
 // - Supports frontmatter querying via [frontmatter.*] attribute paths
@@ -21,6 +22,11 @@ import type {
   SelectorList,
   SimpleSelector,
 } from "./mdql.ts";
+
+import flexibleCell, {
+  type FlexibleCellData,
+  parseFlexibleCellFromCode,
+} from "./flexible-cell.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -240,7 +246,7 @@ function compilePseudoFunc<T extends string>(
       return hay.includes(needle);
     }
 
-    // PI + ATTRS
+    // PI + ATTRS via flexible-cell
     const virt = getVirtualProps(node, root, opts);
 
     // :attrs('key')  -> key present in parsed attrs object
@@ -313,7 +319,6 @@ function extractBarewordFromSelectorArg(arg: unknown): string | null {
     (only as { kind?: string }).kind === "Id" ||
     (only as { kind?: string }).kind === "Class"
   ) {
-    // not expected in practice for our bareword usage, but kept for tolerance
     return String(
       (only as unknown as { value?: string; name?: string }).value ??
         (only as unknown as { value?: string; name?: string }).name ?? "",
@@ -461,18 +466,16 @@ function readAttr<T extends string>(
     return getPath(fm, name.split(".").slice(1));
   }
 
-  // pi.* / attrs.*
+  // pi.* / attrs.* (projected from flexible-cell)
   if (name.startsWith("pi.") || name.startsWith("attrs.")) {
     const v = getVirtualProps(node, root, opts);
     if (!v) return undefined;
+
     if (name.startsWith("pi.")) {
-      // Support:
-      //   [pi.tag=...], [pi.tag~=...], [pi.pos=...], [pi.args=...],
-      //   and explicit [pi.flags.tag=...]
       const parts = name.split(".").slice(1); // after "pi."
       if (parts.length === 0) return v.pi;
       const [head, ...rest] = parts;
-      // Direct well-known projected fields
+
       if (
         head === "pos" || head === "args" || head === "count" ||
         head === "posCount"
@@ -481,17 +484,17 @@ function readAttr<T extends string>(
           ? getPath(v.pi as unknown as Record<string, unknown>, [head, ...rest])
           : (v.pi as unknown as Record<string, unknown>)[head];
       }
-      // Explicit access via pi.flags.*
       if (head === "flags") {
         return rest.length
           ? getPath(v.pi.flags as Record<string, unknown>, rest)
           : v.pi.flags;
       }
-      // Default: treat "pi.<key>" as "pi.flags.<key>"
+      // Default shortcut: "pi.<key>" === "pi.flags.<key>"
       return rest.length
         ? getPath(v.pi.flags as Record<string, unknown>, [head, ...rest])
         : (v.pi.flags as Record<string, unknown>)[head];
     }
+
     if (name.startsWith("attrs.")) {
       return getPath(v.attrs, name.split(".").slice(1));
     }
@@ -509,6 +512,7 @@ function getFrontmatter(root: Root): Record<string, unknown> {
   if (anyRoot[CACHE]) return anyRoot[CACHE]!;
   const fm: Record<string, unknown> = {};
 
+  // Direct scan of YAML nodes
   for (const n of (root.children ?? []) as RootContent[]) {
     if (
       n.type === "yaml" && typeof (n as { value?: unknown }).value === "string"
@@ -523,10 +527,15 @@ function getFrontmatter(root: Root): Record<string, unknown> {
     }
   }
 
+  // Fallback: run a remark pipeline to ensure frontmatter nodes are discoverable.
   if (Object.keys(fm).length === 0) {
-    const pipeline = remark().use(remarkFrontmatter, ["yaml", "toml"]).use(
-      remarkGfm,
-    ).use(remarkStringify);
+    const pipeline = remark()
+      .use(remarkFrontmatter, ["yaml", "toml"])
+      .use(remarkGfm)
+      // ✅ also load flexible-cell here (no-op for YAML, keeps invariant with main parsing)
+      .use(flexibleCell, { storeKey: "flexibleCell" })
+      .use(remarkStringify);
+
     const tree = pipeline.parse(pipeline.stringify(root)) as Root;
     for (const n of tree.children) {
       if (
@@ -548,12 +557,13 @@ function getFrontmatter(root: Root): Record<string, unknown> {
   return fm;
 }
 
-/** Code fence virtual props: PI (flags/pos) + ATTRS (JSON after braces) */
+/** Virtual PI/ATTRS adapter using flexible-cell (no duplicate parsing logic here) */
 type Virt = {
   pi: {
-    args: string[]; // raw tokens (before normalization)
-    pos: string[]; // bare positional tokens inc. normalized flag names without values
-    flags: Record<string, string | boolean | (string | boolean)[]>;
+    args: string[];
+    pos: string[];
+    // flexible-cell can coerce to boolean|string|number|(…[])
+    flags: Record<string, unknown>;
     count: number;
     posCount: number;
   };
@@ -565,89 +575,57 @@ function normalizeFlagKey(k: string, opts: MdqlExecuteOptions): string {
   return (norm ?? k);
 }
 
+/** Retrieve virtual props for a code fence via flexible-cell.
+ *  - If node already has data.flexibleCell (from an upstream remark run), reuse it.
+ *  - Otherwise parse on-the-fly from the node using parseFlexibleCellFromCode().
+ */
 function getVirtualProps<T extends string>(
   node: RootContent,
   _root: Root,
   opts: MdqlExecuteOptions<T>,
 ): Virt | null {
   if (node.type !== "code") return null;
-  const meta = ((node as unknown as { meta?: string }).meta) ?? "";
-  const lang = ((node as unknown as { lang?: string }).lang) ?? "";
-  return parseInfoString(`${lang} ${meta}`.trim(), opts);
-}
 
-// tolerant "info string" splitter with normalization & repeated values
-function parseInfoString(text: string, opts: MdqlExecuteOptions): Virt {
-  const parts = text.trim().length ? text.trim().split(/\s+/) : [];
-  const flags: Record<string, string | boolean | (string | boolean)[]> = {};
-  const pos: string[] = [];
-  let inAttrs = false;
-  let attrsStr = "";
-
-  const pushFlag = (key: string, val: string | boolean) => {
-    const k = normalizeFlagKey(key.replace(/^(--?)/, ""), opts);
-    if (k in flags) {
-      const prev = flags[k];
-      if (Array.isArray(prev)) prev.push(val);
-      else flags[k] = [prev, val];
-    } else {
-      flags[k] = val;
-    }
-  };
-
-  for (let i = 0; i < parts.length; i++) {
-    let token = parts[i];
-
-    if (!inAttrs && token.startsWith("{")) {
-      inAttrs = true;
-      attrsStr = parts.slice(i).join(" ");
-      break;
-    }
-
-    // normalize leading dashes for flag-like tokens
-    const raw = token;
-    if (token.startsWith("--")) token = token.slice(2);
-    else if (token.startsWith("-")) token = token.slice(1);
-
-    // key=value form
-    const eq = token.indexOf("=");
-    if (eq > 0) {
-      const k = token.slice(0, eq);
-      const v = token.slice(eq + 1);
-      pushFlag(k, v.length ? v : true);
-      pos.push(k); // record normalized key as positional token too
-      continue;
-    }
-
-    // "--key value" two-token form (after normalization token is "key")
-    const next = parts[i + 1];
-    if (
-      raw.startsWith("-") && next && !next.startsWith("-") &&
-      !next.startsWith("{")
-    ) {
-      i++;
-      pushFlag(token, next);
-      pos.push(token);
-      continue;
-    }
-
-    // bare token
-    pushFlag(token, true);
-    pos.push(token);
+  // Reuse if plugin already ran upstream
+  // deno-lint-ignore no-explicit-any
+  const data = (node as any).data as
+    | { flexibleCell?: FlexibleCellData }
+    | undefined;
+  const stored = data?.flexibleCell;
+  if (stored) {
+    return {
+      pi: {
+        args: stored.pi.args,
+        pos: stored.pi.pos,
+        flags: stored.pi.flags as Record<string, unknown>,
+        count: stored.pi.count,
+        posCount: stored.pi.posCount,
+      },
+      attrs: stored.attrs,
+    };
   }
 
-  const attrs: Record<string, unknown> = {};
-  if (inAttrs) {
-    try {
-      const raw = attrsStr.replace(/^{|}$/g, "").trim();
-      const parsed = JSON.parse(`{${raw}}`);
-      if (parsed && typeof parsed === "object") Object.assign(attrs, parsed);
-    } catch { /* tolerant */ }
-  }
+  // Parse on-demand (no duplication—delegates to helper from flexible-cell.ts)
+  const parsed = parseFlexibleCellFromCode(node, {
+    normalizeFlagKey: opts.normalizeFlagKey,
+    storeKey: "flexibleCell",
+  });
+
+  if (!parsed) return null;
+
+  // Attach for idempotence so subsequent calls reuse it
+  // deno-lint-ignore no-explicit-any
+  ((node as any).data ??= {}).flexibleCell = parsed;
 
   return {
-    pi: { args: parts, pos, flags, count: parts.length, posCount: pos.length },
-    attrs,
+    pi: {
+      args: parsed.pi.args,
+      pos: parsed.pi.pos,
+      flags: parsed.pi.flags as Record<string, unknown>,
+      count: parsed.pi.count,
+      posCount: parsed.pi.posCount,
+    },
+    attrs: parsed.attrs,
   };
 }
 
