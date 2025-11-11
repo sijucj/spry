@@ -2,7 +2,8 @@
 // - Works with the AST produced by parseMDQL() from ./mdql.ts
 // - Supports frontmatter querying via [frontmatter.*] attribute paths
 // - Supports :contains("text") (case-insensitive), :attrs(...), :pi(...), and :has(<selector-list>)
-// - Treats PI "flags" as bare tokens (no dashes) e.g., :pi(flag) or :pi(x)
+// - PI supports long/short flags with merging: --flag, --flag=value, --flag value,
+//   repeated flags accumulate into arrays; single '-' prefixes are normalized too.
 
 import { parse as YAMLparse } from "jsr:@std/yaml@^1";
 import type { Literal, Parent, Root, RootContent } from "npm:@types/mdast@^4";
@@ -139,9 +140,6 @@ function compileSelector<T extends string>(
       case "text":
       case "content":
       case "slug":
-      case "pi":
-      case "attrs":
-      case "argv":
       default:
         return frontier;
     }
@@ -185,7 +183,7 @@ function compileSimple<T extends string>(
   }
 }
 
-/** Attribute selector implementation with frontmatter support */
+/** Attribute selector implementation with frontmatter + PI/ATTR paths */
 function compileAttr<T extends string>(
   a: AttributeSelector,
   opts: MdqlExecuteOptions<T>,
@@ -211,8 +209,6 @@ function compileAttr<T extends string>(
         return typeof val === "string" && includes(val, String(rhs));
       case "~=":
         return containsItem(val, rhs);
-      case "|=":
-        return val === rhs;
       case ">=":
         return Number(val) >= Number(rhs);
       case "<=":
@@ -244,7 +240,7 @@ function compilePseudoFunc<T extends string>(
       return hay.includes(needle);
     }
 
-    // PI + ATTRS are relevant for code fences
+    // PI + ATTRS
     const virt = getVirtualProps(node, root, opts);
 
     // :attrs('key')  -> key present in parsed attrs object
@@ -260,7 +256,7 @@ function compilePseudoFunc<T extends string>(
       return Object.prototype.hasOwnProperty.call(virt.attrs, key);
     }
 
-    // :pi(flag) or :pi(x) -> bare tokens (also match key from key=value)
+    // :pi(flag) or :pi(x) -> bare tokens or keys from key=value; repeated flags supported
     if (name === "pi" || name === "argv") {
       if (!virt) return false;
       if (!pf.args.length) return truthy(virt.pi);
@@ -268,11 +264,13 @@ function compilePseudoFunc<T extends string>(
       const token = arg0 == null
         ? ""
         : typeof arg0 === "string"
-        ? arg0
-        : extractBarewordFromSelectorArg(arg0) ?? String(arg0);
-      // FIX: accept either bare token or flag key from key=value
-      return virt.pi.pos.includes(token) ||
-        Object.prototype.hasOwnProperty.call(virt.pi.flags, token);
+        ? normalizeFlagKey(arg0, opts)
+        : normalizeFlagKey(
+          extractBarewordFromSelectorArg(arg0) ?? String(arg0),
+          opts,
+        );
+      if (virt.pi.pos.includes(token)) return true;
+      return Object.prototype.hasOwnProperty.call(virt.pi.flags, token);
     }
 
     // :has(<selector-list>)
@@ -281,7 +279,7 @@ function compilePseudoFunc<T extends string>(
       const arg0 = pf.args[0];
       if (
         typeof arg0 !== "object" || !arg0 ||
-        (arg0 as Any).kind !== "SelectorList"
+        (arg0 as { kind?: string }).kind !== "SelectorList"
       ) {
         return false;
       }
@@ -311,8 +309,15 @@ function extractBarewordFromSelectorArg(arg: unknown): string | null {
   if (!head.parts || head.parts.length !== 1) return null;
   const only = head.parts[0] as SimpleSelector;
   if (only.kind === "Type") return String(only.name);
-  if ((only as Any).kind === "Id" || (only as Any).kind === "Class") {
-    return String((only as Any).value ?? (only as Any).name ?? "");
+  if (
+    (only as { kind?: string }).kind === "Id" ||
+    (only as { kind?: string }).kind === "Class"
+  ) {
+    // not expected in practice for our bareword usage, but kept for tolerance
+    return String(
+      (only as unknown as { value?: string; name?: string }).value ??
+        (only as unknown as { value?: string; name?: string }).name ?? "",
+    );
   }
   return null;
 }
@@ -447,6 +452,7 @@ function readAttr<T extends string>(
   if (name === "depth") return (node as unknown as { depth?: number }).depth;
   if (name === "text") return mdToString(node);
 
+  // frontmatter.*
   if (
     name.startsWith("frontmatter.") || name.startsWith("yaml.") ||
     name.startsWith("toml.")
@@ -455,10 +461,37 @@ function readAttr<T extends string>(
     return getPath(fm, name.split(".").slice(1));
   }
 
+  // pi.* / attrs.*
   if (name.startsWith("pi.") || name.startsWith("attrs.")) {
     const v = getVirtualProps(node, root, opts);
     if (!v) return undefined;
-    if (name.startsWith("pi.")) return getPath(v.pi, name.split(".").slice(1));
+    if (name.startsWith("pi.")) {
+      // Support:
+      //   [pi.tag=...], [pi.tag~=...], [pi.pos=...], [pi.args=...],
+      //   and explicit [pi.flags.tag=...]
+      const parts = name.split(".").slice(1); // after "pi."
+      if (parts.length === 0) return v.pi;
+      const [head, ...rest] = parts;
+      // Direct well-known projected fields
+      if (
+        head === "pos" || head === "args" || head === "count" ||
+        head === "posCount"
+      ) {
+        return rest.length
+          ? getPath(v.pi as unknown as Record<string, unknown>, [head, ...rest])
+          : (v.pi as unknown as Record<string, unknown>)[head];
+      }
+      // Explicit access via pi.flags.*
+      if (head === "flags") {
+        return rest.length
+          ? getPath(v.pi.flags as Record<string, unknown>, rest)
+          : v.pi.flags;
+      }
+      // Default: treat "pi.<key>" as "pi.flags.<key>"
+      return rest.length
+        ? getPath(v.pi.flags as Record<string, unknown>, [head, ...rest])
+        : (v.pi.flags as Record<string, unknown>)[head];
+    }
     if (name.startsWith("attrs.")) {
       return getPath(v.attrs, name.split(".").slice(1));
     }
@@ -470,10 +503,10 @@ function readAttr<T extends string>(
 /** Frontmatter extraction (robust) */
 function getFrontmatter(root: Root): Record<string, unknown> {
   const CACHE = "__fm_cache__";
-  const AnyRoot = root as unknown as {
+  const anyRoot = root as unknown as {
     [k: string]: Record<string, unknown> | undefined;
   };
-  if (AnyRoot[CACHE]) return AnyRoot[CACHE]!;
+  if (anyRoot[CACHE]) return anyRoot[CACHE]!;
   const fm: Record<string, unknown> = {};
 
   for (const n of (root.children ?? []) as RootContent[]) {
@@ -511,54 +544,95 @@ function getFrontmatter(root: Root): Record<string, unknown> {
     }
   }
 
-  AnyRoot[CACHE] = fm;
+  anyRoot[CACHE] = fm;
   return fm;
 }
 
-/** Code fence virtual props: PI (bare tokens) + ATTRS (JSON after braces) */
+/** Code fence virtual props: PI (flags/pos) + ATTRS (JSON after braces) */
 type Virt = {
   pi: {
-    args: string[];
-    pos: string[];
-    flags: Record<string, string | boolean>;
+    args: string[]; // raw tokens (before normalization)
+    pos: string[]; // bare positional tokens inc. normalized flag names without values
+    flags: Record<string, string | boolean | (string | boolean)[]>;
     count: number;
     posCount: number;
   };
   attrs: Record<string, unknown>;
 };
 
+function normalizeFlagKey(k: string, opts: MdqlExecuteOptions): string {
+  const norm = opts.normalizeFlagKey?.(k);
+  return (norm ?? k);
+}
+
 function getVirtualProps<T extends string>(
   node: RootContent,
   _root: Root,
-  _opts: MdqlExecuteOptions<T>,
+  opts: MdqlExecuteOptions<T>,
 ): Virt | null {
   if (node.type !== "code") return null;
   const meta = ((node as unknown as { meta?: string }).meta) ?? "";
   const lang = ((node as unknown as { lang?: string }).lang) ?? "";
-  return parseInfoString(`${lang} ${meta}`.trim());
+  return parseInfoString(`${lang} ${meta}`.trim(), opts);
 }
 
-// tolerant "info string" splitter
-function parseInfoString(text: string): Virt {
+// tolerant "info string" splitter with normalization & repeated values
+function parseInfoString(text: string, opts: MdqlExecuteOptions): Virt {
   const parts = text.trim().length ? text.trim().split(/\s+/) : [];
-  const flags: Record<string, string | boolean> = {};
+  const flags: Record<string, string | boolean | (string | boolean)[]> = {};
   const pos: string[] = [];
   let inAttrs = false;
   let attrsStr = "";
 
+  const pushFlag = (key: string, val: string | boolean) => {
+    const k = normalizeFlagKey(key.replace(/^(--?)/, ""), opts);
+    if (k in flags) {
+      const prev = flags[k];
+      if (Array.isArray(prev)) prev.push(val);
+      else flags[k] = [prev, val];
+    } else {
+      flags[k] = val;
+    }
+  };
+
   for (let i = 0; i < parts.length; i++) {
-    const token = parts[i];
+    let token = parts[i];
+
     if (!inAttrs && token.startsWith("{")) {
       inAttrs = true;
       attrsStr = parts.slice(i).join(" ");
       break;
     }
+
+    // normalize leading dashes for flag-like tokens
+    const raw = token;
+    if (token.startsWith("--")) token = token.slice(2);
+    else if (token.startsWith("-")) token = token.slice(1);
+
+    // key=value form
     const eq = token.indexOf("=");
     if (eq > 0) {
       const k = token.slice(0, eq);
       const v = token.slice(eq + 1);
-      flags[k] = v.length ? v : true;
+      pushFlag(k, v.length ? v : true);
+      pos.push(k); // record normalized key as positional token too
+      continue;
     }
+
+    // "--key value" two-token form (after normalization token is "key")
+    const next = parts[i + 1];
+    if (
+      raw.startsWith("-") && next && !next.startsWith("-") &&
+      !next.startsWith("{")
+    ) {
+      i++;
+      pushFlag(token, next);
+      pos.push(token);
+      continue;
+    }
+
+    // bare token
+    pushFlag(token, true);
     pos.push(token);
   }
 
@@ -568,8 +642,7 @@ function parseInfoString(text: string): Virt {
       const raw = attrsStr.replace(/^{|}$/g, "").trim();
       const parsed = JSON.parse(`{${raw}}`);
       if (parsed && typeof parsed === "object") Object.assign(attrs, parsed);
-      // deno-lint-ignore no-empty
-    } catch {}
+    } catch { /* tolerant */ }
   }
 
   return {
@@ -591,12 +664,13 @@ function eq(a: unknown, b: unknown): boolean {
   return String(a) === String(b);
 }
 function truthy(v: unknown): boolean {
-  return Array.isArray(v) ? v.length > 0 : !!v;
+  if (Array.isArray(v)) return v.length > 0;
+  return v === 0 ? true : !!v;
 }
 function containsItem(h: unknown, n: unknown): boolean {
-  if (Array.isArray(h)) return h.map(String).includes(String(n));
-  const s = String(h ?? "");
   const needle = String(n ?? "");
+  if (Array.isArray(h)) return h.map(String).includes(needle);
+  const s = String(h ?? "");
   return s.split(/\s+/).includes(needle);
 }
 function starts(h: string, n: string): boolean {

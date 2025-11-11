@@ -59,6 +59,18 @@ Deno.test("MDQLX Qualityfolio Fixture", async (t) => {
     assertEquals(found.length, 4);
   });
 
+  await t.step("find code blocks with PI bare 'first'", async () => {
+    const ast = unwrapParse("code:pi(first)");
+    const sel = mdqlSelector(ast);
+    const hits: Array<{ node: RootContent }> = [];
+    for await (const m of sel.select([source])) hits.push(m);
+    assertEquals(hits.length, 1);
+    assertStringIncludes(
+      (hits[0].node as Any).value,
+      "objective: Lockout policy & reset email",
+    );
+  });
+
   await t.step("combined: json5 and yaml code fences (5 total)", async () => {
     const ast = unwrapParse("code[lang='json5'], code[lang='yaml']");
     const sel = mdqlSelector(ast);
@@ -66,6 +78,17 @@ Deno.test("MDQLX Qualityfolio Fixture", async (t) => {
     for await (const m of sel.select([source])) found.push(m);
     assertEquals(found.length, 5);
   });
+
+  await t.step(
+    "find code with attr priority>=3 (should be 2: priority 5 and 2)",
+    async () => {
+      const ast = unwrapParse("code[attrs.priority>=2]");
+      const sel = mdqlSelector(ast);
+      const hits: Array<{ node: RootContent }> = [];
+      for await (const m of sel.select([source])) hits.push(m);
+      assertEquals(hits.length, 2);
+    },
+  );
 
   await t.step("evidence JSON links by URL suffix", async () => {
     const ast = unwrapParse("link[url$='.json']");
@@ -88,6 +111,10 @@ Deno.test("MDQLX Qualityfolio Fixture", async (t) => {
 });
 
 Deno.test("Inline Custom Fixtures for PI & ATTR behavior", async (t) => {
+  // NOTE:
+  //  - js block has bare 'flag' and key=value
+  //  - python block uses two-token flag: --level critical and repeated tags
+  //  - bash block has attrs only
   const customMarkdown = `
 # PI / ATTR Test Fixture
 
@@ -95,7 +122,7 @@ Deno.test("Inline Custom Fixtures for PI & ATTR behavior", async (t) => {
 console.log("PI/ATTR test 1");
 \`\`\`
 
-\`\`\`python x yz level=critical { "priority": 5, "env": "prod" }
+\`\`\`python x yz --level critical --tag alpha --tag beta { "priority": 5, "env": "prod" }
 print("PI/ATTR test 2")
 \`\`\`
 
@@ -114,7 +141,10 @@ echo "PI/ATTR test 3"
     const hits: Array<{ node: RootContent }> = [];
     for await (const m of sel.select([source])) hits.push(m);
     assertEquals(hits.length, 1);
-    assertStringIncludes((hits[0].node as Any).value, "test 1");
+    assertStringIncludes(
+      (hits[0].node as unknown as { value: string }).value,
+      "test 1",
+    );
   });
 
   await t.step(
@@ -134,7 +164,10 @@ echo "PI/ATTR test 3"
     const hits: Array<{ node: RootContent }> = [];
     for await (const m of sel.select([source])) hits.push(m);
     assertEquals(hits.length, 1);
-    assertStringIncludes((hits[0].node as Any).value, "test 2");
+    assertStringIncludes(
+      (hits[0].node as unknown as { value: string }).value,
+      "test 2",
+    );
   });
 
   await t.step(
@@ -145,8 +178,41 @@ echo "PI/ATTR test 3"
       const hits: Array<{ node: RootContent }> = [];
       for await (const m of sel.select([source])) hits.push(m);
       assertEquals(hits.length, 1);
-      // We matched the python block with level=critical in PI; verify it's the "test 2" block.
-      assertStringIncludes((hits[0].node as Any).value, "test 2");
+      // matches python block (env=prod) AND has --level critical
+      assertStringIncludes(
+        (hits[0].node as unknown as { value: string }).value,
+        "test 2",
+      );
+    },
+  );
+
+  await t.step(
+    "repeated flags merged into arrays via attribute path [pi.tag~='alpha']",
+    async () => {
+      const ast = unwrapParse("code[pi.tag~='alpha']");
+      const sel = mdqlSelector(ast);
+      const hits: Array<{ node: RootContent }> = [];
+      for await (const m of sel.select([source])) hits.push(m);
+      assertEquals(hits.length, 1);
+      assertStringIncludes(
+        (hits[0].node as unknown as { value: string }).value,
+        "test 2",
+      );
+    },
+  );
+
+  await t.step(
+    "repeated flags merged into arrays: [pi.tag~='beta']",
+    async () => {
+      const ast = unwrapParse("code[pi.tag~='beta']");
+      const sel = mdqlSelector(ast);
+      const hits: Array<{ node: RootContent }> = [];
+      for await (const m of sel.select([source])) hits.push(m);
+      assertEquals(hits.length, 1);
+      assertStringIncludes(
+        (hits[0].node as unknown as { value: string }).value,
+        "test 2",
+      );
     },
   );
 
@@ -163,11 +229,11 @@ Deno.test("Complex synthetic fixture using JSON5/SQL/TXT + attrs", async (t) => 
   const markdown = `
 # Mixed JSON5 + SQL + Plaintext
 
-\`\`\`json5 flag tag=demo { "priority": 9, "owner": "qa" }
+\`\`\`json5 --tag demo { "priority": 9, "owner": "qa" }
 { "a": 1, "b": 2 }
 \`\`\`
 
-\`\`\`sql env=prod { "priority": 1, "env": "prod" }
+\`\`\`sql --env prod { "priority": 1, "env": "prod" }
 SELECT * FROM accounts;
 \`\`\`
 
@@ -198,15 +264,35 @@ plain
     const hits: Array<{ node: RootContent }> = [];
     for await (const m of sel.select([source])) hits.push(m);
     assertEquals(hits.length, 1);
-    assertStringIncludes((hits[0].node as Any).value, '"a"');
+    assertStringIncludes(
+      (hits[0].node as unknown as { value: string }).value,
+      '"a"',
+    );
   });
 
-  await t.step("sql fences filtered by env=prod (1)", async () => {
-    const ast = unwrapParse("code[attrs.env='prod']");
-    const sel = mdqlSelector(ast);
-    const hits: Array<{ node: RootContent }> = [];
-    for await (const m of sel.select([source])) hits.push(m);
-    assertEquals(hits.length, 1);
-    assertStringIncludes((hits[0].node as Any).value, "accounts");
-  });
+  await t.step(
+    "sql fences filtered by env=prod (1) using [attrs.env='prod']",
+    async () => {
+      const ast = unwrapParse("code[attrs.env='prod']");
+      const sel = mdqlSelector(ast);
+      const hits: Array<{ node: RootContent }> = [];
+      for await (const m of sel.select([source])) hits.push(m);
+      assertEquals(hits.length, 1);
+      assertStringIncludes(
+        (hits[0].node as unknown as { value: string }).value,
+        "accounts",
+      );
+    },
+  );
+
+  await t.step(
+    "sql fences filtered by env=prod via PI flag [pi.env='prod']",
+    async () => {
+      const ast = unwrapParse("code[pi.env='prod']");
+      const sel = mdqlSelector(ast);
+      const hits: Array<{ node: RootContent }> = [];
+      for await (const m of sel.select([source])) hits.push(m);
+      assertEquals(hits.length, 1);
+    },
+  );
 });

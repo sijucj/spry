@@ -104,7 +104,7 @@ Returning user logs in with valid credentials and completes MFA.
 
 Focuses on lockout and reset flows.
 
-```yaml
+```yaml first --flag flagval -F
 id: pwd-recovery-plan
 owner: [riya@example.org](mailto:riya@example.org)
 objective: Lockout policy & reset email
@@ -115,7 +115,7 @@ objective: Lockout policy & reset email
 Repeated failed logins trigger a lockout; valid login blocked until lockout
 expires.
 
-```yaml
+```yaml second third -C --capture name key=value { "priority": 2, "env": "qa" }
 id: acct-lockout-case
 severity: critical
 env: qa
@@ -141,7 +141,7 @@ env: qa
 - [Lockout logs](./evidence/acct-lockout-log.txt)
 - ![Lockout UI](./evidence/acct-lockout.png)
 
-```json5
+```json5 x yz level=critical { "priority": 5, "env": "prod" }
 {
   "notes": "Known intermittent: rate limiter delays message in <1% runs",
   "linked_issues": ["AUTH-117"]

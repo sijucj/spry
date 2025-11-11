@@ -126,9 +126,9 @@ export type AttrName =
   | `yaml.${string}`
   | `toml.${string}`
   | `frontmatter.${string}`
-  // New dotted-name namespaces for code fences with PI & ATTRS
-  | `pi.${string}` // e.g., pi.count, pi.pos0, pi.flags.F, pi.args
-  | `attrs.${string}` // e.g., attrs.schema, attrs.db.host, attrs.tags
+  // virtual paths projected by mdqlx:
+  | `pi.${string}`
+  | `attrs.${string}`
   | string;
 
 // ── AST nodes ───────────────────────────────────────────────────────────────
@@ -194,11 +194,11 @@ export interface PseudoFunc {
     | "where"
     | "nth-child"
     | "nth-of-type"
-    // New pseudos for PI/ATTRS sugar (parser-only; evaluation later)
-    | "pi" // :pi('--flag') or :pi('--env','prod')   (evaluates to checks over pi.*)
-    | "argv" // :argv(0,'deploy') or :argv('deploy')   (maps to pi.pos0 / pi.args)
-    | "argc" // :argc(3) or :argc(2..5)                (maps to pi.count comparisons)
-    | "attr"; // :attr('schema','public')               (maps to attrs.schema='public')
+    // for PI/ATTRS execution in mdqlx.ts
+    | "pi"
+    | "argv"
+    | "attr"
+    | "attrs";
   args: readonly (MDQLValue | SelectorList)[];
 }
 
@@ -213,16 +213,7 @@ export interface ComplexSelector {
   head: CompoundSelector;
   tails: readonly { combinator: Combinator; right: CompoundSelector }[];
 }
-export type PseudoElementName =
-  | "text"
-  | "content"
-  | "section"
-  | "slug"
-  // New pseudo-elements for extracting sub-parts (parser-only)
-  | "pi"
-  | "attrs"
-  | "argv";
-
+export type PseudoElementName = "text" | "content" | "section" | "slug";
 export interface Selector {
   kind: "Selector";
   core: ComplexSelector;
@@ -337,7 +328,7 @@ export function tokenize(input: string): Token[] {
       const start = loc();
       take();
       if (peek() === "::") {
-        // handled by seeing a second ':'
+        // unreachable path, but keep structure clear
       }
       if (peek() === ":") {
         take();
@@ -392,10 +383,10 @@ export function tokenize(input: string): Token[] {
       const start = loc();
       let s = "";
       while (/[0-9]/.test(peek())) s += take();
-      // ✅ correct two-dot detection
+      // correct second '.' check
       if (peek() === "." && input[i + 1] === ".") {
-        take(); // '.'
-        take(); // '.'
+        take();
+        take(); // ..
         let t = "";
         while (/[0-9]/.test(peek())) t += take();
         out.push({ kind: "range", value: `${s}..${t}`, loc: start });
@@ -462,12 +453,10 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
     return Object.assign(node as any, { loc: t.loc });
   }
 
-  // Helper to know what starts a simple selector
   const beginsSimple = (kkind: TokKind): boolean =>
     kkind === "ident" || kkind === "star" || kkind === "hash" ||
     kkind === "dot" || kkind === "lbrack" || kkind === "colon";
 
-  // SelectorList with optional relative mode (for :has(...) etc.)
   function parseSelectorList(allowRelative = false): SelectorList {
     const head = allowRelative && startsRelative()
       ? parseRelativeSelector()
@@ -487,21 +476,24 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
     return { kind: "SelectorList", items };
   }
 
-  // Does the upcoming tokens look like a relative selector?
   function startsRelative(): boolean {
-    // Case 1: descendant via leading whitespace
     if (cur().kind === "ws") {
       const saved = k;
       skipWS();
-      const kkind = cur().kind;
-      // ✅ allow either a simple selector OR a combinator after leading ws
-      const ok = beginsSimple(kkind) || kkind === "gt" || kkind === "plus" ||
-        kkind === "tilde";
+      let ok = false;
+      if (
+        cur().kind === "gt" || cur().kind === "plus" || cur().kind === "tilde"
+      ) {
+        nxt();
+        skipWS();
+        ok = beginsSimple(cur().kind);
+      } else {
+        ok = beginsSimple(cur().kind);
+      }
       k = saved;
       return ok;
     }
 
-    // Case 2: explicit combinator ('>', '+', '~') optionally followed by whitespace, then a simple selector
     if (
       cur().kind === "gt" || cur().kind === "plus" || cur().kind === "tilde"
     ) {
@@ -512,31 +504,29 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
       k = saved;
       return ok;
     }
-
     return false;
   }
 
   function parseRelativeSelector(): Selector {
-    // Implicit Universal head
     const head: CompoundSelector = {
       kind: "Compound",
       parts: [{ kind: "Universal" }] as NonEmptyArray<SimpleSelector>,
     };
 
-    // Determine first combinator: explicit (+, >, ~) or descendant (ws)
     let comb: Combinator | undefined;
-
     if (cur().kind === "ws") {
-      // previously: skipWS(); comb = "descendant";
+      // look ahead after whitespace: if there's an explicit combinator, use it; else descendant
       skipWS();
-      // ✅ If a combinator immediately follows the leading whitespace, use it.
       if (
         cur().kind === "gt" || cur().kind === "plus" || cur().kind === "tilde"
       ) {
-        if (cur().kind === "gt") comb = "child";
-        else if (cur().kind === "plus") comb = "adjacent";
-        else comb = "sibling";
-        nxt(); // consume the combinator token
+        const kind = cur().kind;
+        nxt();
+        comb = kind === "gt"
+          ? "child"
+          : kind === "plus"
+          ? "adjacent"
+          : "sibling";
       } else {
         comb = "descendant";
       }
@@ -551,14 +541,12 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
       comb = "sibling";
     }
 
-    // consume any whitespace between the combinator and the right side
+    // consume any whitespace between combinator and right side
     skipWS();
 
-    // Right-hand compound must follow
     const right = parseCompound();
     const tails = [{ combinator: (comb ?? "descendant") as Combinator, right }];
 
-    // Allow more tails after that
     const more = parseTails();
     const allTails = [...tails, ...more] as const;
 
@@ -571,7 +559,6 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
   function parseSelector(): Selector {
     let core = parseComplex();
 
-    // do NOT skip here; we need to see ws to infer descendant after a pseudo-element
     let pseudoElement: PseudoElementName | undefined;
     if (cur().kind === "dcolon") {
       nxt();
@@ -592,7 +579,6 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
     return { kind: "Complex", head, tails };
   }
 
-  // parse combinator tails (used in complex and after ::pseudo-element)
   function parseTails(): { combinator: Combinator; right: CompoundSelector }[] {
     const tails: { combinator: Combinator; right: CompoundSelector }[] = [];
     for (;;) {
@@ -608,13 +594,12 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
         comb = "sibling";
         nxt();
       } else if (cur().kind === "ws") {
-        // ws ⇒ descendant IF next token begins a simple selector
         skipWS();
         const kkind = cur().kind;
         if (beginsSimple(kkind)) {
           comb = "descendant";
         } else {
-          continue; // ignore stray spacing
+          continue;
         }
       } else break;
 
@@ -677,23 +662,19 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
     return { kind: "Compound", parts };
   }
 
-  // Parse a dotted attribute name: ident ( "." ident )*
-  function parseDottedAttrName(): string {
-    const first = consume("ident").value!;
-    let name = first;
-    while (cur().kind === "dot") {
-      nxt(); // consume '.'
-      const nextIdent = consume("ident").value!;
-      name += "." + nextIdent;
-    }
-    return name;
-  }
-
   function parseAttr(): Located<AttributeSelector> {
     const l = consume("lbrack");
     skipWS();
-    // support dotted names like pi.count, attrs.db.host, yaml.meta.version
-    const name = parseDottedAttrName() as AttrName;
+
+    // Support dotted attribute paths like pi.level or attrs.env
+    const nameTok = consume("ident");
+    let name = nameTok.value as AttrName;
+    while (cur().kind === "dot") {
+      nxt(); // consume '.'
+      const seg = consume("ident").value!;
+      name = `${name}.${seg}` as AttrName;
+    }
+
     skipWS();
     let op: AttrOp | undefined;
     let value: MDQLValue | undefined;
@@ -733,9 +714,9 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
       nxt();
       const args: (MDQLValue | SelectorList)[] = [];
 
+      // parse first arg if present
       if (cur().kind !== "rparen") {
         for (;;) {
-          // ✅ accept primitives … or a selector list (relative allowed for :has)
           if (cur().kind === "string") {
             args.push(cur().value!);
             nxt();
@@ -750,7 +731,7 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
             const allowRelative = name === "has";
             args.push(parseSelectorList(allowRelative));
           }
-          // ✅ comma-separated argument list
+          // handle comma-separated arguments
           if (cur().kind === "comma") {
             nxt();
             skipWS();
@@ -768,7 +749,6 @@ export function parseMDQL(input: string): Result<SelectorList, ParseError[]> {
     return withLoc({ kind: "PseudoBare", name: name as any }, c);
   }
 
-  // Top-level: build NonEmptyArray via head + rest
   const head = parseSelector();
   skipWS();
   const rest: Selector[] = [];
