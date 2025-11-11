@@ -3,8 +3,23 @@
 // Description: Unit tests for MDQL tokenizer + parser (Deno test)
 // =============================================================================
 
-import { assert, assertEquals, assertExists } from "jsr:@std/assert@1";
-import { parseMDQL, tokenize } from "./mdql.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+} from "jsr:@std/assert@1";
+import {
+  AttributeSelector,
+  CompoundSelector,
+  parseMDQL,
+  PseudoFunc,
+  Selector,
+  tokenize,
+} from "./mdql.ts";
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 Deno.test("tokenize: basic symbols", () => {
   const ts = tokenize('h2 > code[lang="sql"]');
@@ -352,4 +367,119 @@ Deno.test("parse error: leading combinator without right side", () => {
     msgs.includes("Expected a simple selector") ||
       msgs.includes("Expected ident"),
   );
+});
+
+Deno.test("MDQL complex PI/ATTRS conditions", async (t) => {
+  await t.step("code fence with PI + ATTRS + pseudo-element ::pi", () => {
+    const q =
+      `code:fence('sql')[pi.flags.env='prod'][pi.count>=2][attrs.timeout>=60]::pi`;
+    const res = parseMDQL(q);
+    assert(res.ok, JSON.stringify((res as Any).error, null, 2));
+
+    const sel: Selector = res.value.items[0];
+    assertStrictEquals(sel.pseudoElement, "pi");
+
+    const head = sel.core.head as CompoundSelector;
+    // Expect parts: Type 'code', PseudoFunc fence('sql'), Attr pi.flags.env, Attr pi.count, Attr attrs.timeout
+    assertEquals(head.parts.length >= 5, true);
+
+    const type = head.parts[0] as Any;
+    assertStrictEquals(type.kind, "Type");
+    assertStrictEquals(type.name, "code");
+
+    const pf = head.parts[1] as PseudoFunc;
+    assertStrictEquals(pf.kind, "PseudoFunc");
+    assertStrictEquals(pf.name, "fence");
+    assertStrictEquals(pf.args[0], "sql");
+
+    const a1 = head.parts[2] as AttributeSelector;
+    assertStrictEquals(a1.kind, "Attr");
+    assertStrictEquals(a1.name, "pi.flags.env");
+    assertStrictEquals(a1.op, "=");
+    assertStrictEquals(a1.value, "prod");
+
+    const a2 = head.parts[3] as AttributeSelector;
+    assertStrictEquals(a2.name, "pi.count");
+    assertStrictEquals(a2.op, ">=");
+    assertStrictEquals(a2.value, 2);
+
+    const a3 = head.parts[4] as AttributeSelector;
+    assertStrictEquals(a3.name, "attrs.timeout");
+    assertStrictEquals(a3.op, ">=");
+    assertStrictEquals(a3.value, 60);
+  });
+
+  await t.step(":has(...) with relative selector including PI checks", () => {
+    const q =
+      `heading:has( > code[lang='bash'][pi.pos0='deploy'] + code:pi('--dry-run') )`;
+    const res = parseMDQL(q);
+    assert(res.ok, JSON.stringify((res as Any).error, null, 2));
+
+    const sel = res.value.items[0];
+    const head = sel.core.head as CompoundSelector;
+    // head should start with Type 'heading'
+    assertStrictEquals((head.parts[0] as Any).name, "heading");
+
+    // find :has pseudo
+    const hasPseudo = head.parts.find((p) =>
+      p.kind === "PseudoFunc" && p.name === "has"
+    ) as PseudoFunc;
+    assert(hasPseudo, "expected :has pseudo");
+    // arg should be a SelectorList (relative)
+    const arg0 = hasPseudo.args[0] as Any;
+    assertStrictEquals(arg0.kind, "SelectorList");
+
+    const innerSel: Selector = arg0.items[0];
+    // expect first tail combinator is 'child' then 'adjacent'
+    assertStrictEquals(innerSel.core.tails.length, 2);
+    assertStrictEquals(innerSel.core.tails[0].combinator, "child");
+    assertStrictEquals(innerSel.core.tails[1].combinator, "adjacent");
+
+    // right side of first tail should be code[lang='bash'][pi.pos0='deploy']
+    const firstRight = innerSel.core.tails[0].right;
+    const pLang = firstRight.parts.find((p) =>
+      p.kind === "Attr" && (p as AttributeSelector).name === "lang"
+    ) as AttributeSelector;
+    assertStrictEquals(pLang.value, "bash");
+    const pPos0 = firstRight.parts.find((p) =>
+      p.kind === "Attr" && (p as AttributeSelector).name === "pi.pos0"
+    ) as AttributeSelector;
+    assertStrictEquals(pPos0.op, "=");
+    assertStrictEquals(pPos0.value, "deploy");
+
+    // right side of second tail should contain :pi('--dry-run')
+    const secondRight = innerSel.core.tails[1].right;
+    const piPseudo = secondRight.parts.find((p) =>
+      p.kind === "PseudoFunc" && (p as PseudoFunc).name === "pi"
+    ) as PseudoFunc;
+    assert(piPseudo);
+    assertStrictEquals(piPseudo.args[0], "--dry-run");
+  });
+
+  await t.step("argv + attrs tags contains + pseudo-element ::attrs", () => {
+    const q = `code:argv(0,'build'):argv('release')[attrs.tags~='etl']::attrs`;
+    const res = parseMDQL(q);
+    assert(res.ok, JSON.stringify((res as Any).error, null, 2));
+
+    const sel = res.value.items[0];
+    assertStrictEquals(sel.pseudoElement, "attrs");
+
+    const head = sel.core.head as CompoundSelector;
+    // find both :argv pseudos
+    const argvPseudos = head.parts.filter((p) =>
+      p.kind === "PseudoFunc" && p.name === "argv"
+    ) as PseudoFunc[];
+    assertStrictEquals(argvPseudos.length, 2);
+    assertStrictEquals(argvPseudos[0].args.length, 2); // (0,'build')
+    assertStrictEquals(argvPseudos[0].args[0], 0);
+    assertStrictEquals(argvPseudos[0].args[1], "build");
+    assertStrictEquals(argvPseudos[1].args.length, 1); // ('release')
+    assertStrictEquals(argvPseudos[1].args[0], "release");
+
+    const tagsAttr = head.parts.find((p) =>
+      p.kind === "Attr" && (p as AttributeSelector).name === "attrs.tags"
+    ) as AttributeSelector;
+    assertStrictEquals(tagsAttr.op, "~=");
+    assertStrictEquals(tagsAttr.value, "etl");
+  });
 });
