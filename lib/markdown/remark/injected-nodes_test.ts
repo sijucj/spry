@@ -26,7 +26,7 @@ Deno.test("injectedNodes: expands import spec into local SQL and binary utf8 nod
   await Deno.writeFile(pngPath, new Uint8Array([0x89, 0x50, 0x4e, 0x47])); // PNG header bytes
 
   const md = [
-    "```import --inject --base " + tmp,
+    "```import --base " + tmp,
     "# comment",
     "sql **/*.sql",
     "utf8 assets/**/*.png",
@@ -45,7 +45,6 @@ Deno.test("injectedNodes: expands import spec into local SQL and binary utf8 nod
 
   await t.step("spec block remains unchanged", () => {
     assertEquals(spec.lang, "import");
-    assertMatch(spec.meta ?? "", /--inject/);
     assertMatch(spec.value ?? "", /sql \*\*\/\*\.sql/);
   });
 

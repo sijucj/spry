@@ -235,7 +235,7 @@ export type InjectedNodeSource =
     }
   );
 
-export interface InjectedNodeData {
+export interface InjectedNode {
   isInjected: true;
   source?: InjectedNodeSource;
 }
@@ -243,9 +243,9 @@ export interface InjectedNodeData {
 /** Convenience type guard for enrichedCode and friends. */
 export function isInjectedCode(
   node: Code,
-): node is Code & { data: { injectedNode: InjectedNodeData } } {
+): node is Code & { data: { injectedNode: InjectedNode } } {
   return Boolean(
-    node.data && (node.data as { injectedNode?: InjectedNodeData }).injectedNode
+    node.data && (node.data as { injectedNode?: InjectedNode }).injectedNode
       ?.isInjected,
   );
 }
@@ -277,7 +277,7 @@ export interface InjectedNodesOptions {
    * Custom function to decide whether a code node is an import/spec block.
    * If omitted, the default checks for a `--inject` flag in the parsed PI.
    */
-  isSpecBlock?: (
+  readonly isSpecBlock?: (
     node: Code,
     parsed: ReturnType<typeof parseEnrichedCodeFromCode>,
   ) => boolean;
@@ -363,16 +363,12 @@ function parseDirectivesFromSpec(
  * block that should be expanded:
  *
  * - use parseEnrichedCodeFromCode(node)
- * - check for a PI flag `--inject`
+ * - check for a lang called "import"
  *
  * You can override this via plugin options.
  */
-function defaultIsSpecBlock(
-  _node: Code,
-  parsed: ReturnType<typeof parseEnrichedCodeFromCode>,
-): boolean {
-  const flags = parsed?.pi?.flags ?? {};
-  return Boolean(flags["inject"]);
+function defaultIsSpecBlock(node: Code) {
+  return node.lang === "import";
 }
 
 /**
@@ -507,7 +503,7 @@ export const injectedNodes: Plugin<[InjectedNodesOptions?], Root> = (
             injectedNode: {
               isInjected: true,
               source,
-            } satisfies InjectedNodeData,
+            } satisfies InjectedNode,
           },
           // Optional position mapping approximate to spec line:
           position: node.position
