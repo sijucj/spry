@@ -2,11 +2,11 @@ import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import { remark } from "npm:remark@^15";
+import { ensureLanguageByIdOrAlias } from "../../universal/code.ts";
 import enrichedCode, {
   type EnrichedCodeOptions,
   parseEnrichedCodeFromCode,
 } from "./enriched-code.ts";
-import { ensureLanguageByIdOrAlias } from "../../universal/code.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
