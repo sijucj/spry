@@ -155,7 +155,7 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
     assert(parsed);
     assertEquals(parsed?.lang, "sql");
     assertEquals(parsed?.pi.flags.stage, "prod");
-    assertEquals(parsed?.attrs.sharded, true);
+    assertEquals(parsed?.attrs?.sharded, true);
   });
 
   await t.step(

@@ -102,7 +102,7 @@ export interface EnrichedCode {
   /** Parsed Processing Instructions (flags/tokens). */
   readonly pi: EnrichedCodePI;
   /** Parsed JSON5 object from trailing `{ ... }` (if any). */
-  readonly attrs: Record<string, unknown>;
+  readonly attrs?: Record<string, unknown>;
 }
 
 export const ENRICHED_CODE_STORE_KEY = "enrichedCode" as const;
@@ -369,7 +369,7 @@ function parseInfoString(text: string, options: EnrichedCodeOptions) {
       count: args.length,
       posCount: pos.length,
     },
-    attrs,
+    attrs: inAttrs ? attrs : undefined,
   };
 }
 
