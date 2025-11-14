@@ -1,0 +1,805 @@
+/**
+ * Markdown File System (MDFS)
+ * ===========================
+ *
+ * This module treats **one or more Markdown files as a virtual file system**:
+ *
+ * - Each physical `.md` file is a **top-level directory tree**.
+ * - Each heading (`#`, `##`, `###`, …) is a **directory / folder**.
+ * - Each block of content under a heading (paragraph, fenced code, list, etc.)
+ *   is a **content file**.
+ *
+ * The result is a **schema-free but strongly structured view** over Markdown
+ * that you can:
+ *
+ * - Traverse like a tree (ROOT → H1 → H2 → …).
+ * - Query by “path” (`projects/etl/Data Cleaning/Rules`).
+ * - Enrich later with schemas (frontmatter, natures, roles) *without*
+ *   changing the underlying parse.
+ *
+ * Core ideas
+ * ----------
+ *
+ * - **MdfsFileRoot**: the parsed view of a single Markdown file
+ *   (`physicalPath`, `rootDir`, `dirsByPath`, `filesByPath`, `mdast`,
+ *   `frontmatter`, `frontmatterRaw`).
+ *
+ * - **MdfsDir**: a directory / heading node with:
+ *   - `title`, `level`, `headingPath`
+ *   - `fullPath` (physical path + heading titles)
+ *   - `metadata` / `ownMetadata` (DirMeta, inheritable later)
+ *   - `children`, `content`, `parent`
+ *   - `startLine`, `endLine` for source mapping
+ *
+ * - **MdfsContentFile**: a content “file” under a directory:
+ *   - `id` (`dirPath` + `localName`)
+ *   - `fullPath`
+ *   - `kind` (semantic kind, e.g. `"FenceCell"`, `"TestCase"`, `"DocSection"`)
+ *   - `language` (for code fences)
+ *   - `attrs`, `metadata`, optional `payload`
+ *   - `rawNodes`: the underlying mdast nodes
+ *   - `startLine`, `endLine`
+ *
+ * - **MdfsSet**: union of many `MdfsFileRoot` into a cross-file MDFS
+ *   (`dirsByPath` and `filesByPath` across the entire corpus).
+ *
+ * Importantly, the base layer is **schema-free**:
+ *
+ * - No built-in assumptions about what headings means.
+ * - Just Markdown → typed tree + indices.
+ *
+ * You layer any meaning you want on top.
+ *
+ * Basic usage
+ * -----------
+ *
+ * Parse a single Markdown file:
+ *
+ * @example
+ * ```ts
+ * import { parseMdfsFile } from "./mdfs.ts";
+ *
+ * const source = await Deno.readTextFile("Qualityfolio.md");
+ * const root = parseMdfsFile("Qualityfolio.md", source);
+ *
+ * console.log(root.physicalPath);          // "Qualityfolio.md"
+ * console.log(root.frontmatter);           // Parsed YAML frontmatter (if any)
+ * console.log(root.rootDir.children.length); // Number of top-level H1s
+ * ```
+ *
+ * Traverse directories and files:
+ *
+ * @example
+ * ```ts
+ * function walkDir(dir: MdfsDir, indent = "") {
+ *   console.log(indent + `[DIR] ${dir.title} (L${dir.level})`);
+ *
+ *   for (const file of dir.content) {
+ *     console.log(
+ *       indent +
+ *         `  [FILE] ${file.id.localName} @ ${file.startLine ?? "?"} (${file.kind})`,
+ *     );
+ *   }
+ *
+ *   for (const child of dir.children) {
+ *     walkDir(child, indent + "  ");
+ *   }
+ * }
+ *
+ * walkDir(root.rootDir);
+ * ```
+ *
+ * Capabilities
+ * ------------
+ *
+ * **Stable, queryable paths**
+ *
+ * Every directory and content “file” has a **canonical path**:
+ *
+ * - Directories: physical path (without `.md`) + heading titles
+ *   e.g. `"Qualityfolio/E2E1 End-to-End Qualityfolio/Accounts & Auth E2E Suite"`.
+ *
+ * - Content files: directory path + logical file name
+ *   e.g. `"Qualityfolio/.../E2E Account Creation Plan/block-3"`.
+ *
+ * This makes it easy to:
+ *
+ * - Build CLIs and TUIs that show a consistent tree (e.g. with a `::` separator).
+ * - Store references in SQLite / Postgres tables and join them later.
+ * - Jump from “where in the doc” to “what code/SQL executed here”.
+ *
+ * **First-class frontmatter and mdast**
+ *
+ * `MdfsFileRoot` carries:
+ *
+ * - `frontmatter`: the parsed YAML object (or `undefined`).
+ * - `frontmatterRaw`: the raw YAML string.
+ * - `mdast`: the full mdast `Root`.
+ *
+ * This enables “second-pass” analysis *without reparsing*:
+ *
+ * - Build `withFrontmatterSchema(root)` that reads something like:
+ *
+ *   ```yaml
+ *   ---
+ *   mdfs:
+ *     version: 1.0
+ *     schema:
+ *       nature:
+ *         h1: project
+ *         h2: suite
+ *         h3: plan
+ *         h4: case
+ *         h5: step
+ *   ---
+ *   ```
+ *
+ *   and produces a view where:
+ *
+ *   - `h1` directories are treated as “projects”.
+ *   - `h2` directories as “suites”.
+ *   - … etc.
+ *
+ * - Build `withZodPayloads(root, registry)` that walks all
+ *   `MdfsContentFile`s, validates their `attrs`/`rawNodes`, and populates
+ *   `payload` with strongly-typed data (e.g., SQL migrations, test cases,
+ *   orchestration steps).
+ *
+ * **Composable, schema-layered design**
+ *
+ * The module deliberately separates **structure** from **semantics**:
+ *
+ * - Structure:
+ *   - Headings → `MdfsDir`.
+ *   - Blocks → `MdfsContentFile`.
+ *   - Frontmatter → `frontmatter`.
+ *   - AST → `mdast`.
+ *
+ * - Semantics:
+ *   - Implemented by your own helpers (e.g. `withFrontmatterSchema`,
+ *     `withNatures`, `withPayloads`).
+ *
+ * This lets you:
+ *
+ * - Build multiple semantic views over the same Markdown:
+ *   - “Qualityfolio view”: project/suite/plan/case/step.
+ *   - “Release notes view”: version/feature/bug/changelog.
+ *   - “Ops view”: runbooks / playbooks / steps.
+ *
+ * - Evolve schemas over time without changing the parser.
+ *
+ * CLI / TUI example
+ * -----------------
+ *
+ * A typical CLI uses `tabularMdfs()` + `TreeLister` to render a tree:
+ *
+ * @example
+ * ```ts
+ * import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
+ * import { TreeLister } from "../../universal/lister-tree-tui.ts";
+ * import { parseMdfsFile, tabularMdfs } from "./mdfs.ts";
+ *
+ * const source = await Deno.readTextFile("Qualityfolio.md");
+ * const mdfs = parseMdfsFile("Qualityfolio.md", source);
+ * const rows = tabularMdfs(mdfs);
+ *
+ * const base = new ListerBuilder()
+ *   .from(rows)
+ *   .field("name", "name", { header: "NAME" })
+ *   .field("type", "kind", { header: "TYPE" })
+ *   .field("where", "where", { header: "WHERE" })
+ *   .select("name", "type", "where")
+ *   .color(true)
+ *   .header(true);
+ *
+ * const tree = TreeLister
+ *   .wrap(base)
+ *   .from(rows)
+ *   .byPath({ pathKey: "path", separator: "::" })
+ *   .treeOn("name")
+ *   .dirFirst(true);
+ *
+ * await tree.ls(true);
+ * ```
+ *
+ * This produces a **visual tree** of headings and content, with
+ * `WHERE` pointing to `file.md:line` and `TYPE` exposing whether something is
+ * a DIR or `FILE:<mdast-type>`.
+ *
+ * Summary
+ * -------
+ *
+ * Use this module when you want to:
+ *
+ * - Treat Markdown as a **structured, queryable filesystem**.
+ * - Attach schemas (roles, natures, test concepts) *after* parsing.
+ * - Build CLIs, UIs, or pipelines that navigate Markdown as if it were a
+ *   directory tree full of typed “files”.
+ *
+ * The parser stays deliberately boring and predictable; the interesting,
+ * opinionated semantics live in small, composable helpers on top.
+ */
+import { parse as YAMLparse } from "jsr:@std/yaml@^1";
+import type { Code, Heading, Root, RootContent } from "npm:@types/mdast@^4";
+import { toString as mdToString } from "npm:mdast-util-to-string@^4";
+import remarkFrontmatter from "npm:remark-frontmatter@^5";
+import remarkGfm from "npm:remark-gfm@^4";
+import { remark } from "npm:remark@^15";
+
+import flexibleCell, {
+  DEFAULT_FC_STORE_KEY,
+  FlexibleCellData,
+  isFlexibleCodeCell,
+  nodeAsJSON,
+} from "../flexible-cell.ts";
+
+/** POSIX-style physical path to a markdown file, e.g. "projects/etl/pipeline.md" */
+export type MdfsPhysicalPath = string;
+
+/** Directory-level metadata value shape (resolved + inherited). */
+export type MdfsDirMeta = Record<string, unknown>;
+
+/**
+ * A single heading segment in the markdown path.
+ * For ROOT (pre-heading area), level = 0 and title/slug may be synthetic.
+ */
+export interface MdfsHeadingSegment {
+  /** Heading level: 0 for ROOT, 1 for "#", 2 for "##", etc. */
+  readonly level: number;
+
+  /** Raw heading text as written in the markdown */
+  readonly title: string;
+
+  /** Slugified form for use in URLs or IDs. */
+  readonly slug: string;
+}
+
+/**
+ * Logical markdown path from ROOT down to a directory.
+ * Example (# Project > ## Strategy > ### Plan):
+ *
+ * [
+ *   { level: 1, title: "Project",  ... },
+ *   { level: 2, title: "Strategy", ... },
+ *   { level: 3, title: "Plan",     ... }
+ * ]
+ */
+export type MdfsHeadingPath = readonly MdfsHeadingSegment[];
+
+/**
+ * Full directory path string in the MDFS.
+ *
+ * Convention: physical path (sans ".md") + heading chain, e.g.:
+ *   "projects/healthlake/etl/pipeline/Data Cleaning/Rules"
+ */
+export type MdfsFullDirPath = string;
+
+/**
+ * Full content "file" path string in the MDFS.
+ *
+ * Convention: directory path + local content file name, e.g.:
+ *   "projects/healthlake/etl/pipeline/Data Cleaning/Rules/001.sql-migration"
+ */
+export type MdfsFullFilePath = string;
+
+//
+// Directories
+//
+
+/**
+ * A directory (folder) in the MDFS.
+ * This corresponds to:
+ *   - ROOT (pre-heading content), or
+ *   - a markdown heading (#, ##, ###, etc.)
+ */
+export interface MdfsDir {
+  /** Physical markdown file where this directory lives. */
+  readonly physicalPath: MdfsPhysicalPath;
+
+  /**
+   * Logical markdown heading path from ROOT down to this directory.
+   * For ROOT, typically an empty array or a single level-0 synthetic segment.
+   */
+  readonly headingPath: MdfsHeadingPath;
+
+  /** Full canonical path string combining physical path and heading chain. */
+  readonly fullPath: MdfsFullDirPath;
+
+  /** Heading text of this directory (empty or synthetic for ROOT). */
+  readonly title: string;
+
+  /** Heading level (0 = ROOT, 1 = "#", etc). */
+  readonly level: number;
+
+  /** 1-based line in source where this directory's heading starts (ROOT ~ 1). */
+  readonly startLine?: number;
+
+  /** 1-based line where this directory's heading ends. */
+  readonly endLine?: number;
+
+  /**
+   * Metadata defined directly at this directory (not inherited).
+   * Usually parsed from YAML/JSON/JSON5 fenced blocks of kind "DirMeta" under this heading.
+   */
+  readonly dirMeta: MdfsDirMeta;
+  readonly dirMetaInherited: MdfsDirMeta;
+
+  /** Parent directory, or undefined if this is the file's root directory. */
+  readonly parent?: MdfsDir;
+
+  /** Child directories (subheadings). */
+  readonly children: readonly MdfsDir[];
+
+  /**
+   * Content files that belong directly to this directory
+   * and not to its subdirectories.
+   */
+  readonly content: readonly MdfsContentFile[];
+}
+
+//
+// Content files
+//
+
+/**
+ * Identifier for a content file within the MDFS.
+ * Combines the parent directory path and a local name.
+ *
+ * This is the *canonical* identity; semantic IDs for the content file
+ * are exposed separately as `ids` on MdfsContentFile.
+ */
+export interface MdfsFileId {
+  readonly dirPath: MdfsFullDirPath;
+  readonly localName: string; // e.g. "001", "doc-1", "test-case-signup"
+}
+
+/**
+ * Base shape for a parsed content file (a "file" / "content" inside a folder).
+ * You can layer specific typing via generics in higher-level APIs.
+ */
+export type MdfsContentFileBase = {
+  /**
+   * Nature of this content, typically the underlying mdast `type`
+   * (e.g. "code", "paragraph", "list", "thematicBreak").
+   *
+   * This can be used as the discriminator of a discriminated union.
+   */
+  readonly nature: string;
+
+  /** Canonical ID for this content file, including its directory. */
+  readonly id: MdfsFileId;
+
+  /** Full canonical path string for this markdown element. */
+  readonly fullPath: MdfsFullFilePath;
+
+  /** Reference to the parent directory node. */
+  readonly dir: MdfsDir;
+
+  /** Errors encountered while parsing or validating this file's payload. */
+  readonly errors?: readonly Error[];
+
+  /**
+   * 1-based line numbers in the source markdown file
+   * where this content begins/ends.
+   */
+  readonly startLine?: number;
+  readonly endLine?: number;
+
+  /**
+   * Underlying mdast node representing this content file.
+   * For stronger typing, set TRawNode to RootContent or your own union.
+   */
+  readonly rawNode: RootContent;
+};
+
+/**
+ * Discrimated hape for a parsed content file (a "file" / "content" inside a folder).
+ * You can layer specific typing via generics in higher-level APIs.
+ */
+export type MdfsContentFile =
+  | MdfsContentFileBase
+  | (MdfsContentFileBase & {
+    readonly nature: "code";
+    readonly rawNode: Code;
+    readonly fcd: FlexibleCellData;
+  });
+
+//
+// Per-markdown-file root & MDFS set
+//
+
+// governance.ts — only the bottom part changes
+
+/**
+ * A single parsed markdown file within the broader MDFS set.
+ * It owns a small directory tree rooted at its ROOT directory.
+ *
+ * TRawAst      — full mdast Root (or any AST type you choose)
+ * TFrontmatter — parsed frontmatter object (YAML → JS), or unknown
+ */
+export interface MdfsFileRoot<
+  TRawAst = unknown,
+  TFrontmatter = unknown,
+> {
+  /** Physical path to the markdown file. */
+  readonly physicalPath: MdfsPhysicalPath;
+
+  /**
+   * Root directory representing content before the first heading,
+   * or a synthetic ROOT node representing the entire file tree.
+   */
+  readonly rootDir: MdfsDir;
+
+  /** Convenience index of all directories in this file by fullPath. */
+  readonly dirsByPath: ReadonlyMap<MdfsFullDirPath, MdfsDir>;
+
+  /** Convenience index of all content files in this file by fullPath. */
+  readonly filesByPath: ReadonlyMap<MdfsFullFilePath, MdfsContentFile>;
+
+  /** Full mdast tree for this markdown file (e.g. Root from @types/mdast). */
+  readonly mdast: TRawAst;
+
+  /**
+   * Parsed YAML frontmatter as a JS object (if present).
+   * Schema-free: caller decides how to interpret it.
+   */
+  readonly frontmatter?: TFrontmatter;
+
+  /**
+   * Raw frontmatter string (without the leading/trailing --- lines),
+   * useful for debugging or alternative parsers.
+   */
+  readonly frontmatterRaw?: string;
+}
+
+/**
+ * A complete MDFS view across multiple markdown files.
+ * This is what you get after scanning many .md files and
+ * building a unified semantic tree/index.
+ */
+export interface MdfsSet<
+  TRawAst = unknown,
+  TFrontmatter = unknown,
+> {
+  /** All markdown files that were scanned. */
+  readonly files: readonly MdfsFileRoot<TRawAst, TFrontmatter>[];
+
+  /** Global directory index across all files. */
+  readonly dirsByPath: ReadonlyMap<MdfsFullDirPath, MdfsDir>;
+
+  /** Global content file index across all files. */
+  readonly filesByPath: ReadonlyMap<MdfsFullFilePath, MdfsContentFile>;
+}
+
+/**
+ * Internal state we track while walking one markdown file.
+ */
+export interface DirState {
+  dir: MdfsDir;
+  headingPath: MdfsHeadingPath;
+  children: MdfsDir[];
+  content: MdfsContentFile[];
+  fileIndex: number;
+}
+
+export function typicalHeadingSegment(
+  node: Heading,
+  slugify: (input: string) => string,
+) {
+  const title = mdToString(node).trim();
+  const slug = slugify(title);
+
+  return {
+    level: node.depth,
+    title,
+    slug,
+  } satisfies MdfsHeadingSegment;
+}
+
+export function typicalSlugify(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]+/gu, "")
+    .replace(/\s+/g, "-");
+}
+
+export function typicalFsPath(path: string): string {
+  return path.replace(/\.md$/i, "");
+}
+
+/**
+ * Build a directory fullPath from basePath and headingPath titles.
+ * Example:
+ *   basePath = "projects/etl/pipeline"
+ *   headingPath titles = ["Data Cleaning", "Rules"]
+ *   → "projects/etl/pipeline/Data Cleaning/Rules"
+ */
+function typicalDirPath(basePath: string, path: MdfsHeadingPath) {
+  if (path.length === 0) return `${basePath}/ROOT`;
+  const parts = path.map((seg) => seg.title);
+  return `${basePath}/${parts.join("/")}` satisfies MdfsFullDirPath;
+}
+
+/**
+ * Build a structural MdfsContentFile for a single block node.
+ */
+function typicalContentFile(state: DirState, rawNode: RootContent) {
+  const { dir } = state;
+  const localName = `block-${state.fileIndex + 1}`;
+  state.fileIndex++;
+
+  const fullPath: MdfsFullFilePath = `${dir.fullPath}/${localName}`;
+
+  const startLine = rawNode.position?.start.line;
+  const endLine = rawNode.position?.end.line;
+  const extra = isFlexibleCodeCell(rawNode)
+    ? { fcd: rawNode.data[DEFAULT_FC_STORE_KEY] }
+    : {};
+
+  const contentFile: MdfsContentFile = {
+    nature: rawNode.type,
+    id: {
+      dirPath: dir.fullPath,
+      localName,
+    },
+    fullPath,
+    dir,
+    errors: undefined,
+    startLine,
+    endLine,
+    rawNode,
+    ...extra,
+  };
+
+  return contentFile;
+}
+
+export const ID_ANN = "id" as const;
+
+export const typicalAnnotationNode = (n: RootContent) =>
+  n.type === "paragraph" &&
+    n.children[0]?.type === "text" &&
+    n.children[0].value.startsWith("@")
+    ? n.children[0].value
+    : false;
+
+/**
+ * Core entry point: parse a single markdown source into an MDFS file root.
+ *
+ * Schema-free:
+ *  - Builds directory tree and content files.
+ *  - Parses YAML frontmatter and exposes it via `frontmatter`.
+ *  - Exposes the full mdast Root via `mdast`.
+ */
+export async function parseMdfsFile(
+  physicalPath: MdfsPhysicalPath,
+  source: string,
+  options?: {
+    readonly processor?: ReturnType<typeof remark>;
+    readonly fsPath?: (path: string) => string;
+    readonly slugify?: (input: string) => string;
+    readonly headingSegment?: (node: Heading) => MdfsHeadingSegment;
+    readonly dirPath?: (
+      basePath: string,
+      path: MdfsHeadingPath,
+    ) => MdfsFullDirPath;
+    readonly contentFile?: (
+      state: DirState,
+      rawNode: RootContent,
+    ) => MdfsContentFile;
+    readonly annotationNode: (n: RootContent) => string | false;
+  },
+) {
+  type MutableMdfsDir = {
+    -readonly [K in keyof MdfsDir]: MdfsDir[K];
+  };
+
+  const {
+    processor = remark()
+      .use(remarkFrontmatter, ["yaml"])
+      .use(remarkGfm)
+      .use(flexibleCell, {
+        coerceNumbers: true, // "9" -> 9
+        onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
+      }),
+    fsPath = typicalFsPath,
+    headingSegment = typicalHeadingSegment,
+    slugify = typicalSlugify,
+    dirPath = typicalDirPath,
+    contentFile = typicalContentFile,
+    annotationNode = typicalAnnotationNode,
+  } = options ?? {};
+
+  const tree = processor.parse(source) as Root;
+  await processor.run(tree);
+
+  // Extract and drop the first frontmatter node (if any).
+  const allChildren = Array.isArray(tree.children)
+    ? (tree.children as RootContent[])
+    : [];
+
+  const children: RootContent[] = [];
+  let frontmatterNode: RootContent | undefined;
+  let frontmatterRaw: string | undefined;
+  let frontmatter: unknown;
+
+  for (const node of allChildren) {
+    if (!frontmatterNode && node.type === "yaml") {
+      frontmatterNode = node;
+      continue;
+    }
+    children.push(node);
+  }
+
+  if (frontmatterNode && "value" in frontmatterNode) {
+    const withValue = frontmatterNode as RootContent & {
+      value?: unknown;
+    };
+    frontmatterRaw = String(withValue.value ?? "");
+    try {
+      frontmatter = YAMLparse(frontmatterRaw);
+    } catch {
+      // Keep raw string but omit parsed frontmatter on error.
+      frontmatter = undefined;
+    }
+  }
+
+  const basePath = fsPath(physicalPath);
+
+  // ROOT directory
+  const rootHeadingPath: MdfsHeadingPath = [];
+  const rootChildren: MdfsDir[] = [];
+  const rootContent: MdfsContentFile[] = [];
+  const rootDirMeta: MdfsDirMeta = {};
+
+  const rootDir: MdfsDir = {
+    physicalPath,
+    headingPath: rootHeadingPath,
+    fullPath: `${basePath}/ROOT`,
+    title: "ROOT",
+    level: 0,
+    dirMeta: rootDirMeta,
+    dirMetaInherited: {},
+    parent: undefined,
+    children: rootChildren,
+    content: rootContent,
+    startLine: 1,
+    endLine: undefined,
+  };
+
+  const dirsByPath = new Map<MdfsFullDirPath, MdfsDir>();
+  const filesByPath = new Map<MdfsFullFilePath, MdfsContentFile>();
+
+  dirsByPath.set(rootDir.fullPath, rootDir);
+
+  const rootState: DirState = {
+    dir: rootDir,
+    headingPath: rootHeadingPath,
+    children: rootChildren,
+    content: rootContent,
+    fileIndex: 0,
+  };
+
+  const dirStack: DirState[] = [rootState];
+
+  for (const node of children) {
+    if (node.type === "heading") {
+      const headingNode = node as Heading;
+
+      // Pop until we find a parent with smaller level.
+      while (
+        dirStack.length > 0 &&
+        dirStack[dirStack.length - 1].dir.level >= headingNode.depth
+      ) {
+        dirStack.pop();
+      }
+      const parentState = dirStack[dirStack.length - 1] ?? rootState;
+
+      const segment = headingSegment(headingNode, slugify);
+      const headingPath: MdfsHeadingPath = [
+        ...parentState.headingPath,
+        segment,
+      ];
+
+      const childrenArr: MdfsDir[] = [];
+      const contentArr: MdfsContentFile[] = [];
+      const dirFullPath = dirPath(basePath, headingPath);
+
+      const startLine = headingNode.position?.start.line;
+      const endLine = headingNode.position?.end.line;
+
+      const dir: MdfsDir = {
+        physicalPath,
+        headingPath,
+        fullPath: dirFullPath,
+        title: segment.title,
+        level: segment.level,
+        dirMeta: {},
+        dirMetaInherited: {},
+        parent: parentState.dir,
+        children: childrenArr,
+        content: contentArr,
+        startLine,
+        endLine,
+      };
+
+      const state: DirState = {
+        dir,
+        headingPath,
+        children: childrenArr,
+        content: contentArr,
+        fileIndex: 0,
+      };
+
+      parentState.children.push(dir);
+      dirsByPath.set(dirFullPath, dir);
+      dirStack.push(state);
+    } else {
+      // Non-heading content belongs to current directory.
+      const currentState = dirStack[dirStack.length - 1] ?? rootState;
+      const cf = contentFile(currentState, node);
+      const ann = annotationNode(node);
+      if (ann && ann.startsWith("@id ")) {
+        currentState.dir.dirMeta[ID_ANN] = ann.slice(4);
+      } else {
+        currentState.content.push(cf);
+      }
+      filesByPath.set(cf.fullPath, cf);
+
+      // Own metadata cells:
+      // If this is a code fence with lang yaml/json AND the first
+      // positional PI token is "META", treat the code body as
+      // directory-level ownMetadata.
+      if (cf.nature === "code") {
+        const parsedMeta = nodeAsJSON<MdfsDirMeta>(cf.rawNode, {
+          isMatch: (_, fcd) =>
+            fcd.meta === undefined || fcd.pi.pos[0]?.toUpperCase() === "META",
+          onError: (err, node) => {
+            console.log(
+              `Error parsing meta data in ${node.type} (${node.lang} line ${node.position?.start.line})`,
+            );
+            console.error(String(err));
+            return {};
+          },
+        });
+        if (parsedMeta) {
+          const mdir = currentState.dir as MutableMdfsDir;
+          mdir.dirMeta = {
+            ...mdir.dirMeta,
+            ...parsedMeta,
+          };
+        }
+      }
+    }
+  }
+
+  // Resolve directory metadata via inheritance:
+  // dirMetaInherited = parent.dirMetaInherited merged with dirMeta (child overrides).
+  function applyDirMetadata(dir: MdfsDir, inherited: MdfsDirMeta) {
+    const mdir = dir as MutableMdfsDir;
+    const combined: MdfsDirMeta = {
+      ...inherited,
+      ...dir.dirMeta,
+    };
+    delete combined[ID_ANN];
+    mdir.dirMetaInherited = combined;
+
+    for (const child of dir.children) {
+      applyDirMetadata(child, combined);
+    }
+  }
+
+  // ROOT starts with empty inherited metadata.
+  applyDirMetadata(rootDir, {});
+
+  return {
+    physicalPath,
+    rootDir,
+    dirsByPath,
+    filesByPath,
+    mdast: tree,
+    frontmatter,
+    frontmatterRaw,
+  } satisfies MdfsFileRoot<Root, unknown>;
+}

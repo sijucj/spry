@@ -60,7 +60,8 @@
  * - Does not mutate the code `value`; only attaches metadata on `node.data`.
  */
 
-import type { Root, RootContent } from "npm:@types/mdast@^4";
+import { parse as YAMLparse } from "jsr:@std/yaml@^1";
+import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
 import JSON5 from "npm:json5@^2";
 
 /** The shape of PI (Processing Instructions) data extracted from a code cell. */
@@ -98,6 +99,17 @@ export interface FlexibleCellData {
   pi: FlexibleCellPi;
   /** Parsed JSON5 object from trailing `{ ... }` (if any). */
   attrs: Record<string, unknown>;
+}
+
+export const DEFAULT_FC_STORE_KEY = "flexibleCell" as const;
+
+export function isFlexibleCodeCell(
+  node: RootContent,
+): node is Code & { data: { [DEFAULT_FC_STORE_KEY]: FlexibleCellData } } {
+  if (node.type == "code" && node.data && DEFAULT_FC_STORE_KEY in node.data) {
+    return true;
+  }
+  return false;
 }
 
 /** Configuration options for the plugin. */
@@ -154,7 +166,7 @@ export interface FlexibleCellOptions {
  * ```
  */
 export default function flexibleCell(options: FlexibleCellOptions = {}) {
-  const storeKey = options.storeKey ?? "flexibleCell";
+  const storeKey = options.storeKey ?? DEFAULT_FC_STORE_KEY;
 
   return function transformer(tree: Root) {
     const walk = (node: Root | RootContent): void => {
@@ -164,7 +176,7 @@ export default function flexibleCell(options: FlexibleCellOptions = {}) {
         const data = (anyNode.data ??= {});
         if (!data[storeKey]) {
           const parsed = parseFlexibleCellFromCode(anyNode, options);
-          if (parsed) data[storeKey] = parsed;
+          if (parsed) anyNode.data[storeKey] = parsed;
         }
       }
       // descend
@@ -344,4 +356,51 @@ function parseInfoString(text: string, options: FlexibleCellOptions) {
     },
     attrs,
   };
+}
+
+export function nodeAsJSON<Shape>(
+  node: RootContent,
+  opts?: {
+    readonly isMatch?: (node: Code, fcd: FlexibleCellData) => boolean;
+    readonly onError?: (
+      err: unknown,
+      node: Code,
+      fcd: FlexibleCellData,
+    ) => Shape;
+  },
+): Shape | null {
+  switch (node.type) {
+    case "code":
+      if (isFlexibleCodeCell(node)) {
+        const lang = (node.lang ?? "").toLowerCase();
+        const isMetaLang = lang === "yaml" || lang === "yml" ||
+          lang === "json" || lang === "json5";
+        if (
+          isMetaLang && (opts?.isMatch == undefined ||
+            opts.isMatch(node, node.data[DEFAULT_FC_STORE_KEY]))
+        ) {
+          try {
+            if (lang === "json") {
+              return JSON.parse(node.value) as Shape;
+            } else if (lang === "json5") {
+              return JSON5.parse(node.value) as Shape;
+            } else {
+              return YAMLparse(node.value) as Shape;
+            }
+          } catch (err) {
+            // Ignore parse errors for META cells; they just won't contribute metadata.
+            return opts?.onError?.(
+              err,
+              node,
+              node.data[DEFAULT_FC_STORE_KEY],
+            ) as Shape;
+          }
+        }
+      }
+      break;
+
+    case "inlineCode":
+      return JSON5.parse(node.value) as Shape;
+  }
+  return null;
 }

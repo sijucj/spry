@@ -1,12 +1,13 @@
 ---
-qualityfolio:
+mdfs:
   version: 1.0
   schema:
-    - project
-    - suite
-    - plan
-    - case
-    - step
+    nature:
+      h1: project
+      h2: suite
+      h3: plan
+      h4: case
+      h5: step
 ---
 
 # E2E1 End-to-End Qualityfolio
@@ -37,8 +38,9 @@ Validates account creation flows and first-time login.
 
 @id acct-create-plan
 
-```yaml
-owner: "[riya@example.org](mailto:riya@example.org)"
+```yaml META
+id: acct-create-plan
+owner: [riya@example.org](mailto:riya@example.org)
 objective: Sign-up → login → profile bootstrap
 ```
 
@@ -106,7 +108,7 @@ Focuses on lockout and reset flows.
 
 ```yaml
 id: pwd-recovery-plan
-owner: "[riya@example.org](mailto:riya@example.org)"
+owner: [riya@example.org](mailto:riya@example.org)
 objective: Lockout policy & reset email
 ```
 
