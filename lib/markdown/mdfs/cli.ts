@@ -86,7 +86,7 @@ export function tabularMdfs(root: MdfsFileRoot<Root, unknown>) {
     rows.push({
       depth: dir.level,
       kind: "dir",
-      name: dir.title || "ROOT",
+      name: "📁 " + dir.title || "ROOT",
       path: dirLogicalPath(dir),
       where: whereForDir(dir),
       id: ids ? Array.isArray(ids) ? ids.join(", ") : String(ids) : "", // first @id if present
@@ -109,7 +109,7 @@ export function tabularMdfs(root: MdfsFileRoot<Root, unknown>) {
       rows.push({
         depth: dir.level + 1,
         kind: "file",
-        name: fileName,
+        name: "📄 " + fileName,
         path: logicalPath,
         where: whereForFile(file),
         id: undefined, // later we can surface file IDs if desired
@@ -200,7 +200,7 @@ export class CLI<Project> {
             .field("type", "kind", {
               header: "TYPE",
               defaultColor: gray,
-              format: (val) => (val === "dir" ? "DIR" : "FILE"),
+              format: (_, r) => r.astType ?? "",
             })
             .field("id", "id", {
               header: "ID",
@@ -211,9 +211,10 @@ export class CLI<Project> {
               header: "WHERE",
               defaultColor: dim,
             })
-            .select("name", "type", "id", "where")
+            .select("name", "id", "where")
             .compact(false)
             .color(true)
+            .icon((r) => (r.dir ? "📁" : "📄"))
             .header(true);
 
           const tree = TreeLister
