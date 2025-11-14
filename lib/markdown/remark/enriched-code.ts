@@ -107,13 +107,21 @@ export interface EnrichedCode {
 
 export const ENRICHED_CODE_STORE_KEY = "enrichedCode" as const;
 
+export type EnrichedCodeNodeDataSupplier = {
+  [ENRICHED_CODE_STORE_KEY]: EnrichedCode;
+};
+
+export type EnrichedCodeNode = Code & {
+  data: EnrichedCodeNodeDataSupplier;
+};
+
 /**
  * Type guard: returns true if a `RootContent` node is a `code` node
  * that already carries EnrichedCodeData at the default store key.
  */
 export function isEnrichedCode(
   node: RootContent,
-): node is Code & { data: { [ENRICHED_CODE_STORE_KEY]: EnrichedCode } } {
+): node is EnrichedCodeNode {
   if (
     node.type === "code" && node.data &&
     ENRICHED_CODE_STORE_KEY in node.data
@@ -127,7 +135,7 @@ export function isEnrichedCode(
 export interface EnrichedCodeOptions {
   /**
    * Where to store the result on `node.data`. Defaults to `"enrichedCode"`.
-   * The plugin writes `node.data[storeKey] = EnrichedCodeData`.
+   * The plugin writes `node.data[storeKey] = EnrichedCode`.
    */
   storeKey?: string;
   /**
@@ -155,7 +163,7 @@ export interface EnrichedCodeOptions {
   /**
    * If defined, this callback is called whenever code cells are enriched
    */
-  collect?: (node: Code, ec: EnrichedCode) => void;
+  collect?: (node: EnrichedCodeNode) => void;
 }
 
 /**
@@ -193,7 +201,7 @@ export default function enrichedCode(options: EnrichedCodeOptions = {}) {
           const parsed = parseEnrichedCodeFromCode(anyNode, options);
           if (parsed) data[storeKey] = parsed;
         }
-        collect?.(node, data[storeKey]);
+        collect?.(node as EnrichedCodeNode);
       }
       // descend
       // deno-lint-ignore no-explicit-any
