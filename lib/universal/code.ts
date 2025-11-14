@@ -112,6 +112,15 @@ export function detectLanguageByShebang(
       block: [{ open: "/*", close: "*/", nested: false }],
     },
   });
+  // JSON (allow //, /* */ for JSONC tooling)
+  registerLanguage({
+    id: "json5",
+    extensions: [".json5"],
+    comment: {
+      line: ["//"],
+      block: [{ open: "/*", close: "*/", nested: false }],
+    },
+  });
   registerLanguage({
     id: "python",
     aliases: ["py"],
