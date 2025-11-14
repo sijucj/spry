@@ -61,7 +61,6 @@
  * - Does not mutate the code `value`; only attaches metadata on `node.data`.
  */
 
-import { parse as YAMLparse } from "jsr:@std/yaml@^1";
 import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
 import JSON5 from "npm:json5@^2";
 import { getLanguageByIdOrAlias, LanguageSpec } from "../../universal/code.ts";
@@ -379,60 +378,4 @@ function parseInfoString(text: string, options: EnrichedCodeOptions) {
     },
     attrs: inAttrs ? attrs : undefined,
   };
-}
-
-/**
- * Convenience helper: parse a node (typically a META/enriched code cell)
- * into a JSON/YAML/JSON5 object.
- *
- * - For `code` nodes, this only triggers if the lang is one of:
- *   - `yaml`, `yml`, `json`, `json5`
- *   and, if provided, `opts.isMatch` returns true given the EnrichedCodeData.
- *
- * - For `inlineCode` nodes, this treats the value as JSON5 and parses it.
- */
-export function nodeAsJSON<Shape>(
-  node: RootContent,
-  opts?: {
-    readonly isMatch?: (node: Code, data: EnrichedCode) => boolean;
-    readonly onError?: (
-      err: unknown,
-      node: Code,
-      data: EnrichedCode,
-    ) => Shape;
-  },
-): Shape | null {
-  switch (node.type) {
-    case "code":
-      if (isEnrichedCode(node)) {
-        const lang = (node.lang ?? "").toLowerCase();
-        const isMetaLang = lang === "yaml" || lang === "yml" ||
-          lang === "json" || lang === "json5";
-        if (
-          isMetaLang && (opts?.isMatch == undefined ||
-            opts.isMatch(node, node.data[ENRICHED_CODE_STORE_KEY]))
-        ) {
-          try {
-            if (lang === "json") {
-              return JSON.parse(node.value) as Shape;
-            } else if (lang === "json5") {
-              return JSON5.parse(node.value) as Shape;
-            } else {
-              return YAMLparse(node.value) as Shape;
-            }
-          } catch (err) {
-            return opts?.onError?.(
-              err,
-              node,
-              node.data[ENRICHED_CODE_STORE_KEY],
-            ) as Shape;
-          }
-        }
-      }
-      break;
-
-    case "inlineCode":
-      return JSON5.parse(node.value) as Shape;
-  }
-  return null;
 }
