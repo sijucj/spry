@@ -213,6 +213,7 @@ import { visit } from "npm:unist-util-visit@^5";
 import {
   isTextHttpUrl,
   lazyFileBytesReader,
+  lazyUrlBytesReader,
   relativeUrlAsFsPath,
 } from "../../universal/content-acquisition.ts";
 // Adjust this import to wherever you export it:
@@ -220,7 +221,7 @@ import { parseEnrichedCodeFromCode } from "./enriched-code.ts";
 
 /** Shape of the injectedNode metadata we attach to mdast.Code.data. */
 export type InjectedNodeSource =
-  & { isRefToBinary: boolean }
+  & { isRefToBinary: boolean; isContentAcquired: boolean }
   & (
     | {
       isRefToBinary: false;
@@ -231,7 +232,7 @@ export type InjectedNodeSource =
       isRefToBinary: true;
       importedFrom: string;
       encoding: "UTF-8";
-      rs?: ReadableStream<Uint8Array>;
+      stream?: () => ReadableStream<Uint8Array>;
     }
   );
 
@@ -274,13 +275,24 @@ type Directive =
 /** Options to customize how we detect "spec" blocks. */
 export interface InjectedNodesOptions {
   /**
-   * Custom function to decide whether a code node is an import/spec block.
-   * If omitted, the default checks for a `--inject` flag in the parsed PI.
+   * Decide whether a code node is an import/spec block and how to treat it.
+   *
+   * - return `false`  → not a spec block; ignore.
+   * - return `"retain-after-injections"` →
+   *       treat as spec, keep this node, and insert injected nodes
+   *       immediately *after* it.
+   * - return `"remove-before-injections"` →
+   *       treat as spec, remove this node from the AST, and splice
+   *       injected nodes into its place.
+   *
+   * If omitted, the default behavior is:
+   *   - If the parsed PI has `--inject`, return `"retain-after-injections"`.
+   *   - Otherwise, return `false`.
    */
   readonly isSpecBlock?: (
     node: Code,
     parsed: ReturnType<typeof parseEnrichedCodeFromCode>,
-  ) => boolean;
+  ) => false | "retain-after-injections" | "remove-before-injections";
 }
 
 /** Tiny sync globber over a root directory using walkSync + globToRegExp. */
@@ -368,7 +380,7 @@ function parseDirectivesFromSpec(
  * You can override this via plugin options.
  */
 function defaultIsSpecBlock(node: Code) {
-  return node.lang === "import";
+  return node.lang === "import" ? "retain-after-injections" : false;
 }
 
 /**
@@ -395,13 +407,16 @@ export const injectedNodes: Plugin<[InjectedNodesOptions?], Root> = (
       parent: any;
       index: number;
       injected: Code[];
+      mode: "retain-after-injections" | "remove-before-injections";
     }[] = [];
 
     visit(tree, "code", (node: Code, index, parent) => {
       if (parent == null || index == null) return;
 
       const parsed = parseEnrichedCodeFromCode(node);
-      if (!isSpecBlock(node, parsed)) return;
+      const mode = isSpecBlock(node, parsed);
+
+      if (!mode) return; // not a spec block
 
       // Determine base dir(s) from PI flags
       const flags = parsed?.pi?.flags ?? {};
@@ -468,26 +483,27 @@ export const injectedNodes: Plugin<[InjectedNodesOptions?], Root> = (
         let source: InjectedNodeSource | undefined;
 
         if (isBinaryHint && d.kind === "local") {
-          // Binary-ish local file: provide a lazy file reader
-          const rs = lazyFileBytesReader(importedFrom);
           source = {
             isRefToBinary: true,
+            isContentAcquired: false,
             importedFrom,
             encoding: "UTF-8",
-            rs,
+            stream: () => lazyFileBytesReader(importedFrom),
           };
         } else if (d.kind === "remote") {
           // Remote: mark as binary-ish reference but DO NOT start fetch here.
-          // rs is left undefined so we don't create any async operations in the plugin.
           source = {
             isRefToBinary: true,
+            isContentAcquired: false,
             importedFrom,
             encoding: "UTF-8",
+            stream: () => lazyUrlBytesReader(d.url),
           };
         } else {
-          // Plain text local file
+          // Plain text local file (it's already in node.value)
           source = {
             isRefToBinary: false,
+            isContentAcquired: true,
             importedFrom,
             original: value,
           };
@@ -526,13 +542,26 @@ export const injectedNodes: Plugin<[InjectedNodesOptions?], Root> = (
       }
 
       if (injectedNodesForThisSpec.length) {
-        mutations.push({ parent, index, injected: injectedNodesForThisSpec });
+        mutations.push({
+          parent,
+          index,
+          injected: injectedNodesForThisSpec,
+          mode,
+        });
       }
     });
 
-    // Apply mutations after traversal to avoid confusing visit()
-    for (const { parent, index, injected } of mutations) {
-      parent.children.splice(index + 1, 0, ...injected);
+    // Apply mutations after traversal, from right to left.
+    mutations.sort((a, b) => b.index - a.index);
+
+    for (const { parent, index, injected, mode } of mutations) {
+      if (mode === "remove-before-injections") {
+        // Replace spec node with injected nodes
+        parent.children.splice(index, 1, ...injected);
+      } else {
+        // retain-after-injections: keep spec; insert injected nodes after it
+        parent.children.splice(index + 1, 0, ...injected);
+      }
     }
 
     return tree;

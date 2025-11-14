@@ -83,9 +83,7 @@ Deno.test("injectedNodes: expands import spec into local SQL and binary utf8 nod
     assertEquals(src.encoding, "UTF-8");
     assertMatch(String(src.importedFrom), /logo\.png$/);
     // rs should be a ReadableStream if present
-    if (src.rs) {
-      assertEquals(typeof src.rs.getReader, "function");
-    }
+    assert(src.stream);
   });
 
   await Deno.remove(tmp, { recursive: true });
@@ -128,7 +126,5 @@ Deno.test("injectedNodes: expands remote JSON spec into injected remote node", (
   assert(src.isRefToBinary);
   assertEquals(src.encoding, "UTF-8");
   assertEquals(src.importedFrom, remoteUrl);
-  if (src.rs) {
-    assertEquals(typeof src.rs.getReader, "function");
-  }
+  assert(src.stream);
 });
