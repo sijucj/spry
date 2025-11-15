@@ -22,12 +22,14 @@ import { TreeLister } from "../../universal/lister-tree-tui.ts";
 import { computeSemVerSync } from "../../universal/version.ts";
 
 import { Root } from "npm:@types/mdast@4";
+import { isHeadingWithFrontmatter } from "../remark/heading-frontmatter.ts";
 import {
   type MdfsContentFile,
   type MdfsDir,
   type MdfsFileRoot,
   parseMdfsFile,
 } from "./mdfs.ts";
+import { isEnrichedCodeNode } from "../remark/enriched-code.ts";
 
 /**
  * Row model for tabular/tree display.
@@ -41,6 +43,7 @@ import {
 export interface MdfsRow {
   readonly depth: number;
   readonly kind: "dir" | "file";
+  readonly hFrontmatter?: Record<string, unknown>;
   readonly name: string;
   readonly path: string;
   readonly where: string;
@@ -80,13 +83,18 @@ export function tabularMdfs(root: MdfsFileRoot<Root, unknown>) {
   }
 
   function walk(dir: MdfsDir): void {
-    const ids = dir.dirMeta["id"];
+    const ids = isHeadingWithFrontmatter<{ id: string }>(dir.heading)
+      ? dir.heading.data.hFrontmatter["id"]
+      : "";
 
     // Directory row
     rows.push({
       depth: dir.level,
       kind: "dir",
-      name: "📁 " + dir.title || "ROOT",
+      hFrontmatter: isHeadingWithFrontmatter<{ id: string }>(dir.heading)
+        ? dir.heading.data.hFrontmatter
+        : undefined,
+      name: "📁 " + (dir.title || "ROOT"),
       path: dirLogicalPath(dir),
       where: whereForDir(dir),
       id: ids ? Array.isArray(ids) ? ids.join(", ") : String(ids) : "", // first @id if present
@@ -102,7 +110,9 @@ export function tabularMdfs(root: MdfsFileRoot<Root, unknown>) {
       const astType = rawNode.type;
 
       const fileName = astType
-        ? `${astType} (${file.id.localName})`
+        ? `${
+          isEnrichedCodeNode(rawNode) ? "enriched-code" : astType
+        } (${file.id.localName})`
         : file.id.localName;
       const logicalPath = [...parentSegs, fileName].join("::");
 
@@ -207,11 +217,16 @@ export class CLI<Project> {
               defaultColor: dim,
               format: (val) => val ?? "",
             })
+            .field("hFrontmatter", "hFrontmatter", {
+              header: "HFM",
+              defaultColor: dim,
+              format: (val) => val ? String(Object.keys(val).length) : "",
+            })
             .field("where", "where", {
               header: "WHERE",
               defaultColor: dim,
             })
-            .select("name", "id", "where")
+            .select("name", "id", "hFrontmatter", "where")
             .compact(false)
             .color(true)
             .icon((r) => (r.dir ? "📁" : "📄"))

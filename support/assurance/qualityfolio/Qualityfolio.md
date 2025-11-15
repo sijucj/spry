@@ -33,14 +33,14 @@ End-to-end user lifecycle: sign-up, verify, login, MFA, password reset.
 
 ### E2E Account Creation Plan
 
-Validates account creation flows and first-time login.
-
 @id acct-create-plan
 
 ```yaml
 owner: "[riya@example.org](mailto:riya@example.org)"
 objective: Sign-up → login → profile bootstrap
 ```
+
+Validates account creation flows and first-time login.
 
 #### New user can sign up and verify email
 
@@ -104,7 +104,7 @@ Returning user logs in with valid credentials and completes MFA.
 
 Focuses on lockout and reset flows.
 
-```yaml
+```yaml HFM
 id: pwd-recovery-plan
 owner: "[riya@example.org](mailto:riya@example.org)"
 objective: Lockout policy & reset email
@@ -115,7 +115,7 @@ objective: Lockout policy & reset email
 Repeated failed logins trigger a lockout; valid login blocked until lockout
 expires.
 
-```yaml
+```yaml META
 id: acct-lockout-case
 severity: critical
 env: qa

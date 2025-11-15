@@ -226,18 +226,15 @@ import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import { remark } from "npm:remark@^15";
 
-import flexibleCell, {
-  DEFAULT_FC_STORE_KEY,
-  FlexibleCellData,
-  isFlexibleCodeCell,
-  nodeAsJSON,
-} from "../flexible-cell.ts";
+import enrichedCode, {
+  ENRICHED_CODE_STORE_KEY,
+  EnrichedCode,
+  isEnrichedCodeNode,
+} from "../remark/enriched-code.ts";
+import headingFrontmatter from "../remark/heading-frontmatter.ts";
 
 /** POSIX-style physical path to a markdown file, e.g. "projects/etl/pipeline.md" */
 export type MdfsPhysicalPath = string;
-
-/** Directory-level metadata value shape (resolved + inherited). */
-export type MdfsDirMeta = Record<string, unknown>;
 
 /**
  * A single heading segment in the markdown path.
@@ -293,6 +290,9 @@ export type MdfsFullFilePath = string;
  *   - a markdown heading (#, ##, ###, etc.)
  */
 export interface MdfsDir {
+  /** the mdast heading we're treating as a directory */
+  readonly heading: Heading;
+
   /** Physical markdown file where this directory lives. */
   readonly physicalPath: MdfsPhysicalPath;
 
@@ -316,13 +316,6 @@ export interface MdfsDir {
 
   /** 1-based line where this directory's heading ends. */
   readonly endLine?: number;
-
-  /**
-   * Metadata defined directly at this directory (not inherited).
-   * Usually parsed from YAML/JSON/JSON5 fenced blocks of kind "DirMeta" under this heading.
-   */
-  readonly dirMeta: MdfsDirMeta;
-  readonly dirMetaInherited: MdfsDirMeta;
 
   /** Parent directory, or undefined if this is the file's root directory. */
   readonly parent?: MdfsDir;
@@ -393,7 +386,7 @@ export type MdfsContentFileBase = {
 };
 
 /**
- * Discrimated hape for a parsed content file (a "file" / "content" inside a folder).
+ * Discrimated union for a parsed content file (a "file" / "content" inside a folder).
  * You can layer specific typing via generics in higher-level APIs.
  */
 export type MdfsContentFile =
@@ -401,7 +394,7 @@ export type MdfsContentFile =
   | (MdfsContentFileBase & {
     readonly nature: "code";
     readonly rawNode: Code;
-    readonly fcd: FlexibleCellData;
+    readonly ec: EnrichedCode;
   });
 
 //
@@ -533,8 +526,8 @@ function typicalContentFile(state: DirState, rawNode: RootContent) {
 
   const startLine = rawNode.position?.start.line;
   const endLine = rawNode.position?.end.line;
-  const extra = isFlexibleCodeCell(rawNode)
-    ? { fcd: rawNode.data[DEFAULT_FC_STORE_KEY] }
+  const extra = isEnrichedCodeNode(rawNode)
+    ? { ec: rawNode.data[ENRICHED_CODE_STORE_KEY] }
     : {};
 
   const contentFile: MdfsContentFile = {
@@ -556,13 +549,6 @@ function typicalContentFile(state: DirState, rawNode: RootContent) {
 }
 
 export const ID_ANN = "id" as const;
-
-export const typicalAnnotationNode = (n: RootContent) =>
-  n.type === "paragraph" &&
-    n.children[0]?.type === "text" &&
-    n.children[0].value.startsWith("@")
-    ? n.children[0].value
-    : false;
 
 /**
  * Core entry point: parse a single markdown source into an MDFS file root.
@@ -588,18 +574,14 @@ export async function parseMdfsFile(
       state: DirState,
       rawNode: RootContent,
     ) => MdfsContentFile;
-    readonly annotationNode: (n: RootContent) => string | false;
   },
 ) {
-  type MutableMdfsDir = {
-    -readonly [K in keyof MdfsDir]: MdfsDir[K];
-  };
-
   const {
     processor = remark()
       .use(remarkFrontmatter, ["yaml"])
       .use(remarkGfm)
-      .use(flexibleCell, {
+      .use(headingFrontmatter)
+      .use(enrichedCode, {
         coerceNumbers: true, // "9" -> 9
         onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
       }),
@@ -608,7 +590,6 @@ export async function parseMdfsFile(
     slugify = typicalSlugify,
     dirPath = typicalDirPath,
     contentFile = typicalContentFile,
-    annotationNode = typicalAnnotationNode,
   } = options ?? {};
 
   const tree = processor.parse(source) as Root;
@@ -651,16 +632,14 @@ export async function parseMdfsFile(
   const rootHeadingPath: MdfsHeadingPath = [];
   const rootChildren: MdfsDir[] = [];
   const rootContent: MdfsContentFile[] = [];
-  const rootDirMeta: MdfsDirMeta = {};
 
   const rootDir: MdfsDir = {
+    heading: { type: "heading", depth: 1, children: [] },
     physicalPath,
     headingPath: rootHeadingPath,
     fullPath: `${basePath}/ROOT`,
     title: "ROOT",
     level: 0,
-    dirMeta: rootDirMeta,
-    dirMetaInherited: {},
     parent: undefined,
     children: rootChildren,
     content: rootContent,
@@ -710,13 +689,12 @@ export async function parseMdfsFile(
       const endLine = headingNode.position?.end.line;
 
       const dir: MdfsDir = {
+        heading: node,
         physicalPath,
         headingPath,
         fullPath: dirFullPath,
         title: segment.title,
         level: segment.level,
-        dirMeta: {},
-        dirMetaInherited: {},
         parent: parentState.dir,
         children: childrenArr,
         content: contentArr,
@@ -739,59 +717,10 @@ export async function parseMdfsFile(
       // Non-heading content belongs to current directory.
       const currentState = dirStack[dirStack.length - 1] ?? rootState;
       const cf = contentFile(currentState, node);
-      const ann = annotationNode(node);
-      if (ann && ann.startsWith("@id ")) {
-        currentState.dir.dirMeta[ID_ANN] = ann.slice(4);
-      } else {
-        currentState.content.push(cf);
-      }
+      currentState.content.push(cf);
       filesByPath.set(cf.fullPath, cf);
-
-      // Own metadata cells:
-      // If this is a code fence with lang yaml/json AND the first
-      // positional PI token is "META", treat the code body as
-      // directory-level ownMetadata.
-      if (cf.nature === "code") {
-        const parsedMeta = nodeAsJSON<MdfsDirMeta>(cf.rawNode, {
-          isMatch: (_, fcd) =>
-            fcd.meta === undefined || fcd.pi.pos[0]?.toUpperCase() === "META",
-          onError: (err, node) => {
-            console.log(
-              `Error parsing meta data in ${node.type} (${node.lang} line ${node.position?.start.line})`,
-            );
-            console.error(String(err));
-            return {};
-          },
-        });
-        if (parsedMeta) {
-          const mdir = currentState.dir as MutableMdfsDir;
-          mdir.dirMeta = {
-            ...mdir.dirMeta,
-            ...parsedMeta,
-          };
-        }
-      }
     }
   }
-
-  // Resolve directory metadata via inheritance:
-  // dirMetaInherited = parent.dirMetaInherited merged with dirMeta (child overrides).
-  function applyDirMetadata(dir: MdfsDir, inherited: MdfsDirMeta) {
-    const mdir = dir as MutableMdfsDir;
-    const combined: MdfsDirMeta = {
-      ...inherited,
-      ...dir.dirMeta,
-    };
-    delete combined[ID_ANN];
-    mdir.dirMetaInherited = combined;
-
-    for (const child of dir.children) {
-      applyDirMetadata(child, combined);
-    }
-  }
-
-  // ROOT starts with empty inherited metadata.
-  applyDirMetadata(rootDir, {});
 
   return {
     physicalPath,
