@@ -186,12 +186,6 @@ function summarizeNode(node: RootContent): string {
   }
 }
 
-function fileRef(file: string, node?: RootContent): string {
-  const line = node?.position?.start?.line;
-  if (typeof line !== "number") return file;
-  return `${file}:${line}`;
-}
-
 // ---------------------------------------------------------------------------
 // mdastql selection (Option A – use real mdastql.ts)
 // ---------------------------------------------------------------------------
@@ -268,10 +262,11 @@ interface BuildLsRowsOptions {
  *   - dataKeys (CSV of node.data keys if requested)
  */
 function buildLsRows(
-  file: string,
+  pmt: ParsedMarkdownTree,
   root: Root,
   opts: BuildLsRowsOptions = {},
 ): LsRow[] {
+  const { fileRef } = pmt;
   const { includeDataKeys, query, mdastqlOptions } = opts;
   const selected = selectNodes(root, query, mdastqlOptions);
   const selectedSet = new Set(selected);
@@ -311,7 +306,7 @@ function buildLsRows(
 
     rows.push({
       id: id++,
-      file: fileRef(file, node),
+      file: fileRef(node),
       type: node.type,
       depth,
       headingPath,
@@ -342,20 +337,18 @@ interface BuildTreeRowsOptions {
  * - Non-heading top-level nodes become "content" children under the last heading or the file root.
  */
 function buildTreeRows(
-  file: string,
+  pmt: ParsedMarkdownTree,
   root: Root,
   opts: BuildTreeRowsOptions = {},
 ): TreeRow[] {
+  const { rootId, label, fileRef, provenance: file } = pmt;
   const rows: TreeRow[] = [];
   let counter = 0;
-
-  const label = file === "<stdin>" ? "<stdin>" : basename(file || "<stdin>");
-  const rootId = `${file}#root`;
 
   // Synthetic file root row
   rows.push({
     id: rootId,
-    file,
+    file: fileRef(),
     kind: "heading",
     type: "root",
     label,
@@ -400,7 +393,7 @@ function buildTreeRows(
 
       rows.push({
         id,
-        file: fileRef(file, child),
+        file: fileRef(child),
         kind: "heading",
         type: "heading",
         label: headingText(child),
@@ -421,7 +414,7 @@ function buildTreeRows(
 
       rows.push({
         id,
-        file: fileRef(file, child),
+        file: fileRef(child),
         kind: "content",
         type: child.type,
         label: summarizeNode(child),
@@ -477,13 +470,25 @@ function buildTreeRows(
 // ---------------------------------------------------------------------------
 
 interface ParsedMarkdownTree {
-  readonly file: string;
+  readonly provenance: string; // what the user supplied
   readonly root: Root;
   readonly source: string;
+  readonly fileRef: (node?: RootContent) => string;
+  readonly rootId: string;
+  readonly label: string;
+  readonly url?: URL; // in case provenance was fetched
+}
+
+function tryParseUrl(spec: string): URL | undefined {
+  try {
+    return new URL(spec);
+  } catch {
+    return undefined;
+  }
 }
 
 async function readMarkdownTrees(
-  files: readonly string[],
+  sources: readonly string[],
   processor = remark()
     .use(remarkFrontmatter, ["yaml"])
     .use(docFrontmatter)
@@ -494,19 +499,66 @@ async function readMarkdownTrees(
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     }),
 ): Promise<Array<ParsedMarkdownTree>> {
-  if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
+  if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
     const text = await new Response(Deno.stdin.readable).text();
     const root = processor.parse(text);
     await processor.run(root);
-    return [{ file: "<stdin>", root, source: text }];
+    return [{
+      provenance: "<stdin>",
+      root,
+      source: text,
+      fileRef: () => `<STDIN>`,
+      rootId: `stdin#root`,
+      label: `<STDIN>`,
+    }];
   }
 
   const results: Array<ParsedMarkdownTree> = [];
-  for (const file of files) {
-    const text = await Deno.readTextFile(file);
+  for (const provenance of sources) {
+    const url = tryParseUrl(provenance);
+    let text: string;
+
+    if (url && (url.protocol === "http:" || url.protocol === "https:")) {
+      // Remote URL → fetch
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+          console.error(
+            red(`Failed to fetch URL: ${provenance} – status ${resp.status}`),
+          );
+          continue;
+        }
+        text = await resp.text();
+      } catch (err) {
+        console.error(red(`Error fetching URL: ${provenance}`), err);
+        continue;
+      }
+    } else {
+      // Everything else → treat as local path
+      try {
+        text = await Deno.readTextFile(provenance);
+      } catch (err) {
+        console.error(red(`Error reading file: ${provenance}`), err);
+        continue;
+      }
+    }
+
     const root = processor.parse(text);
     await processor.run(root);
-    results.push({ file, root, source: text });
+    results.push({
+      provenance,
+      root,
+      source: text,
+      fileRef: url ? (() => basename(url.pathname)) : ((node) => {
+        const file = basename(provenance);
+        const line = node?.position?.start?.line;
+        if (typeof line !== "number") return file;
+        return `${file}:${line}`;
+      }),
+      rootId: `${provenance}#root`,
+      label: url ? basename(url.pathname) : basename(provenance),
+      url,
+    });
   }
   return results;
 }
@@ -721,8 +773,8 @@ export class CLI {
           const trees = await readMarkdownTrees(files);
           const allRows: LsRow[] = [];
 
-          for (const { file, root } of trees) {
-            const rows = buildLsRows(file, root, {
+          for (const pmt of trees) {
+            const rows = buildLsRows(pmt, pmt.root, {
               includeDataKeys: !!options.data,
               query: options.select,
             });
@@ -824,12 +876,12 @@ export class CLI {
         const trees = await readMarkdownTrees(files);
         const allRows: TreeRow[] = [];
 
-        for (const { file, root } of trees) {
+        for (const pmt of trees) {
           const selectedNodes = options.select
-            ? selectNodes(root, options.select)
+            ? selectNodes(pmt.root, options.select)
             : undefined;
 
-          const rows = buildTreeRows(file, root, { selectedNodes });
+          const rows = buildTreeRows(pmt, pmt.root, { selectedNodes });
           allRows.push(...rows);
         }
 
