@@ -27,13 +27,20 @@ import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
 
 import { basename } from "jsr:@std/path@1";
 
+import { toString as mdToString } from "npm:mdast-util-to-string@^4";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import { remark } from "npm:remark@^15";
+import remarkFrontmatter from "npm:remark-frontmatter@^5";
+import remarkGfm from "npm:remark-gfm@^4";
 
 import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../../universal/lister-tree-tui.ts";
 
 import { mdastql, type MdastQlOptions } from "./mdastql.ts";
+
+import codeFrontmatter from "../remark/code-frontmatter.ts";
+import docFrontmatter from "../remark/doc-frontmatter.ts";
+import headingFrontmatter from "../remark/heading-frontmatter.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -270,13 +277,13 @@ function buildLsRows(
     // Apply de-duplication / noise filtering for default ls.
     if (!shouldEmitNodeForLs(node, parent, hasQuery)) return;
 
-    const headingPath = headingStack.filter(Boolean).join(" / ");
+    const headingPath = headingStack.filter(Boolean).join(" → ");
     const name = node.type === "heading"
       ? `h${(node as Any).depth ?? "?"}: ${headingText(node as Heading)}`
       : summarizeNode(node);
 
-    const dataKeys = includeDataKeys && (node as Any).data
-      ? Object.keys((node as Any).data as Record<string, unknown>).join(",")
+    const dataKeys = includeDataKeys && node.data
+      ? Object.keys(node.data as Record<string, unknown>).join(", ")
       : undefined;
 
     rows.push({
@@ -390,7 +397,7 @@ function nodesToMarkdown(nodes: RootContent[]): string {
     type: "root",
     children: nodes,
   };
-  return remark().stringify(root);
+  return mdToString(root);
 }
 
 // ---------------------------------------------------------------------------
@@ -399,17 +406,28 @@ function nodesToMarkdown(nodes: RootContent[]): string {
 
 async function readMarkdownTrees(
   files: readonly string[],
+  processor = remark()
+    .use(remarkFrontmatter, ["yaml"])
+    .use(docFrontmatter)
+    .use(remarkGfm)
+    .use(headingFrontmatter)
+    .use(codeFrontmatter, {
+      coerceNumbers: true, // "9" -> 9
+      onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
+    }),
 ): Promise<Array<{ file: string; root: Root }>> {
   if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
     const text = await new Response(Deno.stdin.readable).text();
-    const root = remark().parse(text) as Root;
+    const root = processor.parse(text);
+    await processor.run(root);
     return [{ file: "<stdin>", root }];
   }
 
   const results: Array<{ file: string; root: Root }> = [];
   for (const file of files) {
     const text = await Deno.readTextFile(file);
-    const root = remark().parse(text) as Root;
+    const root = processor.parse(text);
+    await processor.run(root);
     results.push({ file, root });
   }
   return results;
