@@ -9,7 +9,7 @@
  *
  * ```ts
  * import { remark } from "npm:remark@^15";
- * import enrichedCode from "./flexible-cell.ts";
+ * import enrichedCode from "./enriched-cell.ts";
  * import codePartials from "./code-partial.ts";
  *
  * const processor = remark()
