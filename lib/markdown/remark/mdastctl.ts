@@ -27,11 +27,11 @@ import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
 
 import { basename } from "jsr:@std/path@1";
 
-import { toString as mdToString } from "npm:mdast-util-to-string@^4";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import { remark } from "npm:remark@^15";
+import { toString as mdToString } from "npm:mdast-util-to-string@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
+import { remark } from "npm:remark@^15";
 
 import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../../universal/lister-tree-tui.ts";
@@ -111,6 +111,33 @@ function walkTree(
       visitChildren(child, 1);
     }
   });
+}
+
+function markNodesContainingSelected(
+  root: Root,
+  selected: Set<RootContent>,
+): WeakMap<RootContent, boolean> {
+  const map = new WeakMap<RootContent, boolean>();
+
+  const visitNode = (node: RootContent): boolean => {
+    let has = selected.has(node);
+    if (isParent(node)) {
+      const kids = (node as Any).children as RootContent[] | undefined;
+      if (kids) {
+        for (const child of kids) {
+          if (visitNode(child)) has = true;
+        }
+      }
+    }
+    map.set(node, has);
+    return has;
+  };
+
+  for (const child of root.children ?? []) {
+    visitNode(child);
+  }
+
+  return map;
 }
 
 /** Collect visible text from a node and its descendants. */
@@ -305,6 +332,10 @@ function buildLsRows(
 // TREE rows: MDFS-style heading/content hierarchy with synthetic file root
 // ---------------------------------------------------------------------------
 
+interface BuildTreeRowsOptions {
+  readonly selectedNodes?: RootContent[];
+}
+
 /**
  * Build `TreeRow`s:
  *
@@ -318,6 +349,7 @@ function buildLsRows(
 function buildTreeRows(
   file: string,
   root: Root,
+  opts: BuildTreeRowsOptions = {},
 ): TreeRow[] {
   const rows: TreeRow[] = [];
   let counter = 0;
@@ -333,6 +365,7 @@ function buildTreeRows(
     type: "root",
     label,
     parentId: undefined,
+    dataKeys: undefined,
   });
 
   type StackEntry = { depth: number; id: string };
@@ -340,6 +373,19 @@ function buildTreeRows(
   const stack: StackEntry[] = [{ depth: 0, id: rootId }];
 
   const children = root.children ?? [];
+
+  // Selection support
+  const selectedNodes = opts.selectedNodes;
+  const selectedSet = selectedNodes && selectedNodes.length > 0
+    ? new Set(selectedNodes)
+    : undefined;
+  const containsSelected = selectedSet
+    ? markNodesContainingSelected(root, selectedSet)
+    : undefined;
+
+  // Map row.id -> underlying top-level node (or null for synthetic root)
+  const rowNode = new Map<string, RootContent | null>();
+  rowNode.set(rootId, null);
 
   for (const child of children) {
     if (child.type === "heading") {
@@ -353,8 +399,9 @@ function buildTreeRows(
 
       const parentId = stack[stack.length - 1]?.id;
       const id = `${file}#h${counter++}`;
+
       const dataKeys = (child as Any).data
-        ? Object.keys((child as Any).data as Record<string, unknown>).join(", ")
+        ? Object.keys((child as Any).data as Record<string, unknown>).join(",")
         : undefined;
 
       rows.push({
@@ -367,6 +414,7 @@ function buildTreeRows(
         dataKeys,
       });
 
+      rowNode.set(id, child);
       stack.push({ depth: hd, id });
     } else {
       // Non-heading: treat as content under the last heading, or file root.
@@ -374,7 +422,7 @@ function buildTreeRows(
       const id = `${file}#n${counter++}`;
 
       const dataKeys = (child as Any).data
-        ? Object.keys((child as Any).data as Record<string, unknown>).join(",")
+        ? Object.keys((child as Any).data as Record<string, unknown>).join(", ")
         : undefined;
 
       rows.push({
@@ -386,10 +434,48 @@ function buildTreeRows(
         parentId,
         dataKeys,
       });
+
+      rowNode.set(id, child);
     }
   }
 
-  return rows;
+  // If no selection, return full tree
+  if (!selectedSet) return rows;
+
+  // Determine which rows are directly "hit" by selection (their node subtree contains a selected node)
+  const prelim = new Set<string>();
+  for (const [id, node] of rowNode.entries()) {
+    if (!node) continue; // synthetic root; handle later
+    if (containsSelected?.get(node)) {
+      prelim.add(id);
+    }
+  }
+
+  if (prelim.size === 0) {
+    // Nothing matched in this file; keep only synthetic root so treeCommand
+    // can still merge multiple files sensibly.
+    return rows.filter((r) => r.id === rootId);
+  }
+
+  // Close upwards over ancestors: include all parents up to the file root
+  const byId = new Map<string, TreeRow>(rows.map((r) => [r.id, r]));
+  const allowed = new Set<string>();
+  const stackIds = [...prelim];
+
+  while (stackIds.length) {
+    const id = stackIds.pop()!;
+    if (allowed.has(id)) continue;
+    allowed.add(id);
+    const row = byId.get(id);
+    if (row?.parentId && !allowed.has(row.parentId)) {
+      stackIds.push(row.parentId);
+    }
+  }
+
+  // Always include the synthetic root
+  allowed.add(rootId);
+
+  return rows.filter((r) => allowed.has(r.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +688,7 @@ export class CLI {
     return new Command()
       .description(`heading/content hierarchy (MDFS-style, per file)`)
       .arguments("[paths...:string]")
+      .option("--select <query:string>", "mdastql selection to focus the tree.")
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
@@ -610,7 +697,11 @@ export class CLI {
         const allRows: TreeRow[] = [];
 
         for (const { file, root } of trees) {
-          const rows = buildTreeRows(file, root);
+          const selectedNodes = options.select
+            ? selectNodes(root, options.select)
+            : undefined;
+
+          const rows = buildTreeRows(file, root, { selectedNodes });
           allRows.push(...rows);
         }
 
