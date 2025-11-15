@@ -95,9 +95,8 @@ function walkTree(
   const children = root.children ?? [];
 
   const visitChildren = (parent: ParentLike, depth: number): void => {
-    const kids = (parent as Any).children as RootContent[] | undefined;
-    if (!kids) return;
-    kids.forEach((child, index) => {
+    if (!parent.children) return;
+    parent.children.forEach((child, index) => {
       fn(child, { parent, depth, index });
       if (isParent(child)) {
         visitChildren(child, depth + 1);
@@ -122,9 +121,8 @@ function markNodesContainingSelected(
   const visitNode = (node: RootContent): boolean => {
     let has = selected.has(node);
     if (isParent(node)) {
-      const kids = (node as Any).children as RootContent[] | undefined;
-      if (kids) {
-        for (const child of kids) {
+      if (node.children) {
+        for (const child of node.children) {
           if (visitNode(child)) has = true;
         }
       }
@@ -172,12 +170,11 @@ function truncate(s: string, max: number): string {
 function summarizeNode(node: RootContent): string {
   switch (node.type) {
     case "heading":
-      return headingText(node as Heading);
+      return headingText(node);
     case "paragraph":
       return truncate(nodeToPlainText(node), 60);
     case "code": {
-      const lang = (node as Any).lang as string | undefined;
-      return lang ? truncate(`\`${lang}\` code`, 60) : "code";
+      return node.lang ? truncate(`\`${node.lang}\` code`, 60) : "code";
     }
     case "list":
       return "list";
@@ -233,7 +230,7 @@ function shouldEmitNodeForLs(
 
   // Paragraphs directly under list items are just wrappers for bullet text.
   // We'll keep the listItem row and drop the inner paragraph row.
-  if (node.type === "paragraph" && (parent as Any).type === "listItem") {
+  if (node.type === "paragraph" && parent.type === "listItem") {
     return false;
   }
 
@@ -290,9 +287,8 @@ function buildLsRows(
   walkTree(root, (node, { depth, parent }) => {
     // Maintain heading stack for *all* nodes so descendants get correct paths
     if (node.type === "heading") {
-      const h = node as Heading;
-      const hd = (h.depth ?? 1) | 0;
-      const label = headingText(h);
+      const hd = (node.depth ?? 1) | 0;
+      const label = headingText(node);
       if (hd > 0) {
         headingStack.splice(hd - 1);
         headingStack[hd - 1] = label;
@@ -307,11 +303,11 @@ function buildLsRows(
 
     const headingPath = headingStack.filter(Boolean).join(" → ");
     const name = node.type === "heading"
-      ? `h${(node as Any).depth ?? "?"}: ${headingText(node as Heading)}`
+      ? `h${node.depth ?? "?"}: ${headingText(node)}`
       : summarizeNode(node);
 
     const dataKeys = includeDataKeys && node.data
-      ? Object.keys(node.data as Record<string, unknown>).join(", ")
+      ? Object.keys(node.data).join(", ")
       : undefined;
 
     rows.push({
@@ -389,8 +385,7 @@ function buildTreeRows(
 
   for (const child of children) {
     if (child.type === "heading") {
-      const h = child as Heading;
-      const hd = (h.depth ?? 1) | 0;
+      const hd = (child.depth ?? 1) | 0;
 
       // Pop until parent has smaller depth, but never pop the synthetic root.
       while (stack.length > 1 && stack[stack.length - 1]?.depth >= hd) {
@@ -400,8 +395,8 @@ function buildTreeRows(
       const parentId = stack[stack.length - 1]?.id;
       const id = `${file}#h${counter++}`;
 
-      const dataKeys = (child as Any).data
-        ? Object.keys((child as Any).data as Record<string, unknown>).join(",")
+      const dataKeys = child.data
+        ? Object.keys(child.data).join(",")
         : undefined;
 
       rows.push({
@@ -409,7 +404,7 @@ function buildTreeRows(
         file: fileRef(file, child),
         kind: "heading",
         type: "heading",
-        label: headingText(h),
+        label: headingText(child),
         parentId,
         dataKeys,
       });
@@ -421,8 +416,8 @@ function buildTreeRows(
       const parentId = stack[stack.length - 1]?.id ?? rootId;
       const id = `${file}#n${counter++}`;
 
-      const dataKeys = (child as Any).data
-        ? Object.keys((child as Any).data as Record<string, unknown>).join(", ")
+      const dataKeys = child.data
+        ? Object.keys(child.data).join(", ")
         : undefined;
 
       rows.push({
