@@ -39,7 +39,7 @@ import {
   ENRICHED_CODE_STORE_KEY,
   EnrichedCodeNode,
   EnrichedCodeNodeDataSupplier,
-  isEnrichedCode,
+  isEnrichedCodeNode,
 } from "./enriched-code.ts";
 
 /** Render function for partials */
@@ -179,7 +179,7 @@ export default function codePartials(options?: CodePartialsOptions) {
     const walk = (node: Root | RootContent): void => {
       if (node.type === "code") {
         if (isCodePartial(node)) return;
-        if (isEnrichedCode(node)) {
+        if (isEnrichedCodeNode(node)) {
           const ipn = isPartial(node);
           if (ipn) {
             const cp = codePartial(

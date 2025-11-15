@@ -118,7 +118,7 @@ export type EnrichedCodeNode = Code & {
  * Type guard: returns true if a `RootContent` node is a `code` node
  * that already carries EnrichedCodeData at the default store key.
  */
-export function isEnrichedCode(
+export function isEnrichedCodeNode(
   node: RootContent,
 ): node is EnrichedCodeNode {
   if (
