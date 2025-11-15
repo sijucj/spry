@@ -82,7 +82,7 @@ export function tabularMdfs(root: MdfsFileRoot) {
 
   function walk(dir: MdfsDir): void {
     const ids = isHeadingWithFrontmatter<{ id: string }>(dir.heading)
-      ? dir.heading.data.hFrontmatter["id"]
+      ? dir.heading.data.headingFM["id"]
       : "";
 
     // Directory row
@@ -90,7 +90,7 @@ export function tabularMdfs(root: MdfsFileRoot) {
       depth: dir.level,
       kind: "dir",
       hFrontmatter: isHeadingWithFrontmatter<{ id: string }>(dir.heading)
-        ? dir.heading.data.hFrontmatter
+        ? dir.heading.data.headingFM
         : undefined,
       name: "📁 " + (dir.title || "ROOT"),
       path: dirLogicalPath(dir),

@@ -1,5 +1,3 @@
-// lib/markdown/remark/heading-frontmatter.ts
-
 /**
  * @module heading-frontmatter
  *
@@ -17,7 +15,7 @@
  * - `lang` is one of: yaml, yml, json, json5
  * - AND the code text contains one of:
  *   - `HFM` or `META` (ALL CAPS), or
- *   - `headFM`, `headingFM`, or `hFrontmatter` (any case)
+ *   - `headFM`, `headingFM` (any case)
  */
 
 import type { Code, Heading, Root, RootContent } from "npm:@types/mdast@^4";
@@ -31,8 +29,8 @@ import JSON5 from "npm:json5@^2";
 
 /**
  * Type guard:
- * Ensures the node is a Heading *and* has a typed `hFrontmatter`
- * (with an optional `hFrontmatterInherited`).
+ * Ensures the node is a Heading *and* has a typed `headingFM`
+ * (with an optional `inheritedHeadingFM`).
  */
 export function isHeadingWithFrontmatter<
   OwnShape extends object,
@@ -41,8 +39,8 @@ export function isHeadingWithFrontmatter<
   node: RootContent,
 ): node is Heading & {
   data: {
-    hFrontmatter: OwnShape;
-    hFrontmatterInherited?: InheritedShape;
+    headingFM: OwnShape;
+    inheritedHeadingFM?: InheritedShape;
   };
 } {
   if (node.type !== "heading") return false;
@@ -51,7 +49,7 @@ export function isHeadingWithFrontmatter<
   if (!data || typeof data !== "object") return false;
 
   // deno-lint-ignore no-explicit-any
-  const fm = (data as any).hFrontmatter;
+  const fm = (data as any).headingFM;
   if (!fm || typeof fm !== "object") return false;
 
   return true;
@@ -125,7 +123,8 @@ function defaultIsFrontmatterCode(node: Code): FrontmatterConsumeDecision {
     node.type === "code" &&
     node.lang &&
     FRONTMATTER_LANGS.has(node.lang.toLowerCase().trim()) && node.meta &&
-    (node.meta === "META" || node.meta === "HFM")
+    (node.meta === "META" || node.meta === "HFM" || node.meta === "headingFM" ||
+      node.meta === "headFM")
   ) {
     return "retain-after-consume";
   }
@@ -149,10 +148,10 @@ function mergeFm(
 /**
  * remark plugin: attach per-heading and inherited heading frontmatter.
  *
- * - `data.hFrontmatter`: merge of all frontmatter blocks in the heading’s
+ * - `data.headingFM`: merge of all frontmatter blocks in the heading’s
  *   section (from that heading until the next heading of *any* depth).
- * - `data.hFrontmatterInherited`: merge of all ancestor headings’ local
- *   frontmatter plus this heading’s own `hFrontmatter`.
+ * - `data.inheritedHeadingFM`: merge of all ancestor headings’ local
+ *   frontmatter plus this heading’s own `headingFM`.
  */
 export const headingFrontmatter: Plugin<
   [HeadingFrontmatterOptions?],
@@ -249,11 +248,11 @@ export const headingFrontmatter: Plugin<
       const d = data as JsonObject;
 
       if (localFm && Object.keys(localFm).length > 0) {
-        d.hFrontmatter = localFm;
+        d.headingFM = localFm;
       }
 
       if (inherited && Object.keys(inherited).length > 0) {
-        d.hFrontmatterInherited = inherited;
+        d.inheritedHeadingFM = inherited;
       }
 
       inheritedByDepth[depth] = inherited;

@@ -70,8 +70,8 @@ Some prose under root.
         isHeadingWithFrontmatter<TestFrontmatter, TestFrontmatter>(h1),
       );
 
-      const local = h1.data.hFrontmatter;
-      const inherited = h1.data.hFrontmatterInherited!;
+      const local = h1.data.headingFM;
+      const inherited = h1.data.inheritedHeadingFM!;
 
       assertEquals(local, {
         title: "Root Title",
@@ -114,8 +114,8 @@ Just some text.
       // Collect only headings that have their OWN frontmatter
       const headingsWithFm = children.filter((n): n is Heading & {
         data: {
-          hFrontmatter: TestFrontmatter;
-          hFrontmatterInherited?: TestFrontmatter;
+          headingFM: TestFrontmatter;
+          inheritedHeadingFM?: TestFrontmatter;
         };
       } =>
         isHeadingWithFrontmatter<TestFrontmatter, TestFrontmatter>(
@@ -132,19 +132,19 @@ Just some text.
       ) as Heading;
 
       // Parent: only its own frontmatter
-      assertEquals(h1.data.hFrontmatter, {
+      assertEquals(h1.data.headingFM, {
         parent: true,
         shared: "parent",
       });
-      assertEquals(h1.data.hFrontmatterInherited, h1.data.hFrontmatter);
+      assertEquals(h1.data.inheritedHeadingFM, h1.data.headingFM);
 
       // Child: has its own local frontmatter plus inherited merge
-      assertEquals(h2.data.hFrontmatter, {
+      assertEquals(h2.data.headingFM, {
         child: true,
         shared: "child",
       });
 
-      assertEquals(h2.data.hFrontmatterInherited, {
+      assertEquals(h2.data.inheritedHeadingFM, {
         parent: true,
         // shared overridden by child
         shared: "child",
@@ -153,8 +153,8 @@ Just some text.
 
       // Grandchild: no local frontmatter, but inherits child's merged object
       const d3 = h3.data as Record<string, unknown> | undefined;
-      assertEquals(d3?.hFrontmatter, undefined);
-      assertEquals(d3?.hFrontmatterInherited, h2.data.hFrontmatterInherited);
+      assertEquals(d3?.headingFM, undefined);
+      assertEquals(d3?.inheritedHeadingFM, h2.data.inheritedHeadingFM);
     },
   );
 
@@ -208,8 +208,8 @@ Paragraph text.
 
       const h2 = h2Node; // now typed as Heading with frontmatter
 
-      assertEquals(h2.data.hFrontmatter, { foo: "bar" });
-      assertEquals(h2.data.hFrontmatterInherited, { foo: "bar" });
+      assertEquals(h2.data.headingFM, { foo: "bar" });
+      assertEquals(h2.data.inheritedHeadingFM, { foo: "bar" });
     },
   );
 });
