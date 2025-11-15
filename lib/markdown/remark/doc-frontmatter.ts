@@ -51,7 +51,9 @@ export type RootWithDocumentFrontmatter<FM extends Dict = Dict> = Root & {
 
 export interface DocumentFrontmatterOptions<FM extends Dict = Dict> {
   // Optional Zod schema to validate the parsed YAML
-  schema?: z.ZodType<FM, Any, Any>;
+  readonly schema?: z.ZodType<FM, Any, Any>;
+  // If true, remove the YAML block from tree.children after parsing
+  readonly removeYamlNode?: boolean;
 }
 
 function isObject(value: unknown): value is Dict {
@@ -86,11 +88,16 @@ export const documentFrontmatter: Plugin<
   Root
 > = function documentFrontmatterPlugin(options?: DocumentFrontmatterOptions) {
   return function transform(tree: Root, file?: VFile): void {
-    const yamlNode = tree.children.find(
+    const yamlIndex = tree.children.findIndex(
       (n): n is Extract<RootContent, { type: "yaml" }> => n.type === "yaml",
     );
 
-    if (!yamlNode) return;
+    if (yamlIndex < 0) return;
+
+    const yamlNode = tree.children[yamlIndex] as Extract<
+      RootContent,
+      { type: "yaml" }
+    >;
 
     const raw = typeof yamlNode.value === "string" ? yamlNode.value : "";
     let yamlErr: Error | undefined;
@@ -145,6 +152,11 @@ export const documentFrontmatter: Plugin<
       const fdata = (file.data ??= {} as Dict);
       // just the fm object, not the full parsedFM
       (fdata as Any).frontmatter = fm;
+    }
+
+    // Optionally remove the YAML node itself from the AST
+    if (options?.removeYamlNode) {
+      tree.children.splice(yamlIndex, 1);
     }
   };
 };

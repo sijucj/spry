@@ -243,4 +243,52 @@ extra: "ignore me"
       );
     },
   );
+
+  await t.step(
+    "optionally removes the YAML node from the AST after parsing",
+    async () => {
+      lastTree = undefined;
+      lastFile = undefined;
+
+      const src = `---
+title: Strip Me
+---
+
+# Heading
+`;
+
+      const processor = remark()
+        .use(remarkFrontmatter, ["yaml"])
+        .use(documentFrontmatter as Any, { removeYamlNode: true })
+        .use(capture);
+
+      await processor.process(src);
+
+      const tree = ensureRoot(lastTree);
+      const file = ensureFile(lastFile);
+
+      // We should still have document-level frontmatter
+      assert(
+        isRootWithDocumentFrontmatter(tree),
+        "root should still have documentFrontmatter even when YAML is removed",
+      );
+      assertEquals(tree.data.documentFrontmatter.parsed.fm, {
+        title: "Strip Me",
+      });
+
+      // But there should be no yaml node left in children
+      const hasYaml = tree.children.some(
+        (n: RootContent) => n.type === "yaml",
+      );
+      assertEquals(
+        hasYaml,
+        false,
+        "YAML node should have been removed from tree.children",
+      );
+
+      // VFile frontmatter should still be available
+      const fdata = file.data as Record<string, unknown>;
+      assertEquals(fdata.frontmatter, { title: "Strip Me" });
+    },
+  );
 });
