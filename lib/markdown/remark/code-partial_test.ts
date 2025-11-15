@@ -11,7 +11,7 @@ import { remark } from "npm:remark@^15";
 import remarkGfm from "npm:remark-gfm@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 
-import enrichedCode from "./enriched-code.ts";
+import codeFrontmatter from "./code-frontmatter.ts";
 import codePartials, {
   CODE_PARTIAL_STORE_KEY,
   codePartial,
@@ -34,7 +34,7 @@ function pipeline() {
   return remark()
     .use(remarkGfm)
     .use(remarkFrontmatter, ["yaml"])
-    .use(enrichedCode)
+    .use(codeFrontmatter)
     .use(codePartials);
 }
 
@@ -171,7 +171,7 @@ Deno.test("codePartials plugin with synthetic PARTIAL cells", async (t) => {
     const processor = remark()
       .use(remarkGfm)
       .use(remarkFrontmatter, ["yaml"])
-      .use(enrichedCode)
+      .use(codeFrontmatter)
       .use(codePartials, {
         collect(node) {
           collected.push(node);

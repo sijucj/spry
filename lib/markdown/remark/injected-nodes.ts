@@ -4,7 +4,7 @@
  * @summary
  * A sync-only remark plugin that expands “import spec” code fences into
  * additional, virtual `code` nodes, annotated with `data.injectedNode`
- * metadata. Later plugins (like `enrichedCode`) can treat these injected
+ * metadata. Later plugins (like `codeFrontmatter`) can treat these injected
  * nodes as if the referenced files or URLs had been written inline in the
  * Markdown.
  *
@@ -16,7 +16,7 @@
  *
  * ### When does it trigger?
  *
- * Each `code` node is first parsed using `parseEnrichedCodeFromCode`, which
+ * Each `code` node is first parsed using `parseCodeFrontmatterFromCode`, which
  * extracts processing instructions (PIs) and attributes from the fence
  * language/meta. By default, a code block is treated as an “import spec”
  * block if its PI flags include `--inject`.
@@ -174,10 +174,10 @@
  *   due to unfinished fetches.
  *
  * Any actual streaming from `rs` or remote fetching is expected to happen
- * in later stages (e.g. an executor, bundler, or `enrichedCode`-style plugin)
+ * in later stages (e.g. an executor, bundler, or `codeFrontmatter`-style plugin)
  * that can opt into async behavior and manage lifecycle explicitly.
  *
- * ### Relationship to `enrichedCode`
+ * ### Relationship to `codeFrontmatter`
  *
  * `injected-nodes` does **one thing**:
  *
@@ -189,7 +189,7 @@
  * The idea is to keep the concerns separated:
  *
  * - `injected-nodes`: imports expansion and node injection.
- * - `enrichedCode` (and other plugins): interpretation, execution, or
+ * - `codeFrontmatter` (and other plugins): interpretation, execution, or
  *   further enrichment of both original and injected nodes.
  *
  * Typical usage:
@@ -197,11 +197,11 @@
  * ```ts
  * import { remark } from "remark";
  * import { injectedNodes } from "./injected-nodes.ts";
- * import { enrichedCode } from "./enriched-code.ts";
+ * import { codeFrontmatter } from "./enriched-code.ts";
  *
  * const tree = remark()
  *   .use(injectedNodes)   // expands import specs into injected code nodes
- *   .use(enrichedCode)    // consumes injected nodes plus normal ones
+ *   .use(codeFrontmatter)    // consumes injected nodes plus normal ones
  *   .parse(src);
  * ```
  */
@@ -217,7 +217,7 @@ import {
   relativeUrlAsFsPath,
 } from "../../universal/content-acquisition.ts";
 // Adjust this import to wherever you export it:
-import { parseEnrichedCodeFromCode } from "./enriched-code.ts";
+import { parseFrontmatterFromCode } from "./code-frontmatter.ts";
 
 /** Shape of the injectedNode metadata we attach to mdast.Code.data. */
 export type InjectedNodeSource =
@@ -241,7 +241,7 @@ export interface InjectedNode {
   source?: InjectedNodeSource;
 }
 
-/** Convenience type guard for enrichedCode and friends. */
+/** Convenience type guard for codeFrontmatter and friends. */
 export function isInjectedCode(
   node: Code,
 ): node is Code & { data: { injectedNode: InjectedNode } } {
@@ -291,7 +291,7 @@ export interface InjectedNodesOptions {
    */
   readonly isSpecBlock?: (
     node: Code,
-    parsed: ReturnType<typeof parseEnrichedCodeFromCode>,
+    parsed: ReturnType<typeof parseFrontmatterFromCode>,
   ) => false | "retain-after-injections" | "remove-before-injections";
 }
 
@@ -374,7 +374,7 @@ function parseDirectivesFromSpec(
  * Default heuristic for deciding whether a code block is a "spec/import"
  * block that should be expanded:
  *
- * - use parseEnrichedCodeFromCode(node)
+ * - use parseCodeFrontmatterFromCode(node)
  * - check for a lang called "import"
  *
  * You can override this via plugin options.
@@ -413,7 +413,7 @@ export const injectedNodes: Plugin<[InjectedNodesOptions?], Root> = (
     visit(tree, "code", (node: Code, index, parent) => {
       if (parent == null || index == null) return;
 
-      const parsed = parseEnrichedCodeFromCode(node);
+      const parsed = parseFrontmatterFromCode(node);
       const mode = isSpecBlock(node, parsed);
 
       if (!mode) return; // not a spec block

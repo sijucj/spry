@@ -28,8 +28,7 @@ import {
   type MdfsFileRoot,
   parseMdfsFile,
 } from "./mdfs.ts";
-import { isEnrichedCodeNode } from "../remark/enriched-code.ts";
-
+import { isCodeWithFrontmatterNode } from "../remark/code-frontmatter.ts";
 /**
  * Row model for tabular/tree display.
  *
@@ -110,7 +109,7 @@ export function tabularMdfs(root: MdfsFileRoot) {
 
       const fileName = astType
         ? `${
-          isEnrichedCodeNode(rawNode) ? "enriched-code" : astType
+          isCodeWithFrontmatterNode(rawNode) ? "enriched-code" : astType
         } (${file.id.localName})`
         : file.id.localName;
       const logicalPath = [...parentSegs, fileName].join("::");

@@ -1,23 +1,23 @@
 /**
  * @module code-partial
  *
- * `codePartials` is a tiny remark plugin that scans for EnrichedCode `code`
+ * `codePartials` is a tiny remark plugin that scans for CodeFrontmatter `code`
  * nodes whose first Processing Instruction (PI) token is `PARTIAL` and then
  * invokes a user-supplied `collect()` callback for each such node.
  *
- * It is intended to be added *after* the `enrichedCode` plugin:
+ * It is intended to be added *after* the `codeFrontmatter` plugin:
  *
  * ```ts
  * import { remark } from "npm:remark@^15";
- * import enrichedCode from "./enriched-cell.ts";
+ * import codeFrontmatter from "./enriched-cell.ts";
  * import codePartials from "./code-partial.ts";
  *
  * const processor = remark()
- *   .use(enrichedCode)
+ *   .use(codeFrontmatter)
  *   .use(codePartials, {
  *     collect(node, data) {
  *       // node is an mdast `code` node
- *       // data is the attached EnrichedCodeData
+ *       // data is the attached CodeFrontmatterData
  *     },
  *   });
  * ```
@@ -36,11 +36,10 @@ import { z, ZodType } from "jsr:@zod/zod@4";
 import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
 import { jsonToZod } from "../../universal/zod-aide.ts";
 import {
-  ENRICHED_CODE_STORE_KEY,
-  EnrichedCodeNode,
-  EnrichedCodeNodeDataSupplier,
-  isEnrichedCodeNode,
-} from "./enriched-code.ts";
+  CodeWithFrontmatterData,
+  CodeWithFrontmatterNode,
+  isCodeWithFrontmatterNode,
+} from "./code-frontmatter.ts";
 
 /** Render function for partials */
 type InjectContentFn = (
@@ -89,12 +88,12 @@ export const CODE_PARTIAL_STORE_KEY = "codePartial" as const;
 export type CodePartialNode = Code & {
   data:
     & { [CODE_PARTIAL_STORE_KEY]: CodePartial }
-    & EnrichedCodeNodeDataSupplier;
+    & CodeWithFrontmatterData;
 };
 
 /**
  * Type guard: returns true if a `RootContent` node is a `code` node
- * that already carries EnrichedCodeData at the default store key.
+ * that already carries CodeFrontmatterData at the default store key.
  */
 export function isCodePartial(
   node: RootContent,
@@ -115,10 +114,10 @@ export interface CodePartialsOptions {
    */
   storeKey?: string;
   /**
-   * Decides whether or not a particular EnrichedCode node is a partial code node.
+   * Decides whether or not a particular CodeFrontmatter node is a partial code node.
    */
   isPartial?: (
-    ec: EnrichedCodeNode,
+    ec: CodeWithFrontmatterNode,
   ) => {
     identity: string;
     flags: Record<string, unknown>;
@@ -126,11 +125,11 @@ export interface CodePartialsOptions {
   } | false;
   /**
    * Callback invoked for each `code` node that:
-   * - is an EnrichedCode node, and
+   * - is an CodeFrontmatter node, and
    * - has its first PI positional token equal to `PARTIAL` (case-insensitive).
    *
    * `node` is the underlying mdast `code` node; `data` is the attached
-   * EnrichedCodeData at `node.data.enrichedCode` (or custom storeKey if
+   * CodeFrontmatterData at `node.data.codeFrontmatter` (or custom storeKey if
    * you wired it that way and call this plugin with a custom matcher).
    */
   collect?: (node: CodePartialNode) => void;
@@ -138,7 +137,7 @@ export interface CodePartialsOptions {
    * Callback invoked if there are "registration time" issues with the partial
    */
   registerIssue?: (
-    ec: EnrichedCodeNode,
+    ec: CodeWithFrontmatterNode,
     message: string,
     content: string,
     error?: unknown,
@@ -149,9 +148,9 @@ export interface CodePartialsOptions {
  * A typical partial looks liked ```lang PARTIAL <identity:string> { ...optional Zod parse spec... }\n```
  */
 export function typicalIsCodePartialNode(
-  ec: EnrichedCodeNode,
+  ec: CodeWithFrontmatterNode,
 ): ReturnType<Required<Pick<CodePartialsOptions, "isPartial">>["isPartial"]> {
-  const { pi, attrs } = ec.data[ENRICHED_CODE_STORE_KEY];
+  const { pi, attrs } = ec.data.codeFM;
   if (pi.posCount > 1 && pi.pos[0] == "PARTIAL") {
     return { identity: pi.pos[1], flags: pi.flags, zodSchemaSpec: attrs };
   }
@@ -159,12 +158,12 @@ export function typicalIsCodePartialNode(
 }
 
 /**
- * remark plugin that locates EnrichedCode “partial” cells and calls `collect()`.
+ * remark plugin that locates CodeFrontmatter “partial” cells and calls `collect()`.
  *
- * This plugin assumes that `enrichedCode` has already run on the tree:
+ * This plugin assumes that `codeFrontmatter` has already run on the tree:
  *
  * ```ts
- * remark().use(enrichedCode).use(codePartials, { collect });
+ * remark().use(codeFrontmatter).use(codePartials, { collect });
  * ```
  */
 export default function codePartials(options?: CodePartialsOptions) {
@@ -179,7 +178,7 @@ export default function codePartials(options?: CodePartialsOptions) {
     const walk = (node: Root | RootContent): void => {
       if (node.type === "code") {
         if (isCodePartial(node)) return;
-        if (isEnrichedCodeNode(node)) {
+        if (isCodeWithFrontmatterNode(node)) {
           const ipn = isPartial(node);
           if (ipn) {
             const cp = codePartial(

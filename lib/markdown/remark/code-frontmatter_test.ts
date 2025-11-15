@@ -3,17 +3,17 @@ import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import { remark } from "npm:remark@^15";
 import { ensureLanguageByIdOrAlias } from "../../universal/code.ts";
-import enrichedCode, {
-  type EnrichedCodeOptions,
-  parseEnrichedCodeFromCode,
-} from "./enriched-code.ts";
+import codeFrontmatter, {
+  type CodeFrontmatterOptions,
+  parseFrontmatterFromCode,
+} from "./code-frontmatter.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-function pipeline(opts?: EnrichedCodeOptions) {
+function pipeline(opts?: CodeFrontmatterOptions) {
   return remark().use(remarkGfm).use(remarkFrontmatter, ["yaml"]).use(
-    enrichedCode,
+    codeFrontmatter,
     opts ?? { coerceNumbers: true },
   );
 }
@@ -28,16 +28,16 @@ function codeNodes(tree: Any): Any[] {
   return out;
 }
 
-Deno.test("EnrichedCode plugin ...", async (t) => {
+Deno.test("CodeFrontmatter plugin ...", async (t) => {
   await t.step("basic: bare tokens and boolean flags", () => {
     const md = "```bash first -x --flag\ncode\n```";
     const tree = pipeline().parse(md);
     pipeline().runSync(tree);
 
     const node = codeNodes(tree)[0] as Any;
-    assert(node?.data?.enrichedCode);
+    assert(node?.data?.codeFM);
 
-    const ec = node.data.enrichedCode;
+    const ec = node.data.codeFM;
     assertEquals(ec.lang, "bash");
     assertEquals(ec.langSpec.id, ensureLanguageByIdOrAlias("bash").id);
     assertEquals(ec.pi.pos, ["first", "x", "flag"]);
@@ -54,7 +54,7 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
       const tree = pipeline().parse(md);
       pipeline().runSync(tree);
 
-      const ec = (codeNodes(tree)[0] as Any).data.enrichedCode;
+      const ec = (codeNodes(tree)[0] as Any).data.codeFM;
       assertEquals(ec.langSpec.id, "typescript");
       assertEquals(ec.pi.pos, ["tag", "tag", "L", "key"]);
       assertEquals(ec.pi.flags.tag, ["alpha", "beta"]);
@@ -69,7 +69,7 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
     const tree = pipeline().parse(md);
     pipeline().runSync(tree);
 
-    const ec = (codeNodes(tree)[0] as Any).data.enrichedCode;
+    const ec = (codeNodes(tree)[0] as Any).data.codeFM;
     assertEquals(ec.lang, "json5");
     assertEquals(ec.langSpec.id, "json5");
     assertEquals(ec.attrs.priority, 5);
@@ -87,25 +87,13 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
       normalizeFlagKey: (k) => k.toLowerCase(),
     }).runSync(tree);
 
-    const ec = (codeNodes(tree)[0] as Any).data.enrichedCode;
+    const ec = (codeNodes(tree)[0] as Any).data.codeFM;
     // all keys normalized to lower-case
     assertEquals(ec.langSpec.id, "python");
     assertEquals(ec.pi.pos, ["env", "e", "stage"]);
     assertEquals(ec.pi.flags.env, "prod");
     assertEquals(ec.pi.flags.e, "qa");
     assertEquals(ec.pi.flags.stage, true);
-  });
-
-  await t.step("storeKey override", () => {
-    const md = "```bash first {x:1}\ncode\n```";
-    const tree = pipeline({ storeKey: "cell" }).parse(md);
-    pipeline({ storeKey: "cell" }).runSync(tree);
-
-    const node = codeNodes(tree)[0] as Any;
-    assert(node.data.cell);
-    assertEquals(node.data.enrichedCode, undefined);
-    assertEquals(node.data.cell.attrs.x, 1);
-    assertEquals(node.data.cell.pi.flags.first, true);
   });
 
   await t.step(
@@ -117,7 +105,7 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
       {
         const tree = pipeline().parse(invalid);
         pipeline().runSync(tree);
-        const ec = (codeNodes(tree)[0] as Any).data.enrichedCode;
+        const ec = (codeNodes(tree)[0] as Any).data.codeFM;
         assertEquals(ec.attrs, {}); // ignored on error
       }
       // 'throw': parse error should propagate
@@ -139,19 +127,19 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
       p.runSync(tree);
 
       const node = codeNodes(tree)[0] as Any;
-      assertEquals(typeof node.data.enrichedCode.lang, "string");
-      assertEquals(Array.isArray(node.data.enrichedCode.pi.pos), true);
-      assertEquals(node.data.enrichedCode.attrs.x, 1);
+      assertEquals(typeof node.data.codeFM.lang, "string");
+      assertEquals(Array.isArray(node.data.codeFM.pi.pos), true);
+      assertEquals(node.data.codeFM.attrs.x, 1);
     },
   );
 
-  await t.step("public helper parseEnrichedCodeFromCode()", () => {
+  await t.step("public helper parseFrontmatterFromCode()", () => {
     const md = "```sql --stage prod {sharded: true}\nSELECT 1;\n```";
     const tree = pipeline().parse(md);
     pipeline().runSync(tree);
 
     const node = codeNodes(tree)[0] as Any;
-    const parsed = parseEnrichedCodeFromCode(node);
+    const parsed = parseFrontmatterFromCode(node);
     assert(parsed);
     assertEquals(parsed?.lang, "sql");
     assertEquals(parsed?.pi.flags.stage, "prod");
@@ -165,7 +153,7 @@ Deno.test("EnrichedCode plugin ...", async (t) => {
       const tree = pipeline().parse(md);
       pipeline().runSync(tree);
 
-      const pi = (codeNodes(tree)[0] as Any).data.enrichedCode.pi;
+      const pi = (codeNodes(tree)[0] as Any).data.codeFM.pi;
       assertEquals(pi.pos, ["alpha", "beta", "x", "y"]);
       assertEquals(pi.flags.alpha, true);
       assertEquals(pi.flags.beta, true);

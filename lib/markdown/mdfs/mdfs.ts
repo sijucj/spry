@@ -119,12 +119,11 @@ import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import { remark } from "npm:remark@^15";
 
+import codeFrontmatter, {
+  CodeFrontmatter,
+  isCodeWithFrontmatterNode,
+} from "../remark/code-frontmatter.ts";
 import docFrontmatter from "../remark/doc-frontmatter.ts";
-import enrichedCode, {
-  ENRICHED_CODE_STORE_KEY,
-  EnrichedCode,
-  isEnrichedCodeNode,
-} from "../remark/enriched-code.ts";
 import headingFrontmatter from "../remark/heading-frontmatter.ts";
 
 /** POSIX-style physical path to a markdown file, e.g. "projects/etl/pipeline.md" */
@@ -288,7 +287,7 @@ export type MdfsContentFile =
   | (MdfsContentFileBase & {
     readonly nature: "code";
     readonly rawNode: Code;
-    readonly ec: EnrichedCode;
+    readonly ec: CodeFrontmatter;
   });
 
 //
@@ -401,8 +400,8 @@ function typicalContentFile(state: DirState, rawNode: RootContent) {
 
   const startLine = rawNode.position?.start.line;
   const endLine = rawNode.position?.end.line;
-  const extra = isEnrichedCodeNode(rawNode)
-    ? { ec: rawNode.data[ENRICHED_CODE_STORE_KEY] }
+  const extra = isCodeWithFrontmatterNode(rawNode)
+    ? { ec: rawNode.data.codeFM }
     : {};
 
   const contentFile: MdfsContentFile = {
@@ -456,7 +455,7 @@ export async function parseMdfsFile(
       .use(docFrontmatter)
       .use(remarkGfm)
       .use(headingFrontmatter)
-      .use(enrichedCode, {
+      .use(codeFrontmatter, {
         coerceNumbers: true, // "9" -> 9
         onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
       }),
