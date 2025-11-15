@@ -411,3 +411,238 @@ export function instructionsFromText(
     attrsText,
   };
 }
+
+/**
+ * Options for {@link queryPosixPI}.
+ *
+ * This is intentionally lightweight; for more complex use cases
+ * (custom alias maps, type coercion, etc.) see how higher-level
+ * helpers are composed in `posix-pi_test.ts`.
+ */
+export interface PosixPIQueryOptions {
+  /**
+   * Optional normalization for flag names used *at query time*.
+   *
+   * This should mirror the `normalizeFlagKey` passed to
+   * {@link instructionsFromText} so that lookups using long
+   * or short names end up on the same canonical key.
+   *
+   * For example, if parsing used `"L" -> "level"`, you might
+   * also apply that here so `getFlag("L", "level")` works.
+   */
+  normalizeFlagKey?: (key: string) => string;
+}
+
+/**
+ * Convenience wrapper returned by {@link queryPosixPI}.
+ *
+ * It provides a small "query API" over the raw `PosixStylePI`
+ * so that callers don't have to repeatedly implement the
+ * common patterns of:
+ *
+ * - finding the first / second bare word,
+ * - checking whether any of several flag names are present,
+ * - retrieving scalar or list-style flag values.
+ *
+ * For usage patterns and expectations, see the tests in
+ * `posix-pi_test.ts` (look for `queryPosixPI` cases).
+ */
+export interface PosixPIQuery {
+  /** The underlying parsed PI (CLI portion only). */
+  readonly pi: PosixStylePI;
+  /** The JSON5 attrs object that was parsed alongside this PI, if any. */
+  readonly attrs?: Record<string, unknown>;
+  /**
+   * The `cmd/lang` hint, derived from `pi.args[0]` if present.
+   *
+   * Note: this will match the `cmdLang` returned from
+   * {@link instructionsFromText} when both are used together.
+   */
+  readonly cmdLang?: string;
+  /**
+   * All "bare words" discovered in the CLI portion, in order.
+   *
+   * A bare word is:
+   * - a token that does not start with `-`, and
+   * - is not used as the value for a preceding flag in a
+   *   two-token form (`--key value` / `-k value`).
+   *
+   * The `cmd/lang` token is never included here.
+   */
+  readonly bareWords: string[];
+
+  /** Return the bare word at a given 0-based index, if present. */
+  getBareWord(index: number): string | undefined;
+
+  /** Shorthand for the first bare word (index 0). */
+  getFirstBareWord(): string | undefined;
+
+  /** Shorthand for the second bare word (index 1). */
+  getSecondBareWord(): string | undefined;
+
+  /**
+   * Return the value of the first matching flag among `names`, or `undefined`.
+   *
+   * Names can be short or long (e.g. `"L"`, `"level"`, `"--level"`); they are
+   * normalized by stripping leading dashes and then passing through
+   * `options.normalizeFlagKey` when supplied.
+   *
+   * If the underlying PI stored an array for this flag, the array is returned
+   * as-is. If a scalar was stored, the scalar is returned.
+   */
+  getFlag<T = unknown>(...names: string[]): T | undefined;
+
+  /**
+   * True if any of the given flag names is present in `pi.flags`.
+   *
+   * The same normalization rules as {@link getFlag} apply.
+   */
+  hasFlag(...names: string[]): boolean;
+
+  /**
+   * Return all values for the given flag names as a flattened array.
+   *
+   * - Scalar flag values are pushed as a single element.
+   * - Array-valued flags are concatenated.
+   * - Flags that are not present are skipped.
+   *
+   * This is useful when multiple names should be treated as the
+   * same logical option (e.g. `-t`, `--tag`, `--tags`).
+   */
+  getFlagValues<T = unknown>(...names: string[]): T[];
+
+  /**
+   * Convenience helper for boolean-style flags.
+   *
+   * Returns:
+   * - `true` if any named flag exists and is not strictly `false`,
+   * - `false` otherwise.
+   *
+   * This lets callers treat bare flags (`--verbose`) and value flags
+   * (`--verbose=true`) uniformly.
+   */
+  isEnabled(...names: string[]): boolean;
+}
+
+/**
+ * Build a convenience query wrapper for a given {@link PosixStylePI}.
+ *
+ * This does not modify the PI; it simply layers a small, ergonomic
+ * API for common access patterns used when interpreting CLI-style
+ * metadata extracted from code fences or similar sources.
+ *
+ * Typical usage is:
+ *
+ *   const { pi, attrs } = instructionsFromText(infoString, ...);
+ *   const q = queryPosixPI(pi, attrs, { normalizeFlagKey });
+ *
+ *   const partialName = q.getFirstBareWord();
+ *   const level = q.getFlag<number>("L", "level");
+ *   const tags  = q.getFlagValues<string>("tag", "tags");
+ *
+ * For concrete examples and expectations, see `posix-pi_test.ts`.
+ */
+export function queryPosixPI(
+  pi: PosixStylePI,
+  attrs?: Record<string, unknown>,
+  options?: PosixPIQueryOptions,
+): PosixPIQuery {
+  const normalizeKey = (name: string): string => {
+    const stripped = name.replace(/^(--?)/, "");
+    return options?.normalizeFlagKey
+      ? options.normalizeFlagKey(stripped)
+      : stripped;
+  };
+
+  const bareWords: string[] = (() => {
+    const out: string[] = [];
+    const { args } = pi;
+
+    if (args.length <= 1) return out;
+
+    for (let i = 1; i < args.length; i++) {
+      const token = args[i];
+      const prev = args[i - 1];
+
+      const isValueForPrevFlag = prev?.startsWith("-") &&
+        !prev.includes("=") &&
+        !token.startsWith("-");
+
+      if (isValueForPrevFlag) continue;
+      if (token.startsWith("-")) continue;
+
+      out.push(token);
+    }
+
+    return out;
+  })();
+
+  const lookupFirstValue = (...names: string[]): unknown => {
+    for (const name of names) {
+      const key = normalizeKey(name);
+      if (key in pi.flags) return pi.flags[key];
+    }
+    return undefined;
+  };
+
+  // UPDATED: dedupe by normalized key so aliases sharing the same
+  // canonical key don't cause duplicate arrays to be appended.
+  const collectValues = (...names: string[]): unknown[] => {
+    const values: unknown[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const name of names) {
+      const key = normalizeKey(name);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+
+      const v = pi.flags[key];
+      if (v === undefined) continue;
+      if (Array.isArray(v)) values.push(...v);
+      else values.push(v);
+    }
+    return values;
+  };
+
+  const cmdLang = pi.args.length ? pi.args[0] : undefined;
+
+  return {
+    pi,
+    attrs,
+    cmdLang,
+    bareWords,
+
+    getBareWord(index: number) {
+      return index >= 0 && index < bareWords.length
+        ? bareWords[index]
+        : undefined;
+    },
+
+    getFirstBareWord() {
+      return bareWords[0];
+    },
+
+    getSecondBareWord() {
+      return bareWords[1];
+    },
+
+    getFlag<T = unknown>(...names: string[]): T | undefined {
+      return lookupFirstValue(...names) as T | undefined;
+    },
+
+    hasFlag(...names: string[]): boolean {
+      return lookupFirstValue(...names) !== undefined;
+    },
+
+    getFlagValues<T = unknown>(...names: string[]): T[] {
+      return collectValues(...names) as T[];
+    },
+
+    isEnabled(...names: string[]): boolean {
+      const v = lookupFirstValue(...names);
+      if (v === undefined) return false;
+      if (v === false) return false;
+      return true;
+    },
+  };
+}

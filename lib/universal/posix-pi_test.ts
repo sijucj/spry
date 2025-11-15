@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1";
-import { instructionsFromText } from "./posix-pi.ts";
+import { instructionsFromText, queryPosixPI } from "./posix-pi.ts";
 
 Deno.test("instructionsFromText basic and edge behaviors", async (t) => {
   await t.step("empty text yields empty pi and no attrs", () => {
@@ -275,5 +275,122 @@ Deno.test("instructionsFromText basic and edge behaviors", async (t) => {
     const { attrs, attrsText } = instructionsFromText("ts --x 1 --y=2");
     assertEquals(attrs, undefined);
     assertEquals(attrsText, undefined);
+  });
+});
+
+Deno.test("queryPosixPI convenience helpers", async (t) => {
+  await t.step("extracts bare words excluding cmdLang and flag values", () => {
+    const info = "ts PARTIAL main --level 2 tag another";
+    const { pi, attrs } = instructionsFromText(info, {
+      coerceNumbers: true,
+    });
+
+    const q = queryPosixPI(pi, attrs);
+
+    // cmdLang is the first CLI token
+    assertEquals(q.cmdLang, "ts");
+
+    // bareWords excludes:
+    // - cmdLang ("ts")
+    // - flag value for --level ("2")
+    assertEquals(q.bareWords, ["PARTIAL", "main", "tag", "another"]);
+    assertEquals(q.getFirstBareWord(), "PARTIAL");
+    assertEquals(q.getSecondBareWord(), "main");
+    assertEquals(q.getBareWord(3), "another");
+    assertEquals(q.getBareWord(99), undefined);
+  });
+
+  await t.step("getFlag and hasFlag respect aliases and normalization", () => {
+    const info = "ts -s foo --long bar";
+    const { pi, attrs } = instructionsFromText(info, {
+      normalizeFlagKey: (k) => (k === "s" ? "short" : k),
+    });
+
+    const q = queryPosixPI(pi, attrs, {
+      normalizeFlagKey: (k) => (k === "s" ? "short" : k),
+    });
+
+    // Flags are stored under normalized keys
+    assertEquals(pi.flags, {
+      short: "foo",
+      long: "bar",
+    });
+
+    // getFlag sees both normalized and raw names
+    assertEquals(q.getFlag<string>("s"), "foo");
+    assertEquals(q.getFlag<string>("short"), "foo");
+    assertEquals(q.getFlag<string>("long"), "bar");
+    assertEquals(q.getFlag("missing"), undefined);
+
+    // hasFlag mirrors getFlag semantics
+    assertEquals(q.hasFlag("short"), true);
+    assertEquals(q.hasFlag("s"), true);
+    assertEquals(q.hasFlag("missing"), false);
+  });
+
+  await t.step("getFlagValues flattens arrays across aliases", () => {
+    const info = "ts -t a --tag b --tags c";
+    const normalizeFlagKey = (k: string) =>
+      k === "t" || k === "tags" ? "tag" : k;
+
+    const { pi, attrs } = instructionsFromText(info, {
+      normalizeFlagKey,
+    });
+
+    const q = queryPosixPI(pi, attrs, { normalizeFlagKey });
+
+    // All aliases end up under the same key
+    assertEquals(pi.flags, {
+      tag: ["a", "b", "c"],
+    });
+
+    // getFlagValues flattens arrays for all aliases
+    assertEquals(
+      q.getFlagValues<string>("t", "tag", "tags"),
+      ["a", "b", "c"],
+    );
+  });
+
+  await t.step(
+    "isEnabled treats bare and explicit boolean flags consistently",
+    () => {
+      const info = "ts --debug -v --feature=false";
+      const normalizeFlagKey = (k: string) => k === "v" ? "verbose" : k;
+
+      const { pi, attrs } = instructionsFromText(info, {
+        normalizeFlagKey,
+      });
+
+      const q = queryPosixPI(pi, attrs, { normalizeFlagKey });
+
+      // Underlying flags (note: "--feature=false" is string "false")
+      assertEquals(pi.flags, {
+        debug: true,
+        verbose: true,
+        feature: "false",
+      });
+
+      // Bare flags and truthy values -> enabled
+      assertEquals(q.isEnabled("debug"), true);
+      assertEquals(q.isEnabled("v", "verbose"), true);
+
+      // Explicit "false" (string) is still considered enabled by default
+      // because only strictly `false` disables.
+      assertEquals(q.isEnabled("feature"), true);
+
+      // Non-existent flags -> disabled
+      assertEquals(q.isEnabled("missing"), false);
+    },
+  );
+
+  await t.step("query wrapper mirrors attrs from instructionsFromText", () => {
+    const info = "js --tag important { id: 'foo', count: 3 }";
+    const { pi, attrs } = instructionsFromText(info);
+
+    const q = queryPosixPI(pi, attrs);
+
+    assertEquals(q.attrs, { id: "foo", count: 3 });
+    assertEquals(q.getFlag("tag"), "important");
+    assertEquals(q.cmdLang, "js");
   });
 });
