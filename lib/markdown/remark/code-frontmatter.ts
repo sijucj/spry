@@ -27,7 +27,7 @@
  * @example
  * ```ts
  * import { remark } from "npm:remark@^15";
- * import codeFrontmatter from "./enriched-code.ts";
+ * import codeFrontmatter from "./code-frontmatter.ts";
  *
  * const md = [
  *   "```bash --env prod -L 9 tag tag { priority: 3, note: 'ok' }",
@@ -144,7 +144,7 @@ export interface CodeFrontmatterOptions {
  * @example
  * ```ts
  * import { remark } from "npm:remark@^15";
- * import codeFrontmatter from "./enriched-code.ts";
+ * import codeFrontmatter from "./code-frontmatter.ts";
  *
  * const processor = remark().use(codeFrontmatter, {
  *   storeKey: "codeFrontmatter",
@@ -195,7 +195,7 @@ export default function codeFrontmatter(options: CodeFrontmatterOptions = {}) {
  *
  * @example
  * ```ts
- * import { parseCodeFrontmatterFromCode } from "./enriched-code.ts";
+ * import { parseCodeFrontmatterFromCode } from "./code-frontmatter.ts";
  *
  * const cell = parseCodeFrontmatterFromCode(codeNode, { coerceNumbers: true });
  * if (cell) {
