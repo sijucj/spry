@@ -70,6 +70,7 @@ export interface HeadingFrontmatterOptions {
     node: RootContent | undefined,
   ) => FrontmatterConsumeDecision;
   readonly parseFrontmatterCode?: (node: Code) => JsonObject | undefined;
+  readonly annotationNode?: (n: RootContent) => string | false;
 }
 
 const FRONTMATTER_LANGS = new Set(["yaml", "yml", "json", "json5"]);
@@ -188,6 +189,12 @@ export const headingFrontmatter: Plugin<
     isHeading = defaultIsHeading,
     isFrontmatterCode = defaultIsFrontmatterCode,
     parseFrontmatterCode: parseFm = parseFrontmatterCode,
+    annotationNode = (n: RootContent) =>
+      n.type === "paragraph" &&
+        n.children[0]?.type === "text" &&
+        n.children[0].value.startsWith("@")
+        ? n.children[0].value
+        : false,
   } = options;
 
   return (tree) => {
@@ -228,6 +235,14 @@ export const headingFrontmatter: Plugin<
 
       for (let j = i + 1; j < sectionEnd; j++) {
         const n = children[j] as RootContent;
+
+        const ann = annotationNode(n);
+        if (ann && ann.startsWith("@id ")) {
+          localFm = mergeFm(localFm, { id: ann.slice(4) });
+          removeIdxs.push(j);
+          continue;
+        }
+
         const decision = isFrontmatterCode(n);
         if (!decision) continue;
 

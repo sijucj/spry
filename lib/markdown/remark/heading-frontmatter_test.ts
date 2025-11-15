@@ -19,6 +19,7 @@ interface TestFrontmatter {
   tags?: string[];
   nested?: { value: number };
   foo?: string;
+  id?: string;
 }
 
 // Helper to parse + run the plugin and return the mutated AST
@@ -26,7 +27,10 @@ async function runWithPlugin(
   markdown: string,
   opts?: HeadingFrontmatterOptions,
 ): Promise<Root> {
-  const processor = remark().use(headingFrontmatter, opts as never);
+  const processor = remark().use(
+    headingFrontmatter,
+    opts as never,
+  );
   const tree = processor.parse(markdown) as Root;
   const result = (await processor.run(tree)) as Root;
   return result;
@@ -48,6 +52,8 @@ tags:
 nested:
   value: 1
 \`\`\`
+
+@id 123
 
 Some prose under root.
 `;
@@ -72,6 +78,7 @@ Some prose under root.
         title: "Root Title",
         tags: ["a", "b"],
         nested: { value: 1 },
+        id: "123",
       });
 
       // For top-level heading, inherited === local
