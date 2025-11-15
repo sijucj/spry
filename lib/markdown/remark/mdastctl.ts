@@ -67,6 +67,7 @@ export interface TreeRow {
   readonly label: string;
   readonly type: RootContent["type"] | "root";
   readonly parentId?: string;
+  readonly dataKeys?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +353,9 @@ function buildTreeRows(
 
       const parentId = stack[stack.length - 1]?.id;
       const id = `${file}#h${counter++}`;
+      const dataKeys = (child as Any).data
+        ? Object.keys((child as Any).data as Record<string, unknown>).join(", ")
+        : undefined;
 
       rows.push({
         id,
@@ -360,6 +364,7 @@ function buildTreeRows(
         type: "heading",
         label: headingText(h),
         parentId,
+        dataKeys,
       });
 
       stack.push({ depth: hd, id });
@@ -368,6 +373,10 @@ function buildTreeRows(
       const parentId = stack[stack.length - 1]?.id ?? rootId;
       const id = `${file}#n${counter++}`;
 
+      const dataKeys = (child as Any).data
+        ? Object.keys((child as Any).data as Record<string, unknown>).join(",")
+        : undefined;
+
       rows.push({
         id,
         file: fileRef(file, child),
@@ -375,6 +384,7 @@ function buildTreeRows(
         type: child.type,
         label: summarizeNode(child),
         parentId,
+        dataKeys,
       });
     }
   }
@@ -592,6 +602,7 @@ export class CLI {
     return new Command()
       .description(`heading/content hierarchy (MDFS-style, per file)`)
       .arguments("[paths...:string]")
+      .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
         const files = resolveFiles(this.globalFiles, paths);
@@ -612,7 +623,7 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "type", "file")
+          .declareColumns("label", "type", "file", "dataKeys")
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
@@ -630,8 +641,18 @@ export class CLI {
           header: "FILE",
           defaultColor: gray,
         });
+        if (options.data) {
+          base.field("dataKeys", "dataKeys", {
+            header: "DATA",
+            defaultColor: magenta,
+          });
+        }
 
-        base.select("label", "type", "file");
+        if (options.data) {
+          base.select("label", "type", "file", "dataKeys");
+        } else {
+          base.select("label", "type", "file");
+        }
 
         const treeLister = TreeLister.wrap(base)
           .from(allRows)
