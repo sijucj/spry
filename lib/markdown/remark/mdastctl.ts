@@ -28,7 +28,6 @@ import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
 import { basename } from "jsr:@std/path@1";
 
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import { toString as mdToString } from "npm:mdast-util-to-string@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import { remark } from "npm:remark@^15";
@@ -474,26 +473,14 @@ function buildTreeRows(
 }
 
 // ---------------------------------------------------------------------------
-// Markdown output for selected nodes
-// ---------------------------------------------------------------------------
-
-/**
- * Turn selected nodes back into Markdown.
- *
- * Option 1 (your choice): just stringify the nodes as-is,
- * without extra wrappers or separators.
- */
-function nodesToMarkdown(nodes: RootContent[]): string {
-  const root: Root = {
-    type: "root",
-    children: nodes,
-  };
-  return mdToString(root);
-}
-
-// ---------------------------------------------------------------------------
 // I/O helpers
 // ---------------------------------------------------------------------------
+
+interface ParsedMarkdownTree {
+  readonly file: string;
+  readonly root: Root;
+  readonly source: string;
+}
 
 async function readMarkdownTrees(
   files: readonly string[],
@@ -506,20 +493,20 @@ async function readMarkdownTrees(
       coerceNumbers: true, // "9" -> 9
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     }),
-): Promise<Array<{ file: string; root: Root }>> {
+): Promise<Array<ParsedMarkdownTree>> {
   if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
     const text = await new Response(Deno.stdin.readable).text();
     const root = processor.parse(text);
     await processor.run(root);
-    return [{ file: "<stdin>", root }];
+    return [{ file: "<stdin>", root, source: text }];
   }
 
-  const results: Array<{ file: string; root: Root }> = [];
+  const results: Array<ParsedMarkdownTree> = [];
   for (const file of files) {
     const text = await Deno.readTextFile(file);
     const root = processor.parse(text);
     await processor.run(root);
-    results.push({ file, root });
+    results.push({ file, root, source: text });
   }
   return results;
 }
@@ -531,6 +518,56 @@ function resolveFiles(
 ): string[] {
   const merged = [...(globalFiles ?? []), ...positional];
   return merged.length > 0 ? merged : ["-"];
+}
+
+function sliceSourceForNode(source: string, node: RootContent): string {
+  const pos = node.position as Any;
+  if (!pos || !pos.start || !pos.end) {
+    // Fallback: last resort, re-stringify just this node
+    const root: Root = { type: "root", children: [node] };
+    return remark().stringify(root);
+  }
+
+  const start: Any = pos.start;
+  const end: Any = pos.end;
+
+  // Best case: we have byte offsets
+  if (
+    typeof start.offset === "number" &&
+    typeof end.offset === "number"
+  ) {
+    return source.slice(start.offset, end.offset);
+  }
+
+  // Fallback: compute from line / column
+  const lines = source.split(/\r?\n/);
+  const startLineIdx = (start.line as number) - 1;
+  const endLineIdx = (end.line as number) - 1;
+
+  if (
+    startLineIdx < 0 ||
+    endLineIdx < 0 ||
+    startLineIdx >= lines.length ||
+    endLineIdx >= lines.length
+  ) {
+    const root: Root = { type: "root", children: [node] };
+    return remark().stringify(root);
+  }
+
+  if (startLineIdx === endLineIdx) {
+    return lines[startLineIdx].slice(
+      (start.column as number) - 1,
+      (end.column as number) - 1,
+    );
+  }
+
+  const pieces: string[] = [];
+  pieces.push(lines[startLineIdx].slice((start.column as number) - 1));
+  for (let i = startLineIdx + 1; i < endLineIdx; i++) {
+    pieces.push(lines[i]);
+  }
+  pieces.push(lines[endLineIdx].slice(0, (end.column as number) - 1));
+  return pieces.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -776,21 +813,23 @@ export class CLI {
 
         const files = resolveFiles(this.globalFiles, paths);
         const trees = await readMarkdownTrees(files);
-        const allNodes: RootContent[] = [];
+        const chunks: string[] = [];
 
-        for (const { root } of trees) {
+        for (const { root, source } of trees) {
           const nodes = selectNodes(root, options.select);
-          allNodes.push(...nodes);
+          for (const node of nodes) {
+            const snippet = sliceSourceForNode(source, node);
+            if (snippet) chunks.push(snippet);
+          }
         }
 
-        if (allNodes.length === 0) {
+        if (chunks.length === 0) {
           console.log(gray("No nodes matched; nothing to print."));
           return;
         }
 
-        const markdown = nodesToMarkdown(allNodes);
-        // Color is irrelevant here – just raw Markdown.
-        console.log(markdown);
+        // Join each selected slice with a blank line in between
+        console.log(chunks.join("\n\n"));
       });
   }
 }
