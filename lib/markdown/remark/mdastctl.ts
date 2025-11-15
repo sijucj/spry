@@ -520,54 +520,150 @@ function resolveFiles(
   return merged.length > 0 ? merged : ["-"];
 }
 
-function sliceSourceForNode(source: string, node: RootContent): string {
+function nodeOffsetsInSource(
+  source: string,
+  node: RootContent,
+): [number, number] | undefined {
   const pos = node.position as Any;
-  if (!pos || !pos.start || !pos.end) {
-    // Fallback: last resort, re-stringify just this node
-    const root: Root = { type: "root", children: [node] };
-    return remark().stringify(root);
-  }
+  if (!pos || !pos.start || !pos.end) return undefined;
 
-  const start: Any = pos.start;
-  const end: Any = pos.end;
+  const start = pos.start as Any;
+  const end = pos.end as Any;
 
-  // Best case: we have byte offsets
   if (
     typeof start.offset === "number" &&
     typeof end.offset === "number"
   ) {
-    return source.slice(start.offset, end.offset);
+    return [start.offset, end.offset];
   }
 
-  // Fallback: compute from line / column
   const lines = source.split(/\r?\n/);
-  const startLineIdx = (start.line as number) - 1;
-  const endLineIdx = (end.line as number) - 1;
+
+  const startLineIdx = (start.line as number ?? 1) - 1;
+  const endLineIdx = (end.line as number ?? 1) - 1;
+  const startCol = (start.column as number ?? 1) - 1;
+  const endCol = (end.column as number ?? 1) - 1;
 
   if (
-    startLineIdx < 0 ||
-    endLineIdx < 0 ||
-    startLineIdx >= lines.length ||
-    endLineIdx >= lines.length
+    startLineIdx < 0 || startLineIdx >= lines.length ||
+    endLineIdx < 0 || endLineIdx >= lines.length
   ) {
-    const root: Root = { type: "root", children: [node] };
-    return remark().stringify(root);
+    return undefined;
   }
 
-  if (startLineIdx === endLineIdx) {
-    return lines[startLineIdx].slice(
-      (start.column as number) - 1,
-      (end.column as number) - 1,
-    );
+  const indexFromLineCol = (lineIdx: number, col: number): number => {
+    let idx = 0;
+    for (let i = 0; i < lineIdx; i++) {
+      // +1 for newline
+      idx += lines[i].length + 1;
+    }
+    return idx + col;
+  };
+
+  const startOffset = indexFromLineCol(startLineIdx, startCol);
+  const endOffset = indexFromLineCol(endLineIdx, endCol);
+  return [startOffset, endOffset];
+}
+
+function sliceSourceForNode(source: string, node: RootContent): string {
+  const offsets = nodeOffsetsInSource(source, node);
+  if (offsets) {
+    const [start, end] = offsets;
+    return source.slice(start, end);
   }
 
-  const pieces: string[] = [];
-  pieces.push(lines[startLineIdx].slice((start.column as number) - 1));
-  for (let i = startLineIdx + 1; i < endLineIdx; i++) {
-    pieces.push(lines[i]);
+  // Fallback: as a last resort, re-stringify this node
+  const root: Root = { type: "root", children: [node] };
+  return remark().stringify(root);
+}
+
+interface SectionRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Given the root, source, and a list of selected heading nodes that are
+ * direct children of the root, compute non-overlapping section ranges:
+ * each from a heading's start to the next heading of same or higher depth
+ * (or end-of-file).
+ */
+function computeSectionRangesForHeadings(
+  root: Root,
+  source: string,
+  headings: Heading[],
+): SectionRange[] {
+  const children = root.children ?? [];
+  if (children.length === 0 || headings.length === 0) return [];
+
+  // Map heading node -> its index in root.children (only for direct children)
+  const indexByNode = new Map<Heading, number>();
+  children.forEach((child, idx) => {
+    if (child.type === "heading") {
+      indexByNode.set(child as Heading, idx);
+    }
+  });
+
+  const indices: number[] = [];
+  for (const h of headings) {
+    const idx = indexByNode.get(h);
+    if (idx !== undefined) indices.push(idx);
   }
-  pieces.push(lines[endLineIdx].slice(0, (end.column as number) - 1));
-  return pieces.join("\n");
+  if (indices.length === 0) return [];
+
+  indices.sort((a, b) => a - b);
+
+  const ranges: SectionRange[] = [];
+
+  for (const idx of indices) {
+    const heading = children[idx] as Heading;
+    const depth = heading.depth ?? 1;
+
+    const offsets = nodeOffsetsInSource(source, heading);
+    if (!offsets) continue;
+    const [startOffset] = offsets;
+
+    // Find next heading of same or higher depth
+    let endOffset = source.length;
+    for (let j = idx + 1; j < children.length; j++) {
+      const candidate = children[j];
+      if (candidate.type === "heading") {
+        const ch = candidate as Heading;
+        const cDepth = ch.depth ?? 1;
+        if (cDepth <= depth) {
+          const nextOffsets = nodeOffsetsInSource(
+            source,
+            candidate as RootContent,
+          );
+          if (nextOffsets) {
+            endOffset = nextOffsets[0];
+          }
+          break;
+        }
+      }
+    }
+
+    ranges.push({ start: startOffset, end: endOffset });
+  }
+
+  // Merge overlapping/adjacent ranges
+  ranges.sort((a, b) => a.start - b.start);
+  const merged: SectionRange[] = [];
+  for (const r of ranges) {
+    if (merged.length === 0) {
+      merged.push({ ...r });
+      continue;
+    }
+    const last = merged[merged.length - 1]!;
+    if (r.start <= last.end) {
+      // overlap or adjacency: extend the existing range
+      if (r.end > last.end) last.end = r.end;
+    } else {
+      merged.push({ ...r });
+    }
+  }
+
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +901,11 @@ export class CLI {
         "--select <query:string>",
         "mdastql selection (required – which nodes to emit as Markdown).",
       )
+      .option(
+        "--section",
+        "When selected nodes are headings, emit the entire section " +
+          "(from that heading down to before the next heading of same/higher depth).",
+      )
       .action(async (options, ...paths: string[]) => {
         if (!options.select) {
           console.error(red("md: --select <query> is required"));
@@ -813,23 +914,62 @@ export class CLI {
 
         const files = resolveFiles(this.globalFiles, paths);
         const trees = await readMarkdownTrees(files);
-        const chunks: string[] = [];
+        const allChunks: string[] = [];
+
+        const sectionMode = !!options.section;
 
         for (const { root, source } of trees) {
           const nodes = selectNodes(root, options.select);
+
+          if (!sectionMode) {
+            // Simple mode: just slice each selected node from source
+            for (const node of nodes) {
+              const snippet = sliceSourceForNode(source, node);
+              if (snippet) allChunks.push(snippet);
+            }
+            continue;
+          }
+
+          // SECTION mode: expand selected headings into sections.
+          const headings: Heading[] = [];
+          const nonHeadingNodes: RootContent[] = [];
+
           for (const node of nodes) {
-            const snippet = sliceSourceForNode(source, node);
-            if (snippet) chunks.push(snippet);
+            if (node.type === "heading") {
+              headings.push(node as Heading);
+            } else {
+              nonHeadingNodes.push(node);
+            }
+          }
+
+          const sectionRanges = computeSectionRangesForHeadings(
+            root,
+            source,
+            headings,
+          );
+
+          if (sectionRanges.length > 0) {
+            // We have at least one bona fide section in this file: emit only sections.
+            for (const r of sectionRanges) {
+              allChunks.push(source.slice(r.start, r.end));
+            }
+          } else {
+            // No usable sections (e.g., no direct-root headings selected):
+            // fall back to per-node snippets for *all* selected nodes in this file.
+            for (const node of nodes) {
+              const snippet = sliceSourceForNode(source, node);
+              if (snippet) allChunks.push(snippet);
+            }
           }
         }
 
-        if (chunks.length === 0) {
+        if (allChunks.length === 0) {
           console.log(gray("No nodes matched; nothing to print."));
           return;
         }
 
-        // Join each selected slice with a blank line in between
-        console.log(chunks.join("\n\n"));
+        // Separate chunks with a blank line for readability
+        console.log(allChunks.join("\n\n"));
       });
   }
 }
