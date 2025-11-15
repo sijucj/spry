@@ -50,7 +50,6 @@ export interface LsRow {
   readonly depth: number;
   readonly headingPath: string;
   readonly name: string;
-  readonly where?: string;
   readonly dataKeys?: string;
 }
 
@@ -61,7 +60,6 @@ export interface TreeRow {
   readonly label: string;
   readonly type: RootContent["type"] | "root";
   readonly parentId?: string;
-  readonly where?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,10 +155,10 @@ function summarizeNode(node: RootContent): string {
   }
 }
 
-function whereOf(node: RootContent): string | undefined {
-  const pos = node.position?.start;
-  if (!pos) return undefined;
-  return `${pos.line}:${pos.column}`;
+function fileRef(file: string, node?: RootContent): string {
+  const line = node?.position?.start?.line;
+  if (typeof line !== "number") return file;
+  return `${file}:${line}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,12 +281,11 @@ function buildLsRows(
 
     rows.push({
       id: id++,
-      file,
+      file: fileRef(file, node),
       type: node.type,
       depth,
       headingPath,
       name,
-      where: whereOf(node),
       dataKeys,
     });
   });
@@ -328,7 +325,6 @@ function buildTreeRows(
     type: "root",
     label,
     parentId: undefined,
-    where: undefined,
   });
 
   type StackEntry = { depth: number; id: string };
@@ -352,12 +348,11 @@ function buildTreeRows(
 
       rows.push({
         id,
-        file,
+        file: fileRef(file, child),
         kind: "heading",
         type: "heading",
         label: headingText(h),
         parentId,
-        where: whereOf(child),
       });
 
       stack.push({ depth: hd, id });
@@ -368,12 +363,11 @@ function buildTreeRows(
 
       rows.push({
         id,
-        file,
+        file: fileRef(file, child),
         kind: "content",
         type: child.type,
         label: summarizeNode(child),
         parentId,
-        where: whereOf(child),
       });
     }
   }
@@ -510,7 +504,6 @@ export class CLI {
               "headingPath",
               "name",
               "dataKeys",
-              "where",
             )
             .requireAtLeastOneColumn(true)
             .color(useColor)
@@ -548,11 +541,6 @@ export class CLI {
             });
           }
 
-          builder.field("where", "where", {
-            header: "WHERE",
-            defaultColor: gray,
-          });
-
           // Display in a sensible default order
           const ids: Array<keyof LsRow & string> = [
             "id",
@@ -563,7 +551,6 @@ export class CLI {
             "name",
           ];
           if (options.data) ids.push("dataKeys");
-          ids.push("where");
           builder.select(...ids);
 
           const lister = builder.build();
@@ -607,7 +594,7 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "type", "file", "where")
+          .declareColumns("label", "type", "file")
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
@@ -625,12 +612,8 @@ export class CLI {
           header: "FILE",
           defaultColor: gray,
         });
-        base.field("where", "where", {
-          header: "WHERE",
-          defaultColor: gray,
-        });
 
-        base.select("label", "type", "file", "where");
+        base.select("label", "type", "file");
 
         const treeLister = TreeLister.wrap(base)
           .from(allRows)
