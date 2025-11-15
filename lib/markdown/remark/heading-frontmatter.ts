@@ -66,9 +66,7 @@ export type FrontmatterConsumeDecision =
 
 export interface HeadingFrontmatterOptions {
   readonly isHeading?: (node: RootContent) => node is Heading;
-  readonly isFrontmatterCode?: (
-    node: RootContent | undefined,
-  ) => FrontmatterConsumeDecision;
+  readonly isFrontmatterCode?: (code: Code) => FrontmatterConsumeDecision;
   readonly parseFrontmatterCode?: (node: Code) => JsonObject | undefined;
   readonly annotationNode?: (n: RootContent) => string | false;
 }
@@ -118,41 +116,16 @@ function defaultIsHeading(node: RootContent): node is Heading {
 }
 
 /**
- * Marker detection:
- * - `HFM` or `META` (ALL CAPS)
- * - `headFM` | `headingFM` | `hFrontmatter` (any case)
- */
-function hasHeadingFrontmatterMarker(value: string | undefined): boolean {
-  if (!value) return false;
-
-  // Simple, robust checks — no word-boundary edge cases
-  if (value.includes("HFM") || value.includes("META")) return true;
-
-  const lower = value.toLowerCase();
-  if (
-    lower.includes("headfm") ||
-    lower.includes("headingfm") ||
-    lower.includes("hfrontmatter")
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
  * Default frontmatter code detector:
  * YAML / YML / JSON / JSON5 fenced code WITH a heading-frontmatter marker.
  */
-function defaultIsFrontmatterCode(
-  node: RootContent | undefined,
-): FrontmatterConsumeDecision {
+function defaultIsFrontmatterCode(node: Code): FrontmatterConsumeDecision {
   if (
     node &&
     node.type === "code" &&
     node.lang &&
-    FRONTMATTER_LANGS.has(node.lang.toLowerCase().trim()) &&
-    hasHeadingFrontmatterMarker((node as Code).value)
+    FRONTMATTER_LANGS.has(node.lang.toLowerCase().trim()) && node.meta &&
+    (node.meta === "META" || node.meta === "HFM")
   ) {
     return "retain-after-consume";
   }
@@ -242,6 +215,8 @@ export const headingFrontmatter: Plugin<
           removeIdxs.push(j);
           continue;
         }
+
+        if (n.type !== "code") continue;
 
         const decision = isFrontmatterCode(n);
         if (!decision) continue;

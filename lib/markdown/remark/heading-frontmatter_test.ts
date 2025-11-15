@@ -43,8 +43,7 @@ Deno.test("headingFrontmatter basic behaviors", async (t) => {
       const md = `
 # Root Heading
 
-\`\`\`yaml
-# HFM
+\`\`\`yaml HFM
 title: Root Title
 tags:
   - a
@@ -92,16 +91,14 @@ Some prose under root.
       const md = `
 # Parent
 
-\`\`\`yaml
-# HFM
+\`\`\`yaml HFM
 parent: true
 shared: parent
 \`\`\`
 
 ## Child
 
-\`\`\`yaml
-# HFM
+\`\`\`yaml META
 child: true
 shared: child
 \`\`\`
@@ -167,8 +164,7 @@ Just some text.
       const md = `
 ## Section
 
-\`\`\`yml
-# META
+\`\`\`yml META
 foo: bar
 \`\`\`
 
@@ -186,7 +182,7 @@ Paragraph text.
               node.lang.toLowerCase().trim(),
             ) &&
             typeof node.value === "string" &&
-            node.value.includes("META")
+            node.meta?.includes("META")
           ) {
             return "remove-before-consume";
           }
