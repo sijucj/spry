@@ -21,8 +21,7 @@
  * ----------
  *
  * - **MdfsFileRoot**: the parsed view of a single Markdown file
- *   (`physicalPath`, `rootDir`, `dirsByPath`, `filesByPath`, `mdast`,
- *   `frontmatter`, `frontmatterRaw`).
+ *   (`physicalPath`, `rootDir`, `dirsByPath`, `filesByPath`, `mdast`).
  *
  * - **MdfsDir**: a directory / heading node with:
  *   - `title`, `level`, `headingPath`
@@ -63,7 +62,6 @@
  * const root = parseMdfsFile("Qualityfolio.md", source);
  *
  * console.log(root.physicalPath);          // "Qualityfolio.md"
- * console.log(root.frontmatter);           // Parsed YAML frontmatter (if any)
  * console.log(root.rootDir.children.length); // Number of top-level H1s
  * ```
  *
@@ -112,120 +110,16 @@
  *
  * `MdfsFileRoot` carries:
  *
- * - `frontmatter`: the parsed YAML object (or `undefined`).
- * - `frontmatterRaw`: the raw YAML string.
- * - `mdast`: the full mdast `Root`.
- *
- * This enables “second-pass” analysis *without reparsing*:
- *
- * - Build `withFrontmatterSchema(root)` that reads something like:
- *
- *   ```yaml
- *   ---
- *   mdfs:
- *     version: 1.0
- *     schema:
- *       nature:
- *         h1: project
- *         h2: suite
- *         h3: plan
- *         h4: case
- *         h5: step
- *   ---
- *   ```
- *
- *   and produces a view where:
- *
- *   - `h1` directories are treated as “projects”.
- *   - `h2` directories as “suites”.
- *   - … etc.
- *
- * - Build `withZodPayloads(root, registry)` that walks all
- *   `MdfsContentFile`s, validates their `attrs`/`rawNodes`, and populates
- *   `payload` with strongly-typed data (e.g., SQL migrations, test cases,
- *   orchestration steps).
- *
- * **Composable, schema-layered design**
- *
- * The module deliberately separates **structure** from **semantics**:
- *
- * - Structure:
- *   - Headings → `MdfsDir`.
- *   - Blocks → `MdfsContentFile`.
- *   - Frontmatter → `frontmatter`.
- *   - AST → `mdast`.
- *
- * - Semantics:
- *   - Implemented by your own helpers (e.g. `withFrontmatterSchema`,
- *     `withNatures`, `withPayloads`).
- *
- * This lets you:
- *
- * - Build multiple semantic views over the same Markdown:
- *   - “Qualityfolio view”: project/suite/plan/case/step.
- *   - “Release notes view”: version/feature/bug/changelog.
- *   - “Ops view”: runbooks / playbooks / steps.
- *
- * - Evolve schemas over time without changing the parser.
- *
- * CLI / TUI example
- * -----------------
- *
- * A typical CLI uses `tabularMdfs()` + `TreeLister` to render a tree:
- *
- * @example
- * ```ts
- * import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
- * import { TreeLister } from "../../universal/lister-tree-tui.ts";
- * import { parseMdfsFile, tabularMdfs } from "./mdfs.ts";
- *
- * const source = await Deno.readTextFile("Qualityfolio.md");
- * const mdfs = parseMdfsFile("Qualityfolio.md", source);
- * const rows = tabularMdfs(mdfs);
- *
- * const base = new ListerBuilder()
- *   .from(rows)
- *   .field("name", "name", { header: "NAME" })
- *   .field("type", "kind", { header: "TYPE" })
- *   .field("where", "where", { header: "WHERE" })
- *   .select("name", "type", "where")
- *   .color(true)
- *   .header(true);
- *
- * const tree = TreeLister
- *   .wrap(base)
- *   .from(rows)
- *   .byPath({ pathKey: "path", separator: "::" })
- *   .treeOn("name")
- *   .dirFirst(true);
- *
- * await tree.ls(true);
- * ```
- *
- * This produces a **visual tree** of headings and content, with
- * `WHERE` pointing to `file.md:line` and `TYPE` exposing whether something is
- * a DIR or `FILE:<mdast-type>`.
- *
- * Summary
- * -------
- *
- * Use this module when you want to:
- *
- * - Treat Markdown as a **structured, queryable filesystem**.
- * - Attach schemas (roles, natures, test concepts) *after* parsing.
- * - Build CLIs, UIs, or pipelines that navigate Markdown as if it were a
- *   directory tree full of typed “files”.
- *
- * The parser stays deliberately boring and predictable; the interesting,
- * opinionated semantics live in small, composable helpers on top.
+ * - `mdast`: the full mdast `Root` which also has the typed frontmatter using
+ *   docFrontmatter plugin.
  */
-import { parse as YAMLparse } from "jsr:@std/yaml@^1";
 import type { Code, Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import { toString as mdToString } from "npm:mdast-util-to-string@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
 import { remark } from "npm:remark@^15";
 
+import docFrontmatter from "../remark/doc-frontmatter.ts";
 import enrichedCode, {
   ENRICHED_CODE_STORE_KEY,
   EnrichedCode,
@@ -408,12 +302,8 @@ export type MdfsContentFile =
  * It owns a small directory tree rooted at its ROOT directory.
  *
  * TRawAst      — full mdast Root (or any AST type you choose)
- * TFrontmatter — parsed frontmatter object (YAML → JS), or unknown
  */
-export interface MdfsFileRoot<
-  TRawAst = unknown,
-  TFrontmatter = unknown,
-> {
+export interface MdfsFileRoot {
   /** Physical path to the markdown file. */
   readonly physicalPath: MdfsPhysicalPath;
 
@@ -430,19 +320,7 @@ export interface MdfsFileRoot<
   readonly filesByPath: ReadonlyMap<MdfsFullFilePath, MdfsContentFile>;
 
   /** Full mdast tree for this markdown file (e.g. Root from @types/mdast). */
-  readonly mdast: TRawAst;
-
-  /**
-   * Parsed YAML frontmatter as a JS object (if present).
-   * Schema-free: caller decides how to interpret it.
-   */
-  readonly frontmatter?: TFrontmatter;
-
-  /**
-   * Raw frontmatter string (without the leading/trailing --- lines),
-   * useful for debugging or alternative parsers.
-   */
-  readonly frontmatterRaw?: string;
+  readonly mdast: Root;
 }
 
 /**
@@ -450,12 +328,9 @@ export interface MdfsFileRoot<
  * This is what you get after scanning many .md files and
  * building a unified semantic tree/index.
  */
-export interface MdfsSet<
-  TRawAst = unknown,
-  TFrontmatter = unknown,
-> {
+export interface MdfsSet {
   /** All markdown files that were scanned. */
-  readonly files: readonly MdfsFileRoot<TRawAst, TFrontmatter>[];
+  readonly files: readonly MdfsFileRoot[];
 
   /** Global directory index across all files. */
   readonly dirsByPath: ReadonlyMap<MdfsFullDirPath, MdfsDir>;
@@ -555,7 +430,6 @@ export const ID_ANN = "id" as const;
  *
  * Schema-free:
  *  - Builds directory tree and content files.
- *  - Parses YAML frontmatter and exposes it via `frontmatter`.
  *  - Exposes the full mdast Root via `mdast`.
  */
 export async function parseMdfsFile(
@@ -579,6 +453,7 @@ export async function parseMdfsFile(
   const {
     processor = remark()
       .use(remarkFrontmatter, ["yaml"])
+      .use(docFrontmatter)
       .use(remarkGfm)
       .use(headingFrontmatter)
       .use(enrichedCode, {
@@ -595,37 +470,7 @@ export async function parseMdfsFile(
   const tree = processor.parse(source) as Root;
   await processor.run(tree);
 
-  // Extract and drop the first frontmatter node (if any).
-  const allChildren = Array.isArray(tree.children)
-    ? (tree.children as RootContent[])
-    : [];
-
-  const children: RootContent[] = [];
-  let frontmatterNode: RootContent | undefined;
-  let frontmatterRaw: string | undefined;
-  let frontmatter: unknown;
-
-  for (const node of allChildren) {
-    if (!frontmatterNode && node.type === "yaml") {
-      frontmatterNode = node;
-      continue;
-    }
-    children.push(node);
-  }
-
-  if (frontmatterNode && "value" in frontmatterNode) {
-    const withValue = frontmatterNode as RootContent & {
-      value?: unknown;
-    };
-    frontmatterRaw = String(withValue.value ?? "");
-    try {
-      frontmatter = YAMLparse(frontmatterRaw);
-    } catch {
-      // Keep raw string but omit parsed frontmatter on error.
-      frontmatter = undefined;
-    }
-  }
-
+  const children = tree.children;
   const basePath = fsPath(physicalPath);
 
   // ROOT directory
@@ -728,7 +573,5 @@ export async function parseMdfsFile(
     dirsByPath,
     filesByPath,
     mdast: tree,
-    frontmatter,
-    frontmatterRaw,
-  } satisfies MdfsFileRoot<Root, unknown>;
+  } satisfies MdfsFileRoot;
 }
