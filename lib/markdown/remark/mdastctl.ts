@@ -187,6 +187,38 @@ function selectNodes(
 // LS rows: every node + heading path
 // ---------------------------------------------------------------------------
 
+function shouldEmitNodeForLs(
+  node: RootContent,
+  parent: ParentLike,
+  hasQuery: boolean,
+): boolean {
+  // If user provided --select, be literal: show whatever mdastql returned.
+  if (hasQuery) return true;
+
+  // Always skip raw text as its own row; parents already summarize it.
+  if (node.type === "text") return false;
+
+  // Paragraphs directly under list items are just wrappers for bullet text.
+  // We'll keep the listItem row and drop the inner paragraph row.
+  if (node.type === "paragraph" && (parent as Any).type === "listItem") {
+    return false;
+  }
+
+  // Inline-only wrappers are usually not helpful as standalone rows.
+  // Their content is already reflected in parent nodeToPlainText().
+  if (
+    node.type === "strong" ||
+    node.type === "emphasis" ||
+    node.type === "delete" ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 interface BuildLsRowsOptions {
   readonly includeDataKeys?: boolean;
   readonly query?: string;
@@ -220,8 +252,10 @@ function buildLsRows(
 
   // Track heading hierarchy by depth to build headingPath strings
   const headingStack: (string | undefined)[] = [];
+  const hasQuery = !!query;
 
-  walkTree(root, (node, { depth }) => {
+  walkTree(root, (node, { depth, parent }) => {
+    // Maintain heading stack for *all* nodes so descendants get correct paths
     if (node.type === "heading") {
       const h = node as Heading;
       const hd = (h.depth ?? 1) | 0;
@@ -232,7 +266,11 @@ function buildLsRows(
       }
     }
 
+    // Only consider nodes selected by mdastql (or all if no query).
     if (!selectedSet.has(node)) return;
+
+    // Apply de-duplication / noise filtering for default ls.
+    if (!shouldEmitNodeForLs(node, parent, hasQuery)) return;
 
     const headingPath = headingStack.filter(Boolean).join(" / ");
     const name = node.type === "heading"
