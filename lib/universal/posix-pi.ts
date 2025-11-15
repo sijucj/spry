@@ -1,3 +1,19 @@
+/**
+ * @module posix-pi
+ *
+ * POSIX-style parser for `cmd/lang + meta` strings, typically used with
+ * Markdown code fence info strings (e.g. ```` ```ts PARTIAL main --tag ok { ... } ``` ````).
+ *
+ * This module:
+ * - Treats the first CLI token as a `cmd/lang` hint.
+ * - Parses the "command-line" portion (before the first unquoted `{`) using
+ *   POSIX-like tokenization (whitespace, quotes, escapes).
+ * - Interprets tokens as flags, positional keys, and boolean markers.
+ * - Treats everything from the first unquoted `{` to the end as pure JSON5
+ *   configuration (attrs), not part of the POSIX CLI.
+ *
+ * For usage patterns and edge cases, see the tests in `posix-pi_test.ts`.
+ */
 import JSON5 from "npm:json5@^2";
 
 /**
@@ -8,7 +24,8 @@ import JSON5 from "npm:json5@^2";
  *
  *   ```js PARTIAL main --level=2 --name "hello world" { id: "foo" }
  *   ^^^^ ^^^^^^^^^^^^ ^^^^^^^^^ ^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^
- *   cmd   tokens        flags           flags              attrs
+ *  cmd/    tokens        flags           flags              attrs
+ *  lang
  *   ```
  *
  * The first token is treated as a **command / language hint** (`cmd/lang`).
@@ -19,13 +36,14 @@ import JSON5 from "npm:json5@^2";
  */
 export interface PosixStylePI {
   /**
-   * Raw token stream split from the entire info string (including cmd/lang,
-   * flags, words, and anything inside the attrs block), using
-   * POSIX-like tokenization:
+   * Raw token stream split from the **CLI portion only** (i.e. before
+   * the first unquoted `{`), using POSIX-like tokenization:
    *
    * - Whitespace separates tokens;
    * - Single and double quotes group text and are not included in tokens;
    * - A backslash escapes the next character (outside or inside double quotes).
+   *
+   * Note: tokens from the JSON5 `{ ... }` block are **not** included here.
    */
   args: string[];
   /**
@@ -55,7 +73,7 @@ export interface PosixStylePI {
     string,
     string | number | boolean | (string | number | boolean)[]
   >;
-  /** Count of all tokens in `args`. */
+  /** Count of tokens in `args` (CLI tokens only). */
   count: number;
   /** Count of tokens in `pos`. */
   posCount: number;
@@ -68,7 +86,7 @@ export interface PosixStylePI {
  * how the string was interpreted.
  */
 export interface InstructionsResult {
-  /** Parsed POSIX-style PI for the command-line portion. */
+  /** Parsed POSIX-style PI for the **command-line portion only**. */
   pi: PosixStylePI;
   /** Parsed JSON5 attrs object, if a `{ ... }` block was present. */
   attrs?: Record<string, unknown>;
@@ -88,49 +106,83 @@ export interface InstructionsResult {
    * Raw JSON5 text handed to the JSON5 parser, i.e. the substring starting
    * at the first unquoted `{` (including that brace), or `undefined` when
    * no attrs block was found.
+   *
+   * This text is **not** tokenized POSIX-style; it is treated as pure JSON5.
    */
   attrsText?: string;
 }
 
 /**
- * Tokenize a string in a POSIX-like way:
+ * Internal: single-pass scan of the info string.
  *
- * - Whitespace delimits tokens.
- * - Single quotes `'...'` group literal text; backslashes are not special.
- * - Double quotes `"..."` group text; backslash escapes the next character.
- * - Outside quotes, a backslash escapes the next character.
- * - Quotes are **not** included in the resulting tokens.
+ * Responsibilities:
+ * - Trim the input.
+ * - POSIX-style tokenize **only the CLI portion** (before the first unquoted `{`).
+ * - Detect the first unquoted `{` and slice out:
+ *   - `cli` (text before it),
+ *   - `attrsText` (text from it to the end).
+ *
+ * Everything after the first unquoted `{` is treated as pure JSON5 and is
+ * **not** tokenized or processed as POSIX CLI.
  */
-function tokenizePosix(input: string): string[] {
-  const out: string[] = [];
-  let buf = "";
+function scanInfoString(text: string): {
+  cliTokens: string[];
+  cli: string;
+  attrsText?: string;
+} {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { cliTokens: [], cli: "" };
+  }
+
+  const tokens: string[] = [];
+
   type State = "OUT" | "SINGLE" | "DOUBLE";
   let state: State = "OUT";
+  let buf = "";
+  let attrsStartChar = -1;
 
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i];
+  const flush = () => {
+    if (buf.length) {
+      tokens.push(buf);
+      buf = "";
+    }
+  };
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
 
     if (state === "OUT") {
-      if (ch === "'") {
-        state = "SINGLE";
+      if (ch === "'" || ch === '"') {
+        // Entering a quoted token; quote chars are not included in the buffer.
+        state = ch === "'" ? "SINGLE" : "DOUBLE";
         continue;
       }
-      if (ch === '"') {
-        state = "DOUBLE";
-        continue;
-      }
+
       if (/\s/.test(ch)) {
-        if (buf.length) {
-          out.push(buf);
-          buf = "";
+        flush();
+        continue;
+      }
+
+      if (ch === "\\") {
+        const next = trimmed[++i];
+        if (next !== undefined) {
+          if (buf.length === 0) {
+            buf = "";
+          }
+          buf += next;
         }
         continue;
       }
-      if (ch === "\\") {
-        const next = input[++i];
-        if (next !== undefined) buf += next;
-        continue;
+
+      if (ch === "{" && attrsStartChar === -1) {
+        // First unquoted `{` marks the start of attrs.
+        attrsStartChar = i;
+        flush();
+        // Do NOT tokenize anything beyond this point; break out.
+        break;
       }
+
       buf += ch;
       continue;
     }
@@ -151,73 +203,32 @@ function tokenizePosix(input: string): string[] {
       continue;
     }
     if (ch === "\\") {
-      const next = input[++i];
+      const next = trimmed[++i];
       if (next !== undefined) buf += next;
       continue;
     }
     buf += ch;
   }
 
-  if (buf.length) out.push(buf);
-  return out;
-}
+  flush();
 
-/**
- * Split the info string into:
- * - a "command-line" CLI portion (before the first unquoted `{`), and
- * - an optional JSON5 attrs portion (starting from that `{`).
- *
- * A `{` inside single or double quotes does NOT start the attrs block.
- */
-function splitCliAndAttrs(text: string): { cli: string; attrsText?: string } {
-  const trimmed = text.trim();
-  if (!trimmed) return { cli: "" };
+  let cli: string;
+  let attrsText: string | undefined;
 
-  type State = "OUT" | "SINGLE" | "DOUBLE";
-  let state: State = "OUT";
-
-  for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i];
-
-    if (state === "OUT") {
-      if (ch === "'") {
-        state = "SINGLE";
-        continue;
-      }
-      if (ch === '"') {
-        state = "DOUBLE";
-        continue;
-      }
-      if (ch === "{") {
-        const cli = trimmed.slice(0, i).trim();
-        const attrsText = trimmed.slice(i).trim();
-        return { cli, attrsText };
-      }
-      continue;
-    }
-
-    if (state === "SINGLE") {
-      if (ch === "'") state = "OUT";
-      continue;
-    }
-
-    // state === "DOUBLE"
-    if (ch === '"') {
-      state = "OUT";
-      continue;
-    }
-    if (ch === "\\") {
-      // skip escaped char
-      i++;
-    }
+  if (attrsStartChar >= 0) {
+    cli = trimmed.slice(0, attrsStartChar).trim();
+    attrsText = trimmed.slice(attrsStartChar).trim();
+  } else {
+    cli = trimmed;
+    attrsText = undefined;
   }
 
-  return { cli: trimmed, attrsText: undefined };
+  return { cliTokens: tokens, cli, attrsText };
 }
 
 /**
  * Parse a `cmd/lang + meta` string into:
- * - a POSIX-style PI structure (`pi`),
+ * - a POSIX-style PI structure (`pi`) for the **CLI portion**,
  * - an optional JSON5 `{ ... }` attributes object (`attrs`),
  * - plus higher-level metadata (`cmdLang`, `cli`, `attrsText`).
  *
@@ -226,11 +237,12 @@ function splitCliAndAttrs(text: string): { cli: string; attrsText?: string } {
  *   [command-like portion] [optional JSON5 attrs block]
  *
  * The command-like portion (before the first unquoted `{`) is tokenized using
- * POSIX-like rules (see `tokenizePosix`). Flags and positional tokens are
+ * POSIX-like rules (see `scanInfoString`). Flags and positional tokens are
  * extracted only from this portion.
  *
  * The attrs block is the substring from the first unquoted `{` to the end,
- * passed verbatim to JSON5 for parsing.
+ * passed verbatim to JSON5 for parsing. Everything in that trailing block is
+ * treated as pure JSON5, **not** as POSIX CLI.
  *
  * Parsing rules (for the CLI portion):
  * - The **first token** is treated as a `cmd/lang` hint.
@@ -297,13 +309,13 @@ export function instructionsFromText(
     retainCmdLang?: boolean;
   },
 ): InstructionsResult {
-  const { cli, attrsText } = splitCliAndAttrs(text);
+  const { cliTokens, cli, attrsText } = scanInfoString(text);
 
-  const cliTokens = cli ? tokenizePosix(cli) : [];
   const cmdLang = cliTokens.length ? cliTokens[0] : undefined;
   const tokens = options?.retainCmdLang ? cliTokens : cliTokens.slice(1);
 
-  const args = text.trim().length ? tokenizePosix(text.trim()) : [];
+  // `args` are the CLI tokens only (no tokens from the JSON5 attrs portion).
+  const args = [...cliTokens];
 
   const flags: Record<
     string,

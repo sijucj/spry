@@ -165,41 +165,35 @@ Deno.test("instructionsFromText basic and edge behaviors", async (t) => {
     assertEquals(pi.pos.sort(), ["name", "path", "tag"].sort());
   });
 
-  await t.step("attrs-only string (no cmd/lang) parses JSON5", () => {
-    const { pi, attrs, cmdLang, cli, attrsText } = instructionsFromText(
-      "{ foo: 1, bar: 'baz' }",
-    );
+  await t.step(
+    "attrs-only string (no cmd/lang) parses JSON5 and has no CLI tokens",
+    () => {
+      const { pi, attrs, cmdLang, cli, attrsText } = instructionsFromText(
+        "{ foo: 1, bar: 'baz' }",
+      );
 
-    // POSIX tokenizer removes quotes from tokens in args
-    assertEquals(pi.args, ["{", "foo:", "1,", "bar:", "baz", "}"]);
-    assertEquals(pi.flags, {});
-    assertEquals(pi.pos, []);
-    assertEquals(pi.count, pi.args.length);
-    assertEquals(pi.posCount, 0);
+      // CLI tokens only; attrs-only string means no CLI
+      assertEquals(pi.args, []);
+      assertEquals(pi.flags, {});
+      assertEquals(pi.pos, []);
+      assertEquals(pi.count, 0);
+      assertEquals(pi.posCount, 0);
 
-    assert(attrs);
-    assertEquals(attrs, { foo: 1, bar: "baz" });
-    assertEquals(cmdLang, undefined);
-    assertEquals(cli, "");
-    assertEquals(attrsText, "{ foo: 1, bar: 'baz' }");
-  });
+      assert(attrs);
+      assertEquals(attrs, { foo: 1, bar: "baz" });
+      assertEquals(cmdLang, undefined);
+      assertEquals(cli, "");
+      assertEquals(attrsText, "{ foo: 1, bar: 'baz' }");
+    },
+  );
 
   await t.step("cmd/lang plus attrs parses both", () => {
     const { pi, attrs, cmdLang, cli, attrsText } = instructionsFromText(
       "js --tag important { id: 'foo', count: 3 }",
     );
 
-    assertEquals(pi.args, [
-      "js",
-      "--tag",
-      "important",
-      "{",
-      "id:",
-      "foo,",
-      "count:",
-      "3",
-      "}",
-    ]);
+    // args are CLI tokens only (no tokens from attrs JSON5)
+    assertEquals(pi.args, ["js", "--tag", "important"]);
 
     // normalized behavior: "--tag important" is a two-token flag
     assertEquals(pi.flags, { tag: "important" });
@@ -214,7 +208,7 @@ Deno.test("instructionsFromText basic and edge behaviors", async (t) => {
   });
 
   await t.step("attrs parsing ignores invalid JSON5 by default", () => {
-    const { pi, attrs } = instructionsFromText(
+    const { pi, attrs, attrsText } = instructionsFromText(
       "ts --x 1 { not: valid: json5 }",
     );
 
@@ -222,6 +216,7 @@ Deno.test("instructionsFromText basic and edge behaviors", async (t) => {
     assert(attrs);
     // default behavior: ignore parse errors -> empty object
     assertEquals(attrs, {});
+    assertEquals(attrsText, "{ not: valid: json5 }");
   });
 
   await t.step(
