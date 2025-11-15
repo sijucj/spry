@@ -21,7 +21,6 @@ import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../../universal/lister-tree-tui.ts";
 import { computeSemVerSync } from "../../universal/version.ts";
 
-import { Root } from "npm:@types/mdast@4";
 import { isHeadingWithFrontmatter } from "../remark/heading-frontmatter.ts";
 import {
   type MdfsContentFile,
@@ -59,7 +58,7 @@ export interface MdfsRow {
  * - Directories become "dir" rows.
  * - Content files become "file" rows, nested under their parent directory path.
  */
-export function tabularMdfs(root: MdfsFileRoot<Root, unknown>) {
+export function tabularMdfs(root: MdfsFileRoot) {
   const rows: MdfsRow[] = [];
 
   function dirPathSegments(dir: MdfsDir): string[] {
