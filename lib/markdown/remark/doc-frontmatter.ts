@@ -148,3 +148,5 @@ export const documentFrontmatter: Plugin<
     }
   };
 };
+
+export default documentFrontmatter;
