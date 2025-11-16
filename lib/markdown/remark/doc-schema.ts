@@ -586,4 +586,111 @@ function findEnclosingHeadingSection(
   return undefined;
 }
 
+export function stringifySections(sections: Iterable<SectionSchema>) {
+  const arr = Array.from(sections);
+  const byNs = new Map<string, SectionSchema[]>();
+
+  for (const s of arr) {
+    const ns = s.namespace;
+    if (!byNs.has(ns)) byNs.set(ns, []);
+    byNs.get(ns)!.push(s);
+  }
+
+  const sectionLabel = (s: SectionSchema) => {
+    switch (s.nature) {
+      case "heading": {
+        const h = s as HeadingSectionSchema;
+        const text = h.heading.children
+          .map((c) => ("value" in c ? c.value : ""))
+          .join("");
+        return `heading: "${text}" depth=${h.depth}`;
+      }
+      case "marker": {
+        const m = s as MarkerSectionSchema;
+        const mk = m.markerKind;
+        const t = "title" in m ? ` title="${m.title}"` : "";
+        return `marker: kind=${mk}${t}`;
+      }
+    }
+  };
+
+  const asciiTree = () => {
+    const lines: string[] = [];
+    for (const ns of [...byNs.keys()].sort()) {
+      lines.push(`namespace: ${ns}`);
+      const roots = byNs.get(ns)!.filter((s) => s.parent == null);
+      for (const r of roots) {
+        lines.push(
+          `  - ${sectionLabel(r)} [${r.startIndex}, ${r.endIndex})`,
+        );
+        for (const c of r.children) {
+          lines.push(
+            `      * ${sectionLabel(c)} [${c.startIndex}, ${c.endIndex})`,
+          );
+        }
+      }
+    }
+    return lines.join("\n");
+  };
+
+  const dumpNode = (lines: string[], s: SectionSchema, pad: string) => {
+    lines.push(`${pad}- ${sectionLabel(s)} [${s.startIndex}, ${s.endIndex})`);
+    for (const c of s.children) {
+      dumpNode(lines, c, pad + "  ");
+    }
+  };
+
+  const asciiTreeByNamespace = () => {
+    const lines: string[] = [];
+    for (const ns of [...byNs.keys()].sort()) {
+      lines.push(`namespace ${ns}`);
+      const roots = byNs.get(ns)!.filter((s) => s.parent == null);
+      for (const r of roots) {
+        dumpNode(lines, r, "  ");
+      }
+    }
+    return lines.join("\n");
+  };
+
+  const listNamespaces = () => [...byNs.keys()];
+
+  const listSections = (namespace?: string) => {
+    if (!namespace) return arr;
+    return byNs.get(namespace) ?? [];
+  };
+
+  return {
+    asciiTree,
+    asciiTreeByNamespace,
+    listNamespaces,
+    listSections,
+  };
+}
+
+export function collectSectionsFromRoot(root: Root) {
+  const out: SectionSchema[] = [];
+  // deno-lint-ignore no-explicit-any
+  const walk = (n: any) => {
+    if (hasSectionSchema(n)) {
+      for (
+        const s of Object.values(
+          (n.data as { sectionSchema: Record<string, SectionSchema> })
+            .sectionSchema,
+        )
+      ) {
+        out.push(s);
+      }
+    }
+    if (n.children) {
+      for (const c of n.children) walk(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+export function materializeRoot(root: Root) {
+  return stringifySections(collectSectionsFromRoot(root));
+}
+
 export default documentSchema;

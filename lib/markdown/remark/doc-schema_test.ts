@@ -12,6 +12,7 @@ import {
   type HeadingSectionSchema,
   isBoldParagraphSection,
   type MarkerSectionSchema,
+  materializeRoot,
   type SectionSchema,
 } from "./doc-schema.ts";
 
@@ -372,4 +373,40 @@ Deno.test("documentSchema — bold marker titles normalize colons", () => {
   assertEquals(boldMarkers[0].title, "bold text without colon");
   assertEquals(boldMarkers[1].title, "bold text with colon inside");
   assertEquals(boldMarkers[2].title, "bold text with colon outside");
+});
+
+Deno.test("stringifySections — ascii trees and namespaces", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(documentSchema, {
+      namespace: "prime",
+      enrichWithBelongsTo: true,
+      includeDefaultHeadingRule: true,
+      sectionRules: [
+        boldParagraphSectionRule(),
+        colonParagraphSectionRule(),
+      ],
+    });
+
+  const tree = processor.parse(MARKER_FIXTURE) as Root;
+  processor.runSync(tree);
+
+  const mat = materializeRoot(tree);
+
+  const expectedAscii = [
+    "namespace: prime",
+    '  - heading: "Title" depth=1 [0, 6)',
+    '      * marker: kind=bold-paragraph title="BoldOnly" [2, 4)',
+    "      * marker: kind=colon-paragraph [4, 6)",
+  ].join("\n");
+
+  const expectedAsciiNs = [
+    "namespace prime",
+    '  - heading: "Title" depth=1 [0, 6)',
+    '    - marker: kind=bold-paragraph title="BoldOnly" [2, 4)',
+    "    - marker: kind=colon-paragraph [4, 6)",
+  ].join("\n");
+
+  assertEquals(mat.asciiTree(), expectedAscii);
+  assertEquals(mat.asciiTreeByNamespace(), expectedAsciiNs);
 });
