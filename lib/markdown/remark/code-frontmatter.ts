@@ -16,13 +16,11 @@
  *
  * 2) **ATTRS** — trailing object-literal in braces, parsed as **JSON5**:
  *    - Example: <code>```ts --env=prod { priority: 3, note: 'ok' }</code>
- *    - Saved as a plain object on the node under `data[storeKey].attrs`
+ *    - Saved as a plain object on the node under `data[codeFM].attrs`
  *
  * The output is stored on each **mdast** `code` node at:
  *
- *   `node.data[storeKey] = { lang, meta, pi, attrs }`
- *
- * with the default `storeKey` being `"codeFrontmatter"`.
+ *   `node.data[codeFM] = { lang, meta, pi, attrs }`
  *
  * @example
  * ```ts
@@ -67,6 +65,7 @@ import {
   instructionsFromText,
   PosixStylePI,
 } from "../../universal/posix-pi.ts";
+import { visit } from "npm:unist-util-visit@^5";
 
 /** The structured enrichment attached to a code node by this plugin. */
 export interface CodeFrontmatter {
@@ -147,7 +146,6 @@ export interface CodeFrontmatterOptions {
  * import codeFrontmatter from "./code-frontmatter.ts";
  *
  * const processor = remark().use(codeFrontmatter, {
- *   storeKey: "codeFrontmatter",
  *   normalizeFlagKey: (k) => k.toLowerCase(),
  *   onAttrsParseError: "ignore",
  *   coerceNumbers: true,
@@ -161,27 +159,16 @@ export default function codeFrontmatter(options: CodeFrontmatterOptions = {}) {
   const { collect } = options;
 
   return function transformer(tree: Root) {
-    const walk = (node: Root | RootContent): void => {
-      if (node.type === "code") {
-        // deno-lint-ignore no-explicit-any
-        const anyNode = node as any;
-        const data = (anyNode.data ??= {});
-        if (!data[CODEFM_KEY]) {
-          const parsed = parseFrontmatterFromCode(anyNode, options);
-          if (parsed) data[CODEFM_KEY] = parsed;
-        }
-        collect?.(node as CodeWithFrontmatterNode);
-      }
-      // descend
+    visit(tree, "code", (node) => {
       // deno-lint-ignore no-explicit-any
-      const maybeChildren: any = node as any;
-      const children = maybeChildren.children as RootContent[] | undefined;
-      if (children && Array.isArray(children)) {
-        for (const c of children) walk(c);
+      const untypedNode = node as any;
+      const data = (untypedNode.data ??= {});
+      if (!data[CODEFM_KEY]) {
+        const parsed = parseFrontmatterFromCode(untypedNode, options);
+        if (parsed) data[CODEFM_KEY] = parsed;
       }
-    };
-
-    walk(tree);
+      collect?.(node as CodeWithFrontmatterNode);
+    });
   };
 }
 
