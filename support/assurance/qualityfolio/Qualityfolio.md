@@ -1,12 +1,13 @@
 ---
-qualityfolio:
-  version: 1.0
-  schema:
-    - project
-    - suite
-    - plan
-    - case
-    - step
+doc-classify:
+  - select: h1
+    role: project
+  - select: h2
+    role: suite
+  - select: h3
+    role: plan
+  - select: h4
+    role: case
 ---
 
 # E2E1 End-to-End Qualityfolio

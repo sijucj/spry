@@ -40,6 +40,9 @@ import { mdastql, type MdastQlOptions } from "./mdastql.ts";
 import codeFrontmatter from "../remark/code-frontmatter.ts";
 import docFrontmatter from "../remark/doc-frontmatter.ts";
 import headingFrontmatter from "../remark/heading-frontmatter.ts";
+import nodeClassifier, {
+  classifiersFromFrontmatter,
+} from "../remark/node-classify.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +59,7 @@ export interface LsRow {
   readonly depth: number;
   readonly headingPath: string;
   readonly name: string;
+  readonly classInfo?: string;
   readonly dataKeys?: string;
 }
 
@@ -66,6 +70,7 @@ export interface TreeRow {
   readonly label: string;
   readonly type: RootContent["type"] | "root";
   readonly parentId?: string;
+  readonly classInfo?: string;
   readonly dataKeys?: string;
 }
 
@@ -186,6 +191,30 @@ function summarizeNode(node: RootContent): string {
   }
 }
 
+function formatNodeClasses(node: RootContent): string | undefined {
+  const data = (node as Any).data;
+  if (!data || typeof data !== "object") return undefined;
+
+  const cls = (data as Any).class;
+  if (!cls || typeof cls !== "object") return undefined;
+
+  const entries = Object.entries(cls as Record<string, unknown>);
+  const parts: string[] = [];
+
+  for (const [key, value] of entries) {
+    if (typeof value === "string") {
+      parts.push(`${key}:${value}`);
+    } else if (Array.isArray(value)) {
+      const vals = value.filter((v): v is string => typeof v === "string");
+      if (vals.length) {
+        parts.push(`${key}:${vals.join(",")}`);
+      }
+    }
+  }
+
+  return parts.length ? parts.join(" ") : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // mdastql selection (Option A – use real mdastql.ts)
 // ---------------------------------------------------------------------------
@@ -259,6 +288,7 @@ interface BuildLsRowsOptions {
  *   - headingPath (path of ancestor headings like "Intro / Examples")
  *   - name (human summary)
  *   - where (line:col)
+ *   - CLASS (flattened `data.class` as key:value pairs)
  *   - dataKeys (CSV of node.data keys if requested)
  */
 function buildLsRows(
@@ -300,6 +330,8 @@ function buildLsRows(
       ? `h${node.depth ?? "?"}: ${headingText(node)}`
       : summarizeNode(node);
 
+    const classInfo = formatNodeClasses(node);
+
     const dataKeys = includeDataKeys && node.data
       ? Object.keys(node.data).join(", ")
       : undefined;
@@ -311,6 +343,7 @@ function buildLsRows(
       depth,
       headingPath,
       name,
+      classInfo,
       dataKeys,
     });
   });
@@ -353,6 +386,7 @@ function buildTreeRows(
     type: "root",
     label,
     parentId: undefined,
+    classInfo: undefined,
     dataKeys: undefined,
   });
 
@@ -391,6 +425,8 @@ function buildTreeRows(
         ? Object.keys(child.data).join(",")
         : undefined;
 
+      const classInfo = formatNodeClasses(child);
+
       rows.push({
         id,
         file: fileRef(child),
@@ -398,6 +434,7 @@ function buildTreeRows(
         type: "heading",
         label: headingText(child),
         parentId,
+        classInfo,
         dataKeys,
       });
 
@@ -412,6 +449,8 @@ function buildTreeRows(
         ? Object.keys(child.data).join(", ")
         : undefined;
 
+      const classInfo = formatNodeClasses(child);
+
       rows.push({
         id,
         file: fileRef(child),
@@ -419,6 +458,7 @@ function buildTreeRows(
         type: child.type,
         label: summarizeNode(child),
         parentId,
+        classInfo,
         dataKeys,
       });
 
@@ -497,6 +537,9 @@ async function readMarkdownTrees(
     .use(codeFrontmatter, {
       coerceNumbers: true, // "9" -> 9
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
+    })
+    .use(nodeClassifier, {
+      classifiers: classifiersFromFrontmatter(),
     }),
 ): Promise<Array<ParsedMarkdownTree>> {
   if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
@@ -756,6 +799,8 @@ export class CLI {
    * - By default: includes every node in the tree.
    * - With `--select <expr>`: only nodes matching that mdastql expression.
    * - With `--data`: adds a DATA column showing `Object.keys(node.data)`.
+   * - With automatic node classification (via frontmatter + nodeClassifier),
+   *   shows a CLASS column with key:value pairs.
    */
   protected lsCommand() {
     return new Command()
@@ -797,6 +842,7 @@ export class CLI {
               "depth",
               "headingPath",
               "name",
+              "classInfo",
               "dataKeys",
             )
             .requireAtLeastOneColumn(true)
@@ -827,6 +873,10 @@ export class CLI {
             header: "NAME",
             defaultColor: bold,
           });
+          builder.field("classInfo", "classInfo", {
+            header: "CLASS",
+            defaultColor: magenta,
+          });
 
           if (options.data) {
             builder.field("dataKeys", "dataKeys", {
@@ -843,6 +893,7 @@ export class CLI {
             "depth",
             "headingPath",
             "name",
+            "classInfo",
           ];
           if (options.data) ids.push("dataKeys");
           builder.select(...ids);
@@ -863,6 +914,7 @@ export class CLI {
    * - Synthetic file root node is the top-level parent.
    * - Headings are "directories".
    * - Non-heading nodes under headings are "files" (content).
+   * - Includes CLASS column with key:value pairs from node `data.class`.
    */
   protected treeCommand() {
     return new Command()
@@ -894,7 +946,7 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "type", "file", "dataKeys")
+          .declareColumns("label", "type", "file", "classInfo", "dataKeys")
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
@@ -912,6 +964,10 @@ export class CLI {
           header: "FILE",
           defaultColor: gray,
         });
+        base.field("classInfo", "classInfo", {
+          header: "CLASS",
+          defaultColor: magenta,
+        });
         if (options.data) {
           base.field("dataKeys", "dataKeys", {
             header: "DATA",
@@ -920,9 +976,9 @@ export class CLI {
         }
 
         if (options.data) {
-          base.select("label", "type", "file", "dataKeys");
+          base.select("label", "type", "file", "classInfo", "dataKeys");
         } else {
-          base.select("label", "type", "file");
+          base.select("label", "type", "file", "classInfo");
         }
 
         const treeLister = TreeLister.wrap(base)
