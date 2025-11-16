@@ -30,6 +30,7 @@ import type {
   Paragraph,
   Root,
   RootContent,
+  Strong,
 } from "npm:@types/mdast@^4";
 import type { Data } from "npm:@types/unist@^3";
 import type { Plugin } from "npm:unified@^11";
@@ -63,6 +64,7 @@ export interface MarkerSectionSchema extends BaseSectionSchema {
   readonly nature: "marker";
   readonly markerKind: string;
   readonly markerNode: RootContent;
+  readonly title?: string;
 }
 
 /**
@@ -240,13 +242,61 @@ export function headingSectionRule(): HeadingSectionRule {
 }
 
 /**
+ * Extract title text from a bold single-line paragraph.
+ * Strips trailing colon, is whitespace-insensitive, and only uses the bold text.
+ */
+function getBoldParagraphTitle(node: RootContent): string | undefined {
+  if (node.type !== "paragraph") return undefined;
+
+  const meaningfulChildren = node.children.filter(
+    (c) => !(c.type === "text" && c.value.trim() === ""),
+  );
+
+  if (!meaningfulChildren.length) return undefined;
+  const first = meaningfulChildren[0];
+
+  if (first.type !== "strong") return undefined;
+
+  const strong = first as Strong;
+  const raw = strong.children
+    .map((c) => (c.type === "text" ? c.value : ""))
+    .join("")
+    .trim();
+
+  if (!raw) return undefined;
+
+  const title = raw.replace(/[:：]\s*$/u, "").trim();
+  return title || undefined;
+}
+
+/**
  * Helper: detect a bold single-line paragraph:
- * paragraph with exactly one child which is `strong`.
+ * paragraph whose primary content is `strong`, optionally followed by a colon.
+ * Whitespace around is ignored.
  */
 function isBoldSingleLineParagraph(node: RootContent): node is Paragraph {
   if (node.type !== "paragraph") return false;
-  if (node.children.length !== 1) return false;
-  return node.children[0].type === "strong";
+
+  const meaningfulChildren = node.children.filter(
+    (c) => !(c.type === "text" && c.value.trim() === ""),
+  );
+
+  if (meaningfulChildren.length === 0) return false;
+
+  if (meaningfulChildren.length === 1) {
+    return meaningfulChildren[0].type === "strong";
+  }
+
+  if (meaningfulChildren.length === 2) {
+    const [first, second] = meaningfulChildren;
+    return (
+      first.type === "strong" &&
+      second.type === "text" &&
+      second.value.trim() === ":"
+    );
+  }
+
+  return false;
 }
 
 /**
@@ -263,7 +313,7 @@ function isColonSingleLineParagraph(node: RootContent): node is Paragraph {
 /**
  * Built-in helper rule: any bold single-line paragraph starts a marker section.
  * In practice this will only match if the entire paragraph is just `**text**`
- * with no newlines or extra text.
+ * (with an optional trailing colon) and optional surrounding whitespace.
  */
 export function boldParagraphSectionRule(): MarkerSectionRule {
   return {
@@ -281,6 +331,8 @@ export function boldParagraphSectionRule(): MarkerSectionRule {
       node,
       parent,
     }): MarkerSectionSchema {
+      const title = getBoldParagraphTitle(node);
+
       return {
         nature: "marker",
         namespace,
@@ -291,6 +343,7 @@ export function boldParagraphSectionRule(): MarkerSectionRule {
         parentNode: root,
         markerKind: "bold-paragraph",
         markerNode: node,
+        title,
       };
     },
   };

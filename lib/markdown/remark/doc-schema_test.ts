@@ -42,6 +42,14 @@ End text.
 // 4: paragraph "Field:"
 // 5: paragraph "End text."
 
+const BOLD_TITLE_FIXTURE = `
+**bold text without colon**
+
+**bold text with colon inside:**
+
+**bold text with colon outside**:
+`.trim();
+
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
@@ -190,6 +198,14 @@ Deno.test("documentSchema — structure in single namespace", async (t) => {
     assertEquals(colonSection.endIndex, 6);
   });
 
+  await t.step("bold marker section captures title without colon", () => {
+    const boldSection = primeMarkers.find((m) =>
+      m.markerKind === "bold-paragraph"
+    );
+    assert(boldSection);
+    assertEquals(boldSection.title, "BoldOnly");
+  });
+
   await t.step("belongsToSection points to innermost section per index", () => {
     const sections = primeSections;
 
@@ -330,4 +346,34 @@ Deno.test("documentSchema — multi-namespace structural separation", async (t) 
       }
     }
   });
+});
+
+// ---------------------------------------------------------------------------
+// Test 3: bold marker titles with and without colons
+// ---------------------------------------------------------------------------
+
+Deno.test("documentSchema — bold marker titles normalize colons", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(documentSchema, {
+      namespace: "prime",
+      enrichWithBelongsTo: false,
+      includeDefaultHeadingRule: false,
+      sectionRules: [boldParagraphSectionRule()],
+    });
+
+  const tree = processor.parse(BOLD_TITLE_FIXTURE) as Root;
+  processor.runSync(tree);
+
+  const byNs = collectSectionsByNamespace(tree);
+  const primeSections = byNs.get("prime") ?? [];
+  const markers = primeSections.filter(isMarkerSection);
+
+  assertEquals(markers.length, 3);
+
+  const titles = markers.map((m) => m.title);
+
+  assertEquals(titles[0], "bold text without colon");
+  assertEquals(titles[1], "bold text with colon inside");
+  assertEquals(titles[2], "bold text with colon outside");
 });
