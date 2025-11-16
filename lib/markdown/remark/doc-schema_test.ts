@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "jsr:@std/assert@^1";
 
-import { unified } from "npm:unified@^11";
 import remarkParse from "npm:remark-parse@^11";
+import { unified } from "npm:unified@^11";
 
 import {
   boldParagraphSectionRule,
@@ -10,6 +10,7 @@ import {
   hasBelongsToSection,
   hasSectionSchema,
   type HeadingSectionSchema,
+  isBoldParagraphSection,
   type MarkerSectionSchema,
   type SectionSchema,
 } from "./doc-schema.ts";
@@ -348,10 +349,6 @@ Deno.test("documentSchema — multi-namespace structural separation", async (t) 
   });
 });
 
-// ---------------------------------------------------------------------------
-// Test 3: bold marker titles with and without colons
-// ---------------------------------------------------------------------------
-
 Deno.test("documentSchema — bold marker titles normalize colons", () => {
   const processor = unified()
     .use(remarkParse)
@@ -369,11 +366,10 @@ Deno.test("documentSchema — bold marker titles normalize colons", () => {
   const primeSections = byNs.get("prime") ?? [];
   const markers = primeSections.filter(isMarkerSection);
 
-  assertEquals(markers.length, 3);
+  const boldMarkers = markers.filter(isBoldParagraphSection);
+  assertEquals(boldMarkers.length, 3);
 
-  const titles = markers.map((m) => m.title);
-
-  assertEquals(titles[0], "bold text without colon");
-  assertEquals(titles[1], "bold text with colon inside");
-  assertEquals(titles[2], "bold text with colon outside");
+  assertEquals(boldMarkers[0].title, "bold text without colon");
+  assertEquals(boldMarkers[1].title, "bold text with colon inside");
+  assertEquals(boldMarkers[2].title, "bold text with colon outside");
 });

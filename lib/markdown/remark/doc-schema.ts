@@ -299,15 +299,16 @@ function isBoldSingleLineParagraph(node: RootContent): node is Paragraph {
   return false;
 }
 
-/**
- * Helper: detect a single-line colon paragraph:
- * paragraph with exactly one text child whose value ends with ':'.
- */
-function isColonSingleLineParagraph(node: RootContent): node is Paragraph {
-  if (node.type !== "paragraph") return false;
-  if (node.children.length !== 1) return false;
-  const child = node.children[0];
-  return child.type === "text" && child.value.trimEnd().endsWith(":");
+export interface BoldParagraphSectionSchema extends MarkerSectionSchema {
+  readonly markerKind: "bold-paragraph";
+  readonly markerNode: Paragraph;
+  readonly title: string;
+}
+
+export function isBoldParagraphSection(
+  s: MarkerSectionSchema,
+): s is BoldParagraphSectionSchema {
+  return s.markerKind === "bold-paragraph";
 }
 
 /**
@@ -320,7 +321,7 @@ export function boldParagraphSectionRule(): MarkerSectionRule {
     id: "bold-paragraph",
     nature: "marker",
     termination: { mode: "until-next-any-rule" },
-    isStart(node: RootContent): boolean {
+    isStart(node: RootContent): node is Paragraph {
       return isBoldSingleLineParagraph(node);
     },
     buildSection({
@@ -331,9 +332,8 @@ export function boldParagraphSectionRule(): MarkerSectionRule {
       node,
       parent,
     }): MarkerSectionSchema {
-      const title = getBoldParagraphTitle(node);
-
-      return {
+      const title = getBoldParagraphTitle(node) ?? "";
+      const base: MarkerSectionSchema = {
         nature: "marker",
         namespace,
         startIndex,
@@ -343,10 +343,24 @@ export function boldParagraphSectionRule(): MarkerSectionRule {
         parentNode: root,
         markerKind: "bold-paragraph",
         markerNode: node,
-        title,
       };
+      return {
+        ...base,
+        title,
+      } as BoldParagraphSectionSchema;
     },
   };
+}
+
+/**
+ * Helper: detect a single-line colon paragraph:
+ * paragraph with exactly one text child whose value ends with ':'.
+ */
+function isColonSingleLineParagraph(node: RootContent): node is Paragraph {
+  if (node.type !== "paragraph") return false;
+  if (node.children.length !== 1) return false;
+  const child = node.children[0];
+  return child.type === "text" && child.value.trimEnd().endsWith(":");
 }
 
 /**
