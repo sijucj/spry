@@ -401,3 +401,5 @@ export const nodeIdentities: Plugin<
     return tree;
   };
 };
+
+export default nodeIdentities;
