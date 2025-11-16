@@ -1,10 +1,10 @@
-// mdast-view.ts
 /**
  * Shared view-model builders + helpers for mdast trees.
  *
  * - Node traversal & selection (mdastql-based)
  * - Presentation-oriented helpers (summaries, classes)
- * - Unified tree rows for physical, class, and schema views
+ * - Unified tree rows for physical/class/schema views
+ * - Unified tabular rows for physical "ls" style views
  */
 
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
@@ -23,6 +23,14 @@ import { mdastql, type MdastQlOptions } from "./mdastql.ts";
 type Any = any;
 
 export type MdAstTreeView = "physical" | "class" | "schema";
+
+/**
+ * Different strategies for tabular (row-oriented) views.
+ *
+ * For now:
+ *  - "physical" = depth-first listing of nodes with headingPath, etc.
+ */
+export type MdAstTabularView = "physical";
 
 /**
  * Parsed markdown tree with enough metadata for building views.
@@ -63,6 +71,26 @@ export interface TreeRow {
    *  - 1 for their children, etc.
    */
   readonly schemaLevel?: number;
+}
+
+/**
+ * Generic tabular row used by `ls`-style views.
+ */
+export interface TabularRow {
+  readonly id: number;
+  readonly file: string;
+  readonly type: RootContent["type"];
+  readonly depth: number;
+  readonly headingPath: string;
+  readonly name: string;
+  readonly classInfo?: string;
+  readonly dataKeys?: string;
+}
+
+export interface BuildMdAstTabularRowsOptions {
+  readonly includeDataKeys?: boolean;
+  readonly query?: string;
+  readonly mdastqlOptions?: MdastQlOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +319,135 @@ export function buildMdAstTreeRows(
       // exhaustive check
       throw new Error(`Unknown MdAstTreeView: ${view satisfies never}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tabular view(s)
+// ---------------------------------------------------------------------------
+
+/**
+ * Decide whether a node should appear as its own tabular row, for
+ * default "physical" ls-style output.
+ */
+function shouldEmitNodeForTabular(
+  node: RootContent,
+  parent: Root | (RootContent & { children?: RootContent[] }),
+  hasQuery: boolean,
+): boolean {
+  // If user provided --select, be literal: show whatever mdastql returned.
+  if (hasQuery) return true;
+
+  // Always skip raw text as its own row; parents already summarize it.
+  if (node.type === "text") return false;
+
+  // Paragraphs directly under list items are just wrappers for bullet text.
+  if (node.type === "paragraph" && parent.type === "listItem") {
+    return false;
+  }
+
+  // Inline-only wrappers are usually not helpful as standalone rows.
+  if (
+    node.type === "strong" ||
+    node.type === "emphasis" ||
+    node.type === "delete" ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Unified builder for tabular rows.
+ *
+ * Currently supports:
+ *  - "physical" → depth-first listing with heading path.
+ */
+export function buildMdAstTabularRows(
+  view: MdAstTabularView,
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTabularRowsOptions = {},
+): TabularRow[] {
+  switch (view) {
+    case "physical":
+      return buildPhysicalTabularRows(pmt, opts);
+    default:
+      throw new Error(`Unknown MdAstTabularView: ${view satisfies never}`);
+  }
+}
+
+/**
+ * `physical` tabular view – used by the `ls` command:
+ *
+ * - Every node (by default) or only mdastql-selected nodes (`--select`).
+ * - Each row includes:
+ *   - file
+ *   - type
+ *   - depth (tree depth)
+ *   - headingPath (path of ancestor headings like "Intro → Examples")
+ *   - name (human summary)
+ *   - CLASS (flattened `data.class` as key:value pairs)
+ *   - DATA (CSV of node.data keys if requested)
+ */
+function buildPhysicalTabularRows(
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTabularRowsOptions = {},
+): TabularRow[] {
+  const { root, fileRef } = pmt;
+  const { includeDataKeys, query, mdastqlOptions } = opts;
+  const selected = selectNodes(root, query, mdastqlOptions);
+  const selectedSet = new Set(selected);
+
+  const rows: TabularRow[] = [];
+  let id = 1;
+
+  // Track heading hierarchy by depth to build headingPath strings
+  const headingStack: (string | undefined)[] = [];
+  const hasQuery = !!query;
+
+  walkTree(root, (node, { depth, parent }) => {
+    // Maintain heading stack for *all* nodes so descendants get correct paths
+    if (node.type === "heading") {
+      const hd = (node.depth ?? 1) | 0;
+      const label = headingText(node as Heading);
+      if (hd > 0) {
+        headingStack.splice(hd - 1);
+        headingStack[hd - 1] = label;
+      }
+    }
+
+    // Only consider nodes selected by mdastql (or all if no query).
+    if (!selectedSet.has(node)) return;
+
+    // Apply de-duplication / noise filtering for default ls.
+    if (!shouldEmitNodeForTabular(node, parent, hasQuery)) return;
+
+    const headingPath = headingStack.filter(Boolean).join(" → ");
+    const name = node.type === "heading"
+      ? `h${node.depth ?? "?"}: ${headingText(node as Heading)}`
+      : summarizeNode(node);
+
+    const classInfo = formatNodeClasses(node);
+
+    const dataKeys = includeDataKeys && node.data
+      ? Object.keys(node.data).join(", ")
+      : undefined;
+
+    rows.push({
+      id: id++,
+      file: fileRef(node),
+      type: node.type,
+      depth,
+      headingPath,
+      name,
+      classInfo,
+      dataKeys,
+    });
+  });
+
+  return rows;
 }
 
 // ---------------------------------------------------------------------------

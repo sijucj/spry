@@ -11,22 +11,17 @@ import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
 
 import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
 
-import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
+import type { Heading, RootContent } from "npm:@types/mdast@^4";
 
 import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../../universal/lister-tree-tui.ts";
 
-import type { MdastQlOptions } from "./mdastql.ts";
-
 import {
+  buildMdAstTabularRows,
   buildMdAstTreeRows,
-  formatNodeClasses,
-  headingText,
-  type ParsedMarkdownTree,
   selectNodes,
-  summarizeNode,
+  type TabularRow,
   type TreeRow,
-  walkTree,
 } from "./mdast-view.ts";
 
 import {
@@ -35,136 +30,6 @@ import {
   resolveFiles,
   sliceSourceForNode,
 } from "./mdast-io.ts";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface LsRow {
-  readonly id: number;
-  readonly file: string;
-  readonly type: RootContent["type"];
-  readonly depth: number;
-  readonly headingPath: string;
-  readonly name: string;
-  readonly classInfo?: string;
-  readonly dataKeys?: string;
-}
-
-// ---------------------------------------------------------------------------
-// mdastql selection helpers for `ls`
-// ---------------------------------------------------------------------------
-
-interface BuildLsRowsOptions {
-  readonly includeDataKeys?: boolean;
-  readonly query?: string;
-  readonly mdastqlOptions?: MdastQlOptions;
-}
-
-function shouldEmitNodeForLs(
-  node: RootContent,
-  parent:
-    | Root
-    | (RootContent & { children?: RootContent[] }),
-  hasQuery: boolean,
-): boolean {
-  // If user provided --select, be literal: show whatever mdastql returned.
-  if (hasQuery) return true;
-
-  // Always skip raw text as its own row; parents already summarize it.
-  if (node.type === "text") return false;
-
-  // Paragraphs directly under list items are just wrappers for bullet text.
-  if (node.type === "paragraph" && parent.type === "listItem") {
-    return false;
-  }
-
-  // Inline-only wrappers are usually not helpful as standalone rows.
-  if (
-    node.type === "strong" ||
-    node.type === "emphasis" ||
-    node.type === "delete" ||
-    node.type === "link" ||
-    node.type === "linkReference"
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Build a tabular row set for `ls`:
- *
- * - Every node (by default) or only mdastql-selected nodes (`--select`).
- * - Each row includes:
- *   - file
- *   - type
- *   - depth (tree depth)
- *   - headingPath (path of ancestor headings like "Intro → Examples")
- *   - name (human summary)
- *   - CLASS (flattened `data.class` as key:value pairs)
- *   - DATA (CSV of node.data keys if requested)
- */
-function buildLsRows(
-  pmt: ParsedMarkdownTree,
-  root: Root,
-  opts: BuildLsRowsOptions = {},
-): LsRow[] {
-  const { fileRef } = pmt;
-  const { includeDataKeys, query, mdastqlOptions } = opts;
-  const selected = selectNodes(root, query, mdastqlOptions);
-  const selectedSet = new Set(selected);
-
-  const rows: LsRow[] = [];
-  let id = 1;
-
-  // Track heading hierarchy by depth to build headingPath strings
-  const headingStack: (string | undefined)[] = [];
-  const hasQuery = !!query;
-
-  walkTree(root, (node, { depth, parent }) => {
-    // Maintain heading stack for *all* nodes so descendants get correct paths
-    if (node.type === "heading") {
-      const hd = (node.depth ?? 1) | 0;
-      const label = headingText(node as Heading);
-      if (hd > 0) {
-        headingStack.splice(hd - 1);
-        headingStack[hd - 1] = label;
-      }
-    }
-
-    // Only consider nodes selected by mdastql (or all if no query).
-    if (!selectedSet.has(node)) return;
-
-    // Apply de-duplication / noise filtering for default ls.
-    if (!shouldEmitNodeForLs(node, parent, hasQuery)) return;
-
-    const headingPath = headingStack.filter(Boolean).join(" → ");
-    const name = node.type === "heading"
-      ? `h${node.depth ?? "?"}: ${headingText(node as Heading)}`
-      : summarizeNode(node);
-
-    const classInfo = formatNodeClasses(node);
-
-    const dataKeys = includeDataKeys && node.data
-      ? Object.keys(node.data).join(", ")
-      : undefined;
-
-    rows.push({
-      id: id++,
-      file: fileRef(node),
-      type: node.type,
-      depth,
-      headingPath,
-      name,
-      classInfo,
-      dataKeys,
-    });
-  });
-
-  return rows;
-}
 
 // ---------------------------------------------------------------------------
 // CLI wiring
@@ -197,9 +62,18 @@ export class CLI {
   }
 
   // -------------------------------------------------------------------------
-  // ls command
+  // ls command (tabular "physical" view)
   // -------------------------------------------------------------------------
 
+  /**
+   * `ls` – list mdast nodes in a tabular, content-hierarchy-friendly way.
+   *
+   * - By default: includes every node in the tree.
+   * - With `--select <expr>`: only nodes matching that mdastql expression.
+   * - With `--data`: adds a DATA column showing `Object.keys(node.data)`.
+   * - With automatic node classification (via frontmatter + nodeClassifier),
+   *   shows a CLASS column with key:value pairs.
+   */
   protected lsCommand() {
     return new Command()
       .description(`list mdast nodes in a tabular, content-hierarchy view`)
@@ -214,10 +88,10 @@ export class CLI {
         async (options, ...paths: string[]) => {
           const files = resolveFiles(this.globalFiles, paths);
           const trees = await readMarkdownTrees(files);
-          const allRows: LsRow[] = [];
+          const allRows: TabularRow[] = [];
 
           for (const pmt of trees) {
-            const rows = buildLsRows(pmt, pmt.root, {
+            const rows = buildMdAstTabularRows("physical", pmt, {
               includeDataKeys: !!options.data,
               query: options.select,
             });
@@ -231,7 +105,7 @@ export class CLI {
 
           const useColor = options.color;
 
-          const builder = new ListerBuilder<LsRow>()
+          const builder = new ListerBuilder<TabularRow>()
             .from(allRows)
             .declareColumns(
               "id",
@@ -283,7 +157,7 @@ export class CLI {
             });
           }
 
-          const ids: Array<keyof LsRow & string> = [
+          const ids: Array<keyof TabularRow & string> = [
             "id",
             "file",
             "type",
