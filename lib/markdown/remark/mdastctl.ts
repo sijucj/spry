@@ -8,14 +8,10 @@
  * Commands:
  *
  *   - `ls`    : tabular listing of nodes (every node by default, or filtered via `--select` mdastql)
- *   - `tree`  : MDFS-style heading/content hierarchy (headings as dirs, content as files),
- *               with a synthetic per-file root node.
+ *   - `tree`  : heading/content hierarchy (headings as dirs, content as files), with file root node.
  *   - `class` : class-driven hierarchy:
  *               file → class key → class value → node
  *   - `md`    : run mdastql `--select` and print the matching nodes as Markdown.
- *
- * This does NOT depend on MDFS; it works directly on Markdown → mdast.
- * It DOES reuse the tabular + tree TUIs (ListerBuilder + TreeLister) for pretty CLI output.
  */
 
 import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
@@ -1056,7 +1052,7 @@ export class CLI {
   // -------------------------------------------------------------------------
 
   /**
-   * `tree` – show a heading/content hierarchy per file, similar to MDFS:
+   * `tree` – show a heading/content hierarchy per file, similar to a file system:
    *
    * - Synthetic file root node is the top-level parent.
    * - Headings are "directories".
@@ -1065,7 +1061,7 @@ export class CLI {
    */
   protected treeCommand() {
     return new Command()
-      .description(`heading/content hierarchy (MDFS-style, per file)`)
+      .description(`heading/content hierarchy (per file)`)
       .arguments("[paths...:string]")
       .option("--select <query:string>", "mdastql selection to focus the tree.")
       .option("--data", "Include node.data keys as a DATA column.")
