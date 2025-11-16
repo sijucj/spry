@@ -7,10 +7,12 @@
  *
  * Commands:
  *
- *   - `ls`   : tabular listing of nodes (every node by default, or filtered via `--select` mdastql)
- *   - `tree` : MDFS-style heading/content hierarchy (headings as dirs, content as files),
- *              with a synthetic per-file root node.
- *   - `md`   : run mdastql `--select` and print the matching nodes as Markdown.
+ *   - `ls`    : tabular listing of nodes (every node by default, or filtered via `--select` mdastql)
+ *   - `tree`  : MDFS-style heading/content hierarchy (headings as dirs, content as files),
+ *               with a synthetic per-file root node.
+ *   - `class` : class-driven hierarchy:
+ *               file → class key → class value → parent headings → node
+ *   - `md`    : run mdastql `--select` and print the matching nodes as Markdown.
  *
  * This does NOT depend on MDFS; it works directly on Markdown → mdast.
  * It DOES reuse the tabular + tree TUIs (ListerBuilder + TreeLister) for pretty CLI output.
@@ -68,7 +70,7 @@ export interface TreeRow {
   readonly file: string;
   readonly kind: "heading" | "content";
   readonly label: string;
-  readonly type: RootContent["type"] | "root";
+  readonly type: RootContent["type"] | "root" | "class-key" | "class-value";
   readonly parentId?: string;
   readonly classInfo?: string;
   readonly dataKeys?: string;
@@ -216,7 +218,7 @@ function formatNodeClasses(node: RootContent): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// mdastql selection (Option A – use real mdastql.ts)
+// mdastql selection
 // ---------------------------------------------------------------------------
 
 function selectNodes(
@@ -225,13 +227,12 @@ function selectNodes(
   options?: MdastQlOptions,
 ): RootContent[] {
   if (!query) {
-    // Default: every node (Option 2)
+    // Default: every node
     const out: RootContent[] = [];
     walkTree(root, (node) => out.push(node));
     return out;
   }
   const { nodes } = mdastql(root, query, options);
-  // mdastql returns readonly; we can treat it as mutable locally if needed.
   return [...nodes];
 }
 
@@ -251,13 +252,11 @@ function shouldEmitNodeForLs(
   if (node.type === "text") return false;
 
   // Paragraphs directly under list items are just wrappers for bullet text.
-  // We'll keep the listItem row and drop the inner paragraph row.
   if (node.type === "paragraph" && parent.type === "listItem") {
     return false;
   }
 
   // Inline-only wrappers are usually not helpful as standalone rows.
-  // Their content is already reflected in parent nodeToPlainText().
   if (
     node.type === "strong" ||
     node.type === "emphasis" ||
@@ -285,11 +284,10 @@ interface BuildLsRowsOptions {
  *   - file
  *   - type
  *   - depth (tree depth)
- *   - headingPath (path of ancestor headings like "Intro / Examples")
+ *   - headingPath (path of ancestor headings like "Intro → Examples")
  *   - name (human summary)
- *   - where (line:col)
  *   - CLASS (flattened `data.class` as key:value pairs)
- *   - dataKeys (CSV of node.data keys if requested)
+ *   - DATA (CSV of node.data keys if requested)
  */
 function buildLsRows(
   pmt: ParsedMarkdownTree,
@@ -352,7 +350,7 @@ function buildLsRows(
 }
 
 // ---------------------------------------------------------------------------
-// TREE rows: MDFS-style heading/content hierarchy with synthetic file root
+// TREE rows: heading/content hierarchy with synthetic file root
 // ---------------------------------------------------------------------------
 
 interface BuildTreeRowsOptions {
@@ -506,7 +504,7 @@ function buildTreeRows(
 }
 
 // ---------------------------------------------------------------------------
-// I/O helpers
+// CLASS rows: class → value → parent headings → node
 // ---------------------------------------------------------------------------
 
 interface ParsedMarkdownTree {
@@ -518,6 +516,187 @@ interface ParsedMarkdownTree {
   readonly label: string;
   readonly url?: URL; // in case provenance was fetched
 }
+
+type ClassNodeInfo = {
+  node: RootContent;
+  pathHeadings: Heading[];
+};
+
+type ClassIndex = Map<string, Map<string, ClassNodeInfo[]>>;
+
+/**
+ * Build an index of classified nodes for a single file:
+ *
+ *   class key → class value → [{ node, pathHeadings }, ...]
+ */
+function buildClassIndex(root: Root): ClassIndex {
+  const index: ClassIndex = new Map();
+  const headingStack: (Heading | undefined)[] = [];
+
+  walkTree(root, (node) => {
+    const pathHeadings = headingStack.filter(Boolean) as Heading[];
+
+    const data = (node as Any).data;
+    if (data && typeof data === "object") {
+      const cls = (data as Any).class;
+      if (cls && typeof cls === "object") {
+        for (
+          const [key, rawVal] of Object.entries(
+            cls as Record<string, unknown>,
+          )
+        ) {
+          const add = (value: string) => {
+            let byVal = index.get(key);
+            if (!byVal) {
+              byVal = new Map<string, ClassNodeInfo[]>();
+              index.set(key, byVal);
+            }
+            let list = byVal.get(value);
+            if (!list) {
+              list = [];
+              byVal.set(value, list);
+            }
+            list.push({ node, pathHeadings });
+          };
+
+          if (typeof rawVal === "string") {
+            add(rawVal);
+          } else if (Array.isArray(rawVal)) {
+            for (const v of rawVal) {
+              if (typeof v === "string") add(v);
+            }
+          }
+        }
+      }
+    }
+
+    // After processing this node, update heading stack if this *is* a heading.
+    if (node.type === "heading") {
+      const hd = (node.depth ?? 1) | 0;
+      if (hd > 0) {
+        headingStack.splice(hd - 1);
+        headingStack[hd - 1] = node as Heading;
+      }
+    }
+  });
+
+  return index;
+}
+
+interface BuildClassTreeRowsOptions {
+  readonly includeDataKeys?: boolean;
+}
+
+interface BuildClassTreeRowsOptions {
+  readonly includeDataKeys?: boolean;
+}
+
+/**
+ * Build `TreeRow`s for the `class` command:
+ *
+ *   <file>
+ *   ├─ <class key>
+ *   │  ├─ <class value>
+ *   │  │  ├─ <node 1>
+ *   │  │  ├─ <node 2>
+ *   │  │  └─ ...
+ *   └─ ...
+ *
+ * Nodes are shown directly under the class value, without inserting
+ * heading parents in between.
+ */
+function buildClassTreeRows(
+  pmt: ParsedMarkdownTree,
+  root: Root,
+  opts: BuildClassTreeRowsOptions = {},
+): TreeRow[] {
+  const { rootId, label, fileRef, provenance: file } = pmt;
+  const { includeDataKeys } = opts;
+
+  const index = buildClassIndex(root);
+  if (index.size === 0) return [];
+
+  const rows: TreeRow[] = [];
+  let counter = 0;
+
+  // Synthetic file root row
+  rows.push({
+    id: rootId,
+    file: fileRef(),
+    kind: "heading",
+    type: "root",
+    label,
+    parentId: undefined,
+    classInfo: undefined,
+    dataKeys: undefined,
+  });
+
+  // Sort class keys and values for stable output
+  const classKeys = Array.from(index.keys()).sort();
+
+  for (const classKey of classKeys) {
+    const byValue = index.get(classKey)!;
+    const classKeyId = `${file}#cls:${classKey}`;
+
+    rows.push({
+      id: classKeyId,
+      file: fileRef(),
+      kind: "heading",
+      type: "class-key",
+      label: classKey,
+      parentId: rootId,
+      classInfo: undefined,
+      dataKeys: undefined,
+    });
+
+    const values = Array.from(byValue.keys()).sort();
+
+    for (const value of values) {
+      const infos = byValue.get(value)!;
+      const valueId = `${file}#cls:${classKey}=${value}`;
+
+      rows.push({
+        id: valueId,
+        file: fileRef(),
+        kind: "heading",
+        type: "class-value",
+        label: value,
+        parentId: classKeyId,
+        classInfo: `${classKey}:${value}`,
+        dataKeys: undefined,
+      });
+
+      // Directly attach each node under the class value
+      for (const info of infos) {
+        const node = info.node;
+        const nodeId = `${file}#cls:${classKey}=${value}#n${counter++}`;
+
+        const dataKeysForNode = includeDataKeys && node.data
+          ? Object.keys(node.data).join(", ")
+          : undefined;
+
+        const classInfoForNode = formatNodeClasses(node);
+
+        rows.push({
+          id: nodeId,
+          file: fileRef(node),
+          kind: "content",
+          type: node.type,
+          label: summarizeNode(node),
+          parentId: valueId,
+          classInfo: classInfoForNode,
+          dataKeys: dataKeysForNode,
+        });
+      }
+    }
+  }
+
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// I/O helpers
+// ---------------------------------------------------------------------------
 
 function tryParseUrl(spec: string): URL | undefined {
   try {
@@ -778,6 +957,7 @@ export class CLI {
       .command("completions", new CompletionsCommand())
       .command("ls", this.lsCommand())
       .command("tree", this.treeCommand())
+      .command("class", this.classCommand())
       .command("md", this.mdCommand());
   }
 
@@ -976,9 +1156,103 @@ export class CLI {
         }
 
         if (options.data) {
-          base.select("label", "type", "file", "classInfo", "dataKeys");
+          base.select("label", "type", "classInfo", "file", "dataKeys");
         } else {
-          base.select("label", "type", "file", "classInfo");
+          base.select("label", "type", "classInfo", "file");
+        }
+
+        const treeLister = TreeLister.wrap(base)
+          .from(allRows)
+          .byParentChild({ idKey: "id", parentIdKey: "parentId" })
+          .treeOn("label")
+          .dirFirst(true);
+
+        await treeLister.ls(true);
+      });
+  }
+
+  // -------------------------------------------------------------------------
+  // class command
+  // -------------------------------------------------------------------------
+
+  /**
+   * `class` – show a classification-centric hierarchy per file:
+   *
+   *   <file>
+   *   ├─ <class key>
+   *   │  ├─ <class value>
+   *   │  │  ├─ <parent heading 1>
+   *   │  │  │  ├─ <parent heading 2>
+   *   │  │  │  │  └─ <node>
+   *   │  │  └─ ...
+   *   └─ ...
+   *
+   * Nodes are discovered from `data.class` as populated by `nodeClassifier`.
+   */
+  protected classCommand() {
+    return new Command()
+      .description(
+        `class-driven view: file → class key → class value → parent headings → node`,
+      )
+      .arguments("[paths...:string]")
+      .option("--data", "Include node.data keys as a DATA column.")
+      .option("--no-color", "Show output without using ANSI colors")
+      .action(async (options, ...paths: string[]) => {
+        const files = resolveFiles(this.globalFiles, paths);
+        const trees = await readMarkdownTrees(files);
+        const allRows: TreeRow[] = [];
+
+        for (const pmt of trees) {
+          const rows = buildClassTreeRows(pmt, pmt.root, {
+            includeDataKeys: !!options.data,
+          });
+          if (rows.length > 0) {
+            allRows.push(...rows);
+          }
+        }
+
+        if (allRows.length === 0) {
+          console.log(gray("No classified nodes to show."));
+          return;
+        }
+
+        const useColor = options.color;
+
+        const base = new ListerBuilder<TreeRow>()
+          .from(allRows)
+          .declareColumns("label", "type", "file", "classInfo", "dataKeys")
+          .requireAtLeastOneColumn(true)
+          .color(useColor)
+          .header(true)
+          .compact(false);
+
+        base.field("label", "label", {
+          header: "NAME",
+          defaultColor: bold,
+        });
+        base.field("type", "type", {
+          header: "TYPE",
+          defaultColor: gray,
+        });
+        base.field("file", "file", {
+          header: "FILE",
+          defaultColor: gray,
+        });
+        base.field("classInfo", "classInfo", {
+          header: "CLASS",
+          defaultColor: magenta,
+        });
+        if (options.data) {
+          base.field("dataKeys", "dataKeys", {
+            header: "DATA",
+            defaultColor: magenta,
+          });
+        }
+
+        if (options.data) {
+          base.select("label", "type", "classInfo", "file", "dataKeys");
+        } else {
+          base.select("label", "type", "classInfo", "file");
         }
 
         const treeLister = TreeLister.wrap(base)
