@@ -361,15 +361,6 @@ function normalizeClassValue(
 }
 
 /**
- * Options for classifiersFromFrontmatter:
- * - key: frontmatter key under which classification rules live.
- *   Defaults to "doc-classify".
- */
-export interface FrontmatterClassifiersOptions {
-  readonly key?: string;
-}
-
-/**
  * Helper: build classifiers from document frontmatter.
  *
  * Designed to be passed directly as DocumentClassifierOptions.classifiers:
@@ -412,15 +403,18 @@ export interface FrontmatterClassifiersOptions {
  * Both forms may be combined; shorthand keys are merged with `class`.
  */
 export function classifiersFromFrontmatter(
-  options?: FrontmatterClassifiersOptions,
+  options?: {
+    readonly classifiersFromFM?: (fm: Dict) => Array<unknown>;
+  },
 ): (root: Root) => Iterable<NodeClassifierRule> {
-  const fmKey = options?.key ?? "doc-classify";
+  const { classifiersFromFM = (fm: Dict) => fm["doc-classify"] } = options ??
+    {};
 
   return (root: Root): Iterable<NodeClassifierRule> => {
     if (!isRootWithDocumentFrontmatter(root)) return [];
 
     const fm = root.data.documentFrontmatter.parsed.fm as Dict;
-    const raw = fm[fmKey];
+    const raw = classifiersFromFM(fm);
 
     if (!Array.isArray(raw)) return [];
 
