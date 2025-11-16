@@ -19,7 +19,7 @@
  */
 
 import type { Code, Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import type { Data } from "npm:@types/unist@^3";
+import type { Data, Node } from "npm:@types/unist@^3";
 import type { Plugin } from "npm:unified@^11";
 
 import { parse as parseYaml } from "jsr:@std/yaml@^1";
@@ -33,10 +33,10 @@ import JSON5 from "npm:json5@^2";
  * (with an optional `inheritedHeadingFM`).
  */
 export function isHeadingWithFrontmatter<
-  OwnShape extends object,
-  InheritedShape extends object = OwnShape,
+  OwnShape extends Record<string, unknown>,
+  InheritedShape extends Record<string, unknown> = OwnShape,
 >(
-  node: RootContent,
+  node: Node,
 ): node is Heading & {
   data: {
     headingFM: OwnShape;

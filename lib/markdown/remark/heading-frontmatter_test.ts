@@ -20,6 +20,9 @@ interface TestFrontmatter {
   nested?: { value: number };
   foo?: string;
   id?: string;
+
+  // Allow arbitrary keys so this type satisfies Record<string, unknown>
+  [key: string]: unknown;
 }
 
 // Helper to parse + run the plugin and return the mutated AST
