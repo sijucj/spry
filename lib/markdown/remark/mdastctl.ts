@@ -11,7 +11,7 @@
  *   - `tree`  : MDFS-style heading/content hierarchy (headings as dirs, content as files),
  *               with a synthetic per-file root node.
  *   - `class` : class-driven hierarchy:
- *               file → class key → class value → parent headings → node
+ *               file → class key → class value → node
  *   - `md`    : run mdastql `--select` and print the matching nodes as Markdown.
  *
  * This does NOT depend on MDFS; it works directly on Markdown → mdast.
@@ -45,6 +45,8 @@ import headingFrontmatter from "../remark/heading-frontmatter.ts";
 import nodeClassifier, {
   classifiersFromFrontmatter,
 } from "../remark/node-classify.ts";
+
+import { hasNodeClass, type NodeClassMap } from "../remark/node-classify.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -507,75 +509,32 @@ function buildTreeRows(
 // CLASS rows: class → value → parent headings → node
 // ---------------------------------------------------------------------------
 
-interface ParsedMarkdownTree {
-  readonly provenance: string; // what the user supplied
-  readonly root: Root;
-  readonly source: string;
-  readonly fileRef: (node?: RootContent) => string;
-  readonly rootId: string;
-  readonly label: string;
-  readonly url?: URL; // in case provenance was fetched
+interface ClassNodeInfo {
+  readonly node: RootContent;
+  readonly classKey: string;
+  readonly classValue: string;
 }
 
-type ClassNodeInfo = {
-  node: RootContent;
-  pathHeadings: Heading[];
-};
-
-type ClassIndex = Map<string, Map<string, ClassNodeInfo[]>>;
-
 /**
- * Build an index of classified nodes for a single file:
- *
- *   class key → class value → [{ node, pathHeadings }, ...]
+ * Build an index:
+ *   classKey → classValue → ClassNodeInfo[]
  */
-function buildClassIndex(root: Root): ClassIndex {
-  const index: ClassIndex = new Map();
-  const headingStack: (Heading | undefined)[] = [];
+function buildClassIndex(
+  root: Root,
+): Map<string, Map<string, ClassNodeInfo[]>> {
+  const index = new Map<string, Map<string, ClassNodeInfo[]>>();
 
   walkTree(root, (node) => {
-    const pathHeadings = headingStack.filter(Boolean) as Heading[];
-
-    const data = (node as Any).data;
-    if (data && typeof data === "object") {
-      const cls = (data as Any).class;
-      if (cls && typeof cls === "object") {
-        for (
-          const [key, rawVal] of Object.entries(
-            cls as Record<string, unknown>,
-          )
-        ) {
-          const add = (value: string) => {
-            let byVal = index.get(key);
-            if (!byVal) {
-              byVal = new Map<string, ClassNodeInfo[]>();
-              index.set(key, byVal);
-            }
-            let list = byVal.get(value);
-            if (!list) {
-              list = [];
-              byVal.set(value, list);
-            }
-            list.push({ node, pathHeadings });
-          };
-
-          if (typeof rawVal === "string") {
-            add(rawVal);
-          } else if (Array.isArray(rawVal)) {
-            for (const v of rawVal) {
-              if (typeof v === "string") add(v);
-            }
-          }
-        }
-      }
-    }
-
-    // After processing this node, update heading stack if this *is* a heading.
-    if (node.type === "heading") {
-      const hd = (node.depth ?? 1) | 0;
-      if (hd > 0) {
-        headingStack.splice(hd - 1);
-        headingStack[hd - 1] = node as Heading;
+    if (!hasNodeClass(node)) return;
+    const classMap: NodeClassMap = node.data.class;
+    for (const [key, rawValue] of Object.entries(classMap)) {
+      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+      for (const v of values) {
+        const byValue = index.get(key) ?? new Map<string, ClassNodeInfo[]>();
+        if (!index.has(key)) index.set(key, byValue);
+        const bucket = byValue.get(v) ?? [];
+        if (!byValue.has(v)) byValue.set(v, bucket);
+        bucket.push({ node, classKey: key, classValue: v });
       }
     }
   });
@@ -587,23 +546,19 @@ interface BuildClassTreeRowsOptions {
   readonly includeDataKeys?: boolean;
 }
 
-interface BuildClassTreeRowsOptions {
-  readonly includeDataKeys?: boolean;
-}
-
 /**
  * Build `TreeRow`s for the `class` command:
  *
  *   <file>
- *   ├─ <class key>
- *   │  ├─ <class value>
+ *   ├─ <class key>      (e.g. "role")
+ *   │  ├─ <class value> (e.g. "project")
  *   │  │  ├─ <node 1>
  *   │  │  ├─ <node 2>
  *   │  │  └─ ...
  *   └─ ...
  *
- * Nodes are shown directly under the class value, without inserting
- * heading parents in between.
+ * Nodes are shown directly under the class value.
+ * Class keys and class values use different colors in the hierarchy.
  */
 function buildClassTreeRows(
   pmt: ParsedMarkdownTree,
@@ -619,13 +574,13 @@ function buildClassTreeRows(
   const rows: TreeRow[] = [];
   let counter = 0;
 
-  // Synthetic file root row
+  // Synthetic file root row (bold file label)
   rows.push({
     id: rootId,
     file: fileRef(),
     kind: "heading",
     type: "root",
-    label,
+    label: bold(label),
     parentId: undefined,
     classInfo: undefined,
     dataKeys: undefined,
@@ -638,12 +593,13 @@ function buildClassTreeRows(
     const byValue = index.get(classKey)!;
     const classKeyId = `${file}#cls:${classKey}`;
 
+    // Class key: cyan
     rows.push({
       id: classKeyId,
       file: fileRef(),
       kind: "heading",
       type: "class-key",
-      label: classKey,
+      label: cyan(classKey),
       parentId: rootId,
       classInfo: undefined,
       dataKeys: undefined,
@@ -655,12 +611,13 @@ function buildClassTreeRows(
       const infos = byValue.get(value)!;
       const valueId = `${file}#cls:${classKey}=${value}`;
 
+      // Class value: magenta
       rows.push({
         id: valueId,
         file: fileRef(),
         kind: "heading",
         type: "class-value",
-        label: value,
+        label: magenta(value),
         parentId: classKeyId,
         classInfo: `${classKey}:${value}`,
         dataKeys: undefined,
@@ -697,6 +654,16 @@ function buildClassTreeRows(
 // ---------------------------------------------------------------------------
 // I/O helpers
 // ---------------------------------------------------------------------------
+
+interface ParsedMarkdownTree {
+  readonly provenance: string; // what the user supplied
+  readonly root: Root;
+  readonly source: string;
+  readonly fileRef: (node?: RootContent) => string;
+  readonly rootId: string;
+  readonly label: string;
+  readonly url?: URL; // in case provenance was fetched
+}
 
 function tryParseUrl(spec: string): URL | undefined {
   try {
@@ -1176,23 +1143,19 @@ export class CLI {
   // -------------------------------------------------------------------------
 
   /**
-   * `class` – show a classification-centric hierarchy per file:
+   * `class` – show a classification hierarchy per file:
    *
-   *   <file>
+   *   file
    *   ├─ <class key>
    *   │  ├─ <class value>
-   *   │  │  ├─ <parent heading 1>
-   *   │  │  │  ├─ <parent heading 2>
-   *   │  │  │  │  └─ <node>
+   *   │  │  ├─ <node>
    *   │  │  └─ ...
    *   └─ ...
-   *
-   * Nodes are discovered from `data.class` as populated by `nodeClassifier`.
    */
   protected classCommand() {
     return new Command()
       .description(
-        `class-driven view: file → class key → class value → parent headings → node`,
+        `show classification hierarchy per file (class key → value → nodes)`,
       )
       .arguments("[paths...:string]")
       .option("--data", "Include node.data keys as a DATA column.")
@@ -1206,9 +1169,7 @@ export class CLI {
           const rows = buildClassTreeRows(pmt, pmt.root, {
             includeDataKeys: !!options.data,
           });
-          if (rows.length > 0) {
-            allRows.push(...rows);
-          }
+          allRows.push(...rows);
         }
 
         if (allRows.length === 0) {
@@ -1220,15 +1181,20 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "type", "file", "classInfo", "dataKeys")
+          .declareColumns("label", "classInfo", "type", "file", "dataKeys")
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
           .compact(false);
 
+        // Identity color so pre-colored labels (cyan/magenta/bold) are preserved
         base.field("label", "label", {
           header: "NAME",
-          defaultColor: bold,
+          defaultColor: (s) => s,
+        });
+        base.field("classInfo", "classInfo", {
+          header: "CLASS",
+          defaultColor: gray,
         });
         base.field("type", "type", {
           header: "TYPE",
@@ -1238,10 +1204,6 @@ export class CLI {
           header: "FILE",
           defaultColor: gray,
         });
-        base.field("classInfo", "classInfo", {
-          header: "CLASS",
-          defaultColor: magenta,
-        });
         if (options.data) {
           base.field("dataKeys", "dataKeys", {
             header: "DATA",
@@ -1250,9 +1212,9 @@ export class CLI {
         }
 
         if (options.data) {
-          base.select("label", "type", "classInfo", "file", "dataKeys");
+          base.select("label", "classInfo", "type", "file", "dataKeys");
         } else {
-          base.select("label", "type", "classInfo", "file");
+          base.select("label", "classInfo", "type", "file");
         }
 
         const treeLister = TreeLister.wrap(base)
