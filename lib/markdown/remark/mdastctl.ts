@@ -18,16 +18,15 @@ import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
 import { CompletionsCommand } from "jsr:@cliffy/command@1.0.0-rc.8/completions";
 import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
 
-// deno-lint-ignore no-explicit-any
-type Any = any;
-
 import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
 
 import { basename } from "jsr:@std/path@1";
 
+import remarkdDirective from "https://esm.sh/remark-directive@4";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
+
 import { remark } from "npm:remark@^15";
 
 import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
@@ -47,6 +46,9 @@ import { hasNodeClass, type NodeClassMap } from "../remark/node-classify.ts";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 type MdastNode = Root | RootContent;
 
@@ -186,6 +188,8 @@ function summarizeNode(node: RootContent): string {
       return truncate(nodeToPlainText(node), 60) || "list item";
     case "thematicBreak":
       return "hr";
+    case "leafDirective" as Any:
+      return `${(node as Any).name}:${nodeToPlainText(node)}`;
     default:
       return truncate(nodeToPlainText(node) || node.type, 60);
   }
@@ -673,6 +677,7 @@ async function readMarkdownTrees(
   sources: readonly string[],
   processor = remark()
     .use(remarkFrontmatter, ["yaml"])
+    .use(remarkdDirective)
     .use(docFrontmatter)
     .use(remarkGfm)
     .use(headingFrontmatter)
