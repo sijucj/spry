@@ -89,32 +89,37 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
         classifiers: (_root: Root) => [
           // Mark the main title
           {
-            mdastSelectors: ["h1"],
+            nodes: ["h1"],
             classify: (nodes) => {
               assertEquals(nodes.length, 1);
-              return { key: "role", value: "title" };
+              return { superclass: "role", subclass: "title" };
             },
           },
           // Mark all h2 headings as sections
           {
-            mdastSelectors: ["h2"],
-            classify: () => ({ key: "role", value: "section" }),
+            nodes: ["h2"],
+            classify: () => ({ superclass: "role", subclass: "section" }),
           },
           // Mark all paragraphs as "body"
           {
-            mdastSelectors: ["paragraph"],
+            nodes: ["paragraph"],
             classify: (nodes) =>
-              nodes.length > 0 ? { key: "kind", value: "body" } : false,
+              nodes.length > 0
+                ? { superclass: "kind", subclass: "body" }
+                : false,
           },
           // Mark SQL code blocks with two tags to exercise array merging
           {
-            mdastSelectors: ["code[lang=sql]"],
-            classify: () => ({ key: "tag", value: ["sql", "example"] }),
+            nodes: ["code[lang=sql]"],
+            classify: () => ({
+              superclass: "tag",
+              subclass: ["sql", "example"],
+            }),
           },
           // Second classifier for the same SQL code on the same key (merge)
           {
-            mdastSelectors: ["code[lang=sql]"],
-            classify: () => ({ key: "tag", value: "snippet" }),
+            nodes: ["code[lang=sql]"],
+            classify: () => ({ superclass: "tag", subclass: "snippet" }),
           },
         ],
         // store the catalog on root.data.classifierCatalog like the old behavior.
@@ -225,8 +230,8 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            mdastSelectors: ["h1"],
-            classify: () => ({ key: "role", value: "title" }),
+            nodes: ["h1"],
+            classify: () => ({ superclass: "role", subclass: "title" }),
           },
         ],
         // no catalog callback
@@ -279,11 +284,11 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            mdastSelectors: ["paragraph"],
+            nodes: ["paragraph"],
             classify: (nodes) => {
               // simulate early exit: skip applying any class
               if (nodes.length > 0) return false;
-              return { key: "kind", value: "body" };
+              return { superclass: "kind", subclass: "body" };
             },
           },
         ],
@@ -315,8 +320,8 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            mdastSelectors: ["h1"],
-            classify: () => ({ key: "role", value: "title" }),
+            nodes: ["h1"],
+            classify: () => ({ superclass: "role", subclass: "title" }),
           },
         ],
         // no catalog needed here
@@ -343,10 +348,10 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       ): IterableIterator<NodeClassifierRule> {
         // yield one simple rule for h1
         yield {
-          mdastSelectors: ["h1"],
+          nodes: ["h1"],
           classify: (nodes) => ({
-            key: "role",
-            value: nodes.length === 1 ? "title" : "heading",
+            superclass: "role",
+            subclass: nodes.length === 1 ? "title" : "heading",
           }),
         };
       }
@@ -387,12 +392,12 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            mdastSelectors: ["h1"],
+            nodes: ["h1"],
             classify: (_nodes) => {
               // Multiple class entries for the same selection
               function* entries() {
-                yield { key: "role", value: "title" as const };
-                yield { key: "kind", value: "heading" as const };
+                yield { superclass: "role", subclass: "title" as const };
+                yield { superclass: "kind", subclass: "heading" as const };
               }
               return entries();
             },

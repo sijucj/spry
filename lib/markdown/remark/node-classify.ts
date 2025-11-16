@@ -196,7 +196,7 @@ import { isRootWithDocumentFrontmatter } from "./doc-frontmatter.ts";
 import { mdastql } from "./mdastql.ts";
 
 /**
- * Per-node class map: class key → string or list of strings.
+ * Per-node class map: superclass key → string or list of strings.
  */
 export type NodeClassMap = Record<string, string | string[]>;
 
@@ -219,7 +219,7 @@ export type ClassedNode<T extends { data?: RootContent["data"] }> = T & {
 };
 
 /**
- * Catalog type: classKey → value → nodes.
+ * Catalog type: superclass → subclass → nodes.
  *
  * This is purely an in-memory structure. The plugin no longer decides
  * where it is stored; callers decide via the `catalog` callback.
@@ -233,21 +233,28 @@ export type ClassifierCatalog = Record<
  * Single classification entry.
  */
 export interface ClassificationEntry {
-  readonly key: string;
-  readonly value: string | string[];
+  readonly superclass: string;
+  readonly subclass: string | string[];
 }
 
 /**
  * Single classifier rule:
- * - mdastSelectors: list of selector strings to run (each separately)
- * - classify: receives all nodes found for a selector and returns:
- *     - false to skip, or
- *     - a single { key, value }, or
- *     - an Iterator of { key, value } entries to apply multiple
- *       classifications.
+ *
+ * - `nodes`:
+ *     - `readonly string[]` → treated as mdastql selector strings; each
+ *       selector is run separately and passed into `classify`.
+ *     - `(root: Root) => Iterable<RootContent>` → a function that directly
+ *       supplies the nodes to classify in one shot.
+ *
+ * - `classify(found)`:
+ *     - receives the nodes found for a given selector (string[] case) or the
+ *       nodes produced by the function (function case), and returns:
+ *       - false → skip this rule for these nodes
+ *       - a single { superclass, subclass }
+ *       - an Iterator<{ superclass, subclass }> of multiple class entries.
  */
 export interface NodeClassifierRule {
-  readonly mdastSelectors: readonly string[];
+  readonly nodes: readonly string[] | ((root: Root) => Iterable<RootContent>);
   readonly classify: (
     found: readonly RootContent[],
   ) => false | ClassificationEntry | Iterator<ClassificationEntry>;
@@ -461,7 +468,7 @@ export function classifiersFromFrontmatter(
       }
 
       const classEntries: ClassificationEntry[] = Object.entries(classMap).map(
-        ([key, value]) => ({ key, value }),
+        ([superclass, subclass]) => ({ superclass, subclass }),
       );
 
       if (!classEntries.length) continue;
@@ -473,7 +480,7 @@ export function classifiersFromFrontmatter(
       };
 
       rules.push({
-        mdastSelectors: selectors,
+        nodes: selectors, // <-- selectors as mdastql strings
         classify,
       });
     }
@@ -483,15 +490,19 @@ export function classifiersFromFrontmatter(
 }
 
 /**
- * remark plugin: classify nodes based on mdastql selectors.
+ * remark plugin: classify nodes based on either:
+ *   - mdastql selector strings (NodeClassifierRule.nodes as string[]), or
+ *   - a function that directly returns nodes to classify.
  *
- * - For each rule and each selector, we run mdastql to find nodes.
- * - classify(nodes) can:
- *    - return false → skip this rule for these nodes
- *    - return a single { key, value } → merge into node.data.class[key].
- *    - return an Iterator<{ key, value }> → apply multiple class entries.
- * - If a catalog callback is provided, we also populate a ClassifierCatalog
- *   and hand it to the callback at the end.
+ * For string[]:
+ *   - Each selector is run via mdastql(root, selectorText).
+ *   - classify(nodesForSelector) is called per selector.
+ *
+ * For function:
+ *   - The function is invoked once with the root.
+ *   - classify(allFoundNodes) is called once.
+ *
+ * In both cases, the results of classify(...) are merged into node.data.class.
  */
 export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
   options,
@@ -558,7 +569,7 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
       entry: ClassificationEntry,
       nodes: readonly RootContent[],
     ) => {
-      const { key, value } = entry;
+      const { superclass: key, subclass: value } = entry;
       const valuesArray = Array.isArray(value) ? value : [value];
 
       for (const node of nodes) {
@@ -583,28 +594,53 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
       }
     };
 
-    for (const rule of rules) {
-      const { mdastSelectors, classify } = rule;
-      if (!mdastSelectors || mdastSelectors.length === 0) continue;
+    const runRuleOnNodes = (
+      foundNodes: readonly RootContent[],
+      classify: NodeClassifierRule["classify"],
+    ) => {
+      if (!foundNodes.length) return;
 
-      for (const selectorText of mdastSelectors) {
-        const { nodes } = mdastql(root, selectorText);
-        if (!nodes.length) continue;
+      const result = classify(foundNodes);
+      if (!result) return;
 
-        const result = classify(nodes);
-        if (!result) continue;
-
-        if ("key" in result) {
-          // Single classification
-          applyClassificationEntry(result, nodes);
-        } else {
-          // Iterator of classifications
-          let step = result.next();
-          while (!step.done) {
-            applyClassificationEntry(step.value, nodes);
-            step = result.next();
-          }
+      if ("superclass" in result) {
+        // Single classification
+        applyClassificationEntry(result, foundNodes);
+      } else {
+        // Iterator of classifications
+        let step = result.next();
+        while (!step.done) {
+          applyClassificationEntry(step.value, foundNodes);
+          step = result.next();
         }
+      }
+    };
+
+    for (const rule of rules) {
+      const { nodes, classify } = rule;
+
+      // Case 1: nodes is an array of mdastql selector strings.
+      if (Array.isArray(nodes)) {
+        if (nodes.length === 0) continue;
+
+        for (const selectorText of nodes) {
+          const { nodes: selectorNodes } = mdastql(root, selectorText);
+          if (!selectorNodes.length) continue;
+
+          runRuleOnNodes(selectorNodes, classify);
+        }
+
+        continue;
+      }
+
+      // Case 2: nodes is a function returning Iterable<RootContent>.
+      if (typeof nodes === "function") {
+        const iterable = nodes(root);
+        const foundNodes = Array.from(iterable);
+        if (!foundNodes.length) continue;
+
+        runRuleOnNodes(foundNodes, classify);
+        continue;
       }
     }
 
