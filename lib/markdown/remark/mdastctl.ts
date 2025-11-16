@@ -42,6 +42,13 @@ import nodeClassifier, {
 } from "../remark/node-classify.ts";
 
 import { hasNodeClass, type NodeClassMap } from "../remark/node-classify.ts";
+// add to imports near the top
+import documentSchemaPlugin, {
+  boldParagraphSectionRule,
+  collectSectionsFromRoot,
+  colonParagraphSectionRule,
+  hasBelongsToSection,
+} from "../remark/doc-schema.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -687,6 +694,15 @@ async function readMarkdownTrees(
     })
     .use(nodeClassifier, {
       classifiers: classifiersFromFrontmatter(),
+    })
+    .use(documentSchemaPlugin, {
+      namespace: "prime",
+      enrichWithBelongsTo: true,
+      includeDefaultHeadingRule: true,
+      sectionRules: [
+        boldParagraphSectionRule(),
+        colonParagraphSectionRule(),
+      ],
     }),
 ): Promise<Array<ParsedMarkdownTree>> {
   if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
@@ -926,6 +942,7 @@ export class CLI {
       .command("ls", this.lsCommand())
       .command("tree", this.treeCommand())
       .command("class", this.classCommand())
+      .command("schema", this.schemaCommand())
       .command("md", this.mdCommand());
   }
 
@@ -1216,6 +1233,277 @@ export class CLI {
           base.select("label", "classInfo", "type", "file", "dataKeys");
         } else {
           base.select("label", "classInfo", "type", "file");
+        }
+
+        const treeLister = TreeLister.wrap(base)
+          .from(allRows)
+          .byParentChild({ idKey: "id", parentIdKey: "parentId" })
+          .treeOn("label")
+          .dirFirst(true);
+
+        await treeLister.ls(true);
+      });
+  }
+
+  // -------------------------------------------------------------------------
+  // schema command
+  // -------------------------------------------------------------------------
+
+  /**
+   * `schema` – show section schema hierarchy derived from documentSchema plugin.
+   */
+  protected schemaCommand() {
+    function summarizeSectionLabel(s: Any): string {
+      const base = (() => {
+        if (s.nature === "heading") {
+          const text = nodeToPlainText(
+            s.heading ?? s.markerNode ?? s.parentNode,
+          );
+          const depth = s.depth ?? "?";
+          return `heading depth=${depth} "${text || ""}"`;
+        }
+
+        if (s.nature === "marker") {
+          const kind = s.markerKind ?? "marker";
+
+          const hasTitle = typeof s.title === "string" &&
+            s.title.trim().length > 0;
+          if (hasTitle) {
+            const title = s.title.trim();
+            return `marker kind=${kind} "${title}"`;
+          }
+
+          // no title: show abbreviated content as key=value
+          const srcNode: MdastNode = (s.markerNode as MdastNode | undefined) ??
+            (s.heading as MdastNode | undefined) ??
+            (s.parentNode as MdastNode);
+
+          const rawText = srcNode ? nodeToPlainText(srcNode) : "";
+          const value = truncate(
+            rawText.replace(/\s+/g, " ").trim() || kind,
+            40,
+          );
+          return `marker ${kind}=${value}`;
+        }
+
+        return String(s.nature ?? "section");
+      })();
+
+      const ns = s.namespace ?? "prime";
+      const childrenCount = Array.isArray(s.children) ? s.children.length : 0;
+      const range = `[${s.startIndex ?? "?"}, ${s.endIndex ?? "?"})`;
+
+      return `${base} ns=${ns} children=${childrenCount} ${range}`;
+    }
+
+    return new Command()
+      .description(
+        `show section schema hierarchy (per file) using documentSchema plugin`,
+      )
+      .arguments("[paths...:string]")
+      .option("--data", "Include node.data keys as a DATA column.")
+      .option("--no-color", "Show output without using ANSI colors")
+      .action(async (options, ...paths: string[]) => {
+        const files = resolveFiles(this.globalFiles, paths);
+        const trees = await readMarkdownTrees(files);
+        const allRows: TreeRow[] = [];
+
+        for (const pmt of trees) {
+          const { root, label, fileRef, provenance: file, rootId } = pmt;
+
+          const sections = collectSectionsFromRoot(root);
+          const primeSections = sections.filter((s) => s.namespace === "prime");
+          if (primeSections.length === 0) continue;
+
+          const rows: TreeRow[] = [];
+
+          // synthetic file root row (bold file label)
+          rows.push({
+            id: rootId,
+            file: fileRef(),
+            kind: "heading",
+            type: "root",
+            label: bold(`📁 ${label}`),
+            parentId: undefined,
+            classInfo: undefined,
+            dataKeys: undefined,
+          });
+
+          const rootChildren = (root.children ?? []) as RootContent[];
+          let counter = 0;
+          const sectionId = new WeakMap<Any, string>();
+
+          // collect all section start nodes so we don't also show them as plain nodes
+          const sectionStartNodes = new Set<RootContent>();
+          for (const s of primeSections) {
+            if (s.nature === "heading" && s.heading) {
+              sectionStartNodes.add(s.heading as RootContent);
+            } else if (s.nature === "marker" && s.markerNode) {
+              sectionStartNodes.add(s.markerNode as RootContent);
+            }
+          }
+
+          const getIdForSection = (s: Any): string => {
+            const existing = sectionId.get(s);
+            if (existing) return existing;
+            const id = `${file}#sec:${counter++}`;
+            sectionId.set(s, id);
+            return id;
+          };
+
+          const belongingNodesForSection = (s: Any) =>
+            rootChildren
+              .map((n, idx) => ({ n, idx }))
+              .filter(({ n }) =>
+                // must belong to this section, and must NOT be a section-start node
+                hasBelongsToSection(n) &&
+                (n.data as Any).belongsToSection?.["prime"] === s &&
+                !sectionStartNodes.has(n)
+              )
+              .sort((a, b) => a.idx - b.idx);
+
+          const colorSectionLabel = (raw: string, level: number): string => {
+            if (level === 0) return cyan(raw);
+            if (level === 1) return yellow(raw);
+            return magenta(raw);
+          };
+
+          const emitSection = (s: Any, parentId: string, level: number) => {
+            const id = getIdForSection(s);
+            const rawLabel = summarizeSectionLabel(s);
+            const labelColored = colorSectionLabel(rawLabel, level);
+
+            const sectionNode: RootContent | undefined = s.nature === "heading"
+              ? (s.heading as RootContent | undefined)
+              : s.nature === "marker"
+              ? (s.markerNode as RootContent | undefined)
+              : undefined;
+
+            const sectionDataKeys = sectionNode?.data
+              ? Object.keys(sectionNode.data).join(", ")
+              : undefined;
+
+            const sectionClassInfo = sectionNode
+              ? formatNodeClasses(sectionNode)
+              : undefined;
+
+            rows.push({
+              id,
+              file: fileRef(sectionNode),
+              kind: "heading",
+              type: "heading",
+              label: `📁 ${labelColored}`,
+              parentId,
+              classInfo: sectionClassInfo,
+              dataKeys: sectionDataKeys,
+            });
+
+            const sectionChildren: Any[] = Array.isArray(s.children)
+              ? s.children
+              : [];
+            const belonging = belongingNodesForSection(s);
+
+            type ChildEntry =
+              | { kind: "section"; section: Any; order: number }
+              | { kind: "node"; node: RootContent; order: number };
+
+            const entries: ChildEntry[] = [];
+
+            for (const childSec of sectionChildren) {
+              entries.push({
+                kind: "section",
+                section: childSec,
+                order: childSec.startIndex ?? 0,
+              });
+            }
+
+            for (const { n, idx } of belonging) {
+              entries.push({
+                kind: "node",
+                node: n,
+                order: idx,
+              });
+            }
+
+            entries.sort((a, b) => a.order - b.order);
+
+            for (const entry of entries) {
+              if (entry.kind === "section") {
+                emitSection(entry.section, id, level + 1);
+              } else {
+                const node = entry.node;
+                const nodeId = `${file}#secnode:${counter++}`;
+
+                const dataKeys = node.data
+                  ? Object.keys(node.data).join(", ")
+                  : undefined;
+                const classInfo = formatNodeClasses(node);
+
+                const nodeLabel = gray(summarizeNode(node));
+
+                rows.push({
+                  id: nodeId,
+                  file: fileRef(node),
+                  kind: "content",
+                  type: node.type,
+                  label: `📄 ${nodeLabel}`,
+                  parentId: id,
+                  classInfo,
+                  dataKeys,
+                });
+              }
+            }
+          };
+
+          const roots = primeSections.filter((s) => !s.parent);
+          for (const s of roots) {
+            emitSection(s, rootId, 0);
+          }
+
+          allRows.push(...rows);
+        }
+
+        if (allRows.length === 0) {
+          console.log(gray("No sections to show."));
+          return;
+        }
+
+        const useColor = options.color;
+
+        const base = new ListerBuilder<TreeRow>()
+          .from(allRows)
+          .declareColumns("label", "type", "file", "classInfo", "dataKeys")
+          .requireAtLeastOneColumn(true)
+          .color(useColor)
+          .header(true)
+          .compact(false);
+
+        // preserve pre-colored labels (sections by level, nodes gray)
+        base.field("label", "label", {
+          header: "NAME",
+          defaultColor: (s) => s,
+        });
+        base.field("type", "type", {
+          header: "TYPE",
+          defaultColor: gray,
+        });
+        base.field("file", "file", {
+          header: "FILE",
+          defaultColor: gray,
+        });
+        base.field("classInfo", "classInfo", {
+          header: "CLASS",
+          defaultColor: magenta,
+        });
+        base.field("dataKeys", "dataKeys", {
+          header: "DATA",
+          defaultColor: magenta,
+        });
+
+        if (options.data) {
+          base.select("label", "classInfo", "type", "file", "dataKeys");
+        } else {
+          base.select("label", "classInfo", "file");
         }
 
         const treeLister = TreeLister.wrap(base)
