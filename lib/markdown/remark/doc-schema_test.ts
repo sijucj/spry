@@ -421,16 +421,16 @@ End paragraph with colon-like text:
 
 const COMPLEX_FIXTURE_GOLDEN = `
 namespace prime
-  ├─ heading: "bad section" depth=3 parent=null children=0 [0, 1)
-  ├─ heading: "Main Section" depth=1 parent=null children=3 [1, 14)
-  │  ├─ marker: kind=bold-paragraph title="Main bold one" parent@1 children=0 [3, 5)
+  ├─ heading: "bad section" depth=3 children=0 [0, 1)
+  ├─ heading: "Main Section" depth=1 children=3 [1, 14)
+  │  ├─ marker: kind=bold-paragraph title="Main bold one" children=0 [3, 5)
   │  │  └─ node[4]: type=list
-  │  ├─ marker: kind=colon-paragraph parent@1 children=0 [5, 7)
+  │  ├─ marker: colon-paragraph=Main field: children=0 [5, 7)
   │  │  └─ node[6]: type=paragraph "!! Custom marker one"
-  │  ├─ heading: "Subsection A" depth=2 parent@1 children=3 [7, 14)
-  │  │  ├─ marker: kind=bold-paragraph title="Sub bold" parent@7 children=0 [10, 11)
-  │  │  ├─ marker: kind=colon-paragraph parent@7 children=0 [11, 12)
-  │  │  ├─ heading: "Sub-subsection A" depth=3 parent@7 children=0 [12, 14)
+  │  ├─ heading: "Subsection A" depth=2 children=3 [7, 14)
+  │  │  ├─ marker: kind=bold-paragraph title="Sub bold" children=0 [10, 11)
+  │  │  ├─ marker: colon-paragraph=Sub field: children=0 [11, 12)
+  │  │  ├─ heading: "Sub-subsection A" depth=3 children=0 [12, 14)
   │  │  │  └─ node[13]: type=code "console.log("code");"
   │  │  ├─ node[8]: type=paragraph "Subsection text with and more lorem i..."
   │  │  ├─ node[9]: type=list
@@ -441,9 +441,9 @@ namespace prime
   │  ├─ node[3]: type=paragraph
   │  ├─ node[5]: type=paragraph "Main field:"
   │  └─ node[7]: type=heading "Subsection A"
-  └─ heading: "Second Section" depth=1 parent=null children=2 [14, 18)
-     ├─ marker: kind=colon-paragraph parent@14 children=0 [16, 17)
-     ├─ marker: kind=colon-paragraph parent@14 children=0 [17, 18)
+  └─ heading: "Second Section" depth=1 children=2 [14, 18)
+     ├─ marker: colon-paragraph=Field only: children=0 [16, 17)
+     ├─ marker: colon-paragraph=End paragraph with colon-like text: children=0 [17, 18)
      ├─ node[15]: type=paragraph "Final intro paragraph."
      ├─ node[16]: type=paragraph "Field only:"
      └─ node[17]: type=paragraph "End paragraph with colon-like text:"`.trim();

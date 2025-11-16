@@ -656,29 +656,45 @@ export function stringifySections(sections: Iterable<SectionSchema>) {
   }
 
   const sectionLabel = (s: SectionSchema) => {
-    const base = (() => {
-      switch (s.nature) {
-        case "heading": {
-          const h = s as HeadingSectionSchema;
-          const text = h.heading.children
-            .map((c) => ("value" in c ? c.value : ""))
-            .join("");
-          return `heading: "${text}" depth=${h.depth}`;
-        }
-        case "marker": {
-          const m = s as MarkerSectionSchema;
-          const t = "title" in m ? ` title="${m.title}"` : "";
-          return `marker: kind=${m.markerKind}${t}`;
-        }
+    switch (s.nature) {
+      case "heading": {
+        const h = s as HeadingSectionSchema;
+        const text = h.heading.children
+          .map((c) => ("value" in c ? c.value : ""))
+          .join("");
+        return `heading: "${text}" depth=${h.depth} children=${h.children.length}`;
       }
-    })();
+      case "marker": {
+        const m = s as MarkerSectionSchema & { title?: string };
+        const mk = m.markerKind;
+        const hasTitle = typeof m.title === "string" &&
+          m.title.trim().length > 0;
 
-    const childCount = s.children.length;
-    const parentInfo = s.parent
-      ? ` parent@${s.parent.startIndex}`
-      : " parent=null";
+        if (hasTitle) {
+          const title = m.title!.trim();
+          return `marker: kind=${mk} title="${title}" children=${m.children.length}`;
+        }
 
-    return `${base}${parentInfo} children=${childCount}`;
+        // derive abbreviated content from markerNode as key=value
+        let raw = "";
+        // deno-lint-ignore no-explicit-any
+        const node: any = m.markerNode;
+        if (node) {
+          if (typeof node.value === "string") {
+            raw = node.value;
+          } else if (Array.isArray(node.children)) {
+            raw = node.children
+              // deno-lint-ignore no-explicit-any
+              .map((c: any) => (typeof c.value === "string" ? c.value : ""))
+              .join("");
+          }
+        }
+        const snippet = raw.replace(/\s+/g, " ").trim().slice(0, 40);
+        const value = snippet || "(empty)";
+
+        return `marker: ${mk}=${value} children=${m.children.length}`;
+      }
+    }
   };
 
   const nodeLabel = (node: RootContent, index: number) => {
