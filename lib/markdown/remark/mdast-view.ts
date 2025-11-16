@@ -8,11 +8,8 @@
  */
 
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import {
-  collectSectionsFromRoot,
-  hasBelongsToSection,
-} from "../remark/doc-schema.ts";
-import { hasNodeClass, type NodeClassMap } from "../remark/node-classify.ts";
+import { collectSectionsFromRoot, hasBelongsToSection } from "./doc-schema.ts";
+import { hasNodeClass, type NodeClassMap } from "./node-classify.ts";
 import { mdastql, type MdastQlOptions } from "./mdastql.ts";
 
 // ---------------------------------------------------------------------------

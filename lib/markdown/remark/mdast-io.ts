@@ -17,16 +17,16 @@ import remarkGfm from "npm:remark-gfm@^4";
 
 import { remark } from "npm:remark@^15";
 
-import codeFrontmatter from "../remark/code-frontmatter.ts";
-import docFrontmatter from "../remark/doc-frontmatter.ts";
+import codeFrontmatterPlugin from "./code-frontmatter.ts";
+import docFrontmatterPlugin from "./doc-frontmatter.ts";
 import documentSchemaPlugin, {
   boldParagraphSectionRule,
   colonParagraphSectionRule,
-} from "../remark/doc-schema.ts";
-import headingFrontmatter from "../remark/heading-frontmatter.ts";
-import nodeClassifier, {
+} from "./doc-schema.ts";
+import headingFrontmatterPlugin from "./heading-frontmatter.ts";
+import nodeClassifierPlugin, {
   classifiersFromFrontmatter,
-} from "../remark/node-classify.ts";
+} from "./node-classify.ts";
 
 import type { ParsedMarkdownTree } from "./mdast-view.ts";
 
@@ -50,14 +50,14 @@ export async function readMarkdownTrees(
   processor = remark()
     .use(remarkFrontmatter, ["yaml"])
     .use(remarkdDirective)
-    .use(docFrontmatter)
+    .use(docFrontmatterPlugin)
     .use(remarkGfm)
-    .use(headingFrontmatter)
-    .use(codeFrontmatter, {
+    .use(headingFrontmatterPlugin)
+    .use(codeFrontmatterPlugin, {
       coerceNumbers: true, // "9" -> 9
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     })
-    .use(nodeClassifier, {
+    .use(nodeClassifierPlugin, {
       classifiers: classifiersFromFrontmatter(),
     })
     .use(documentSchemaPlugin, {
