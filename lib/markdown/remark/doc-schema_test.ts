@@ -12,8 +12,8 @@ import {
   type HeadingSectionSchema,
   isBoldParagraphSection,
   type MarkerSectionSchema,
-  materializeRoot,
   type SectionSchema,
+  stringifyRoot,
 } from "./doc-schema.ts";
 
 import type { Paragraph, Root, RootContent } from "npm:@types/mdast@^4";
@@ -205,6 +205,7 @@ Deno.test("documentSchema — structure in single namespace", async (t) => {
       m.markerKind === "bold-paragraph"
     );
     assert(boldSection);
+    assert(isBoldParagraphSection(boldSection));
     assertEquals(boldSection.title, "BoldOnly");
   });
 
@@ -375,7 +376,79 @@ Deno.test("documentSchema — bold marker titles normalize colons", () => {
   assertEquals(boldMarkers[2].title, "bold text with colon outside");
 });
 
-Deno.test("stringifySections — ascii trees and namespaces", () => {
+const COMPLEX_FIXTURE = `
+### bad section
+
+# Main Section
+
+Intro paragraph with [link](https://example.com) and some lorem ipsum dolor sit amet.
+
+**Main bold one**
+
+- Bullet one
+- [ ] Task item
+- [x] Done item
+
+Main field:
+
+!! Custom marker one
+
+## Subsection A
+
+Subsection text with *emphasis* and more lorem ipsum.
+
+1. Ordered one
+2. Ordered two
+
+**Sub bold:**
+
+Sub field:
+
+### Sub-subsection A
+
+\`\`\`js
+console.log("code");
+\`\`\`
+
+# Second Section
+
+Final intro paragraph.
+
+Field only:
+
+End paragraph with colon-like text:
+`.trim();
+
+const COMPLEX_FIXTURE_GOLDEN = `
+namespace prime
+  ├─ heading: "bad section" depth=3 parent=null children=0 [0, 1)
+  ├─ heading: "Main Section" depth=1 parent=null children=3 [1, 14)
+  │  ├─ marker: kind=bold-paragraph title="Main bold one" parent@1 children=0 [3, 5)
+  │  │  └─ node[4]: type=list
+  │  ├─ marker: kind=colon-paragraph parent@1 children=0 [5, 7)
+  │  │  └─ node[6]: type=paragraph "!! Custom marker one"
+  │  ├─ heading: "Subsection A" depth=2 parent@1 children=3 [7, 14)
+  │  │  ├─ marker: kind=bold-paragraph title="Sub bold" parent@7 children=0 [10, 11)
+  │  │  ├─ marker: kind=colon-paragraph parent@7 children=0 [11, 12)
+  │  │  ├─ heading: "Sub-subsection A" depth=3 parent@7 children=0 [12, 14)
+  │  │  │  └─ node[13]: type=code "console.log("code");"
+  │  │  ├─ node[8]: type=paragraph "Subsection text with and more lorem i..."
+  │  │  ├─ node[9]: type=list
+  │  │  ├─ node[10]: type=paragraph
+  │  │  ├─ node[11]: type=paragraph "Sub field:"
+  │  │  └─ node[12]: type=heading "Sub-subsection A"
+  │  ├─ node[2]: type=paragraph "Intro paragraph with and some lorem i..."
+  │  ├─ node[3]: type=paragraph
+  │  ├─ node[5]: type=paragraph "Main field:"
+  │  └─ node[7]: type=heading "Subsection A"
+  └─ heading: "Second Section" depth=1 parent=null children=2 [14, 18)
+     ├─ marker: kind=colon-paragraph parent@14 children=0 [16, 17)
+     ├─ marker: kind=colon-paragraph parent@14 children=0 [17, 18)
+     ├─ node[15]: type=paragraph "Final intro paragraph."
+     ├─ node[16]: type=paragraph "Field only:"
+     └─ node[17]: type=paragraph "End paragraph with colon-like text:"`.trim();
+
+Deno.test("stringifySections — complex fixture verified by ascii tree", () => {
   const processor = unified()
     .use(remarkParse)
     .use(documentSchema, {
@@ -388,25 +461,10 @@ Deno.test("stringifySections — ascii trees and namespaces", () => {
       ],
     });
 
-  const tree = processor.parse(MARKER_FIXTURE) as Root;
+  const tree = processor.parse(COMPLEX_FIXTURE) as Root;
   processor.runSync(tree);
 
-  const mat = materializeRoot(tree);
-
-  const expectedAscii = [
-    "namespace: prime",
-    '  - heading: "Title" depth=1 [0, 6)',
-    '      * marker: kind=bold-paragraph title="BoldOnly" [2, 4)',
-    "      * marker: kind=colon-paragraph [4, 6)",
-  ].join("\n");
-
-  const expectedAsciiNs = [
-    "namespace prime",
-    '  - heading: "Title" depth=1 [0, 6)',
-    '    - marker: kind=bold-paragraph title="BoldOnly" [2, 4)',
-    "    - marker: kind=colon-paragraph [4, 6)",
-  ].join("\n");
-
-  assertEquals(mat.asciiTree(), expectedAscii);
-  assertEquals(mat.asciiTreeByNamespace(), expectedAsciiNs);
+  const sr = stringifyRoot(tree);
+  // console.log(sr.asciiTree());
+  assertEquals(sr.asciiTree(), COMPLEX_FIXTURE_GOLDEN);
 });

@@ -11,7 +11,7 @@
  * - Each section tracks:
  *   - namespace       – logical partition (e.g. "prime", "ns1", "ns2")
  *   - startIndex/endIndex – index range into `Root.children`
- *   - parent / children   – logical nesting (for now, headings use flat spans)
+ *   - parent / children   – logical nesting
  *   - parentNode          – the parent `Root` (currently only top-level)
  *
  * - For each section start node, we attach:
@@ -64,7 +64,6 @@ export interface MarkerSectionSchema extends BaseSectionSchema {
   readonly nature: "marker";
   readonly markerKind: string;
   readonly markerNode: RootContent;
-  readonly title?: string;
 }
 
 /**
@@ -207,9 +206,8 @@ export function hasBelongsToSection(
 }
 
 /**
- * Built-in heading rule: any `heading` node at top level starts a section
- * that runs until the next heading, regardless of level.
- * Sections are flat (no nested parent/child relationships).
+ * Built-in heading rule: any `heading` node at top level starts a section.
+ * Sections are later nested by heading depth.
  */
 export function headingSectionRule(): HeadingSectionRule {
   return {
@@ -435,6 +433,69 @@ function findEndIndex(
 }
 
 /**
+ * For a given array of sections, return the "innermost" section
+ * covering an index (if any). Innermost = largest startIndex where start < i < end.
+ */
+function innermostSectionAtIndex(
+  sections: readonly SectionSchema[],
+  index: number,
+): SectionSchema | undefined {
+  let best: SectionSchema | undefined;
+  for (const s of sections) {
+    if (index > s.startIndex && index < s.endIndex) {
+      if (!best || s.startIndex > best.startIndex) {
+        best = s;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Build heading hierarchy (parent/children) and recompute endIndex spans
+ * based on heading depth.
+ */
+function buildHeadingHierarchy(
+  headings: readonly HeadingSectionSchema[],
+  totalSiblings: number,
+): void {
+  if (!headings.length) return;
+
+  const sorted = [...headings].sort(
+    (a, b) => a.startIndex - b.startIndex,
+  );
+
+  const stack: HeadingSectionSchema[] = [];
+
+  for (const h of sorted) {
+    while (stack.length && stack[stack.length - 1].depth >= h.depth) {
+      stack.pop();
+    }
+    const parent = stack[stack.length - 1];
+    if (parent) {
+      (h as { parent?: SectionSchema }).parent = parent;
+      parent.children.push(h);
+    } else {
+      (h as { parent?: SectionSchema }).parent = undefined;
+    }
+    stack.push(h);
+  }
+
+  for (let i = 0; i < sorted.length; i++) {
+    const current = sorted[i];
+    let end = totalSiblings;
+    for (let j = i + 1; j < sorted.length; j++) {
+      const next = sorted[j];
+      if (next.depth <= current.depth) {
+        end = next.startIndex;
+        break;
+      }
+    }
+    (current as { endIndex: number }).endIndex = end;
+  }
+}
+
+/**
  * Main remark plugin: discovers sections and annotates nodes with per-namespace
  * section schema metadata.
  */
@@ -464,13 +525,11 @@ export const documentSchema: Plugin<[DocumentSchemaOptions?], Root> = (
       return;
     }
 
-    // For now, we treat the entire Root as a flat array of siblings.
-    // Parent/child relationships are not nested by depth; each heading/marker
-    // simply spans from its startIndex to its computed endIndex.
     const parentNode = tree;
     const headingSectionsByStart: Map<number, HeadingSectionSchema> = new Map();
+    const allSectionsForNamespace: SectionSchema[] = [];
 
-    // First pass: headings (to optionally use as "parent" for markers).
+    // First pass: headings (to use as "parent" for markers and for hierarchy).
     for (let i = 0; i < siblings.length; i++) {
       const node = siblings[i];
       for (const rule of rules) {
@@ -487,7 +546,6 @@ export const documentSchema: Plugin<[DocumentSchemaOptions?], Root> = (
           parent: undefined,
         });
 
-        // Attach / accumulate sectionSchema[namespace] on the heading node.
         const data = (node.data ??= {});
         const catalog = (data as Data & {
           sectionSchema?: Record<string, SectionSchema>;
@@ -496,25 +554,17 @@ export const documentSchema: Plugin<[DocumentSchemaOptions?], Root> = (
         catalog[namespace] = section;
 
         headingSectionsByStart.set(i, section);
-
-        if (enrichWithBelongsTo) {
-          for (let j = i + 1; j < endIndex; j++) {
-            const child = siblings[j];
-            const d2 = (child.data ??= {});
-            const belongs = (d2 as Data & {
-              belongsToSection?: Record<string, SectionSchema>;
-            }).belongsToSection ??= {};
-            belongs[namespace] = section;
-          }
-        }
+        allSectionsForNamespace.push(section);
 
         if (encountered) {
           encountered(section, node);
         }
-
-        // Do NOT break; allow other rules also to consider this node if needed.
       }
     }
+
+    // Build heading hierarchy and adjust heading spans based on depth.
+    const headingSections = [...headingSectionsByStart.values()];
+    buildHeadingHierarchy(headingSections, siblings.length);
 
     // Second pass: marker rules, using headings as potential parents.
     for (let i = 0; i < siblings.length; i++) {
@@ -543,7 +593,6 @@ export const documentSchema: Plugin<[DocumentSchemaOptions?], Root> = (
           parentHeading.children.push(section);
         }
 
-        // Attach / accumulate sectionSchema[namespace] on the marker start node.
         const data = (node.data ??= {});
         const catalog = (data as Data & {
           sectionSchema?: Record<string, SectionSchema>;
@@ -551,20 +600,27 @@ export const documentSchema: Plugin<[DocumentSchemaOptions?], Root> = (
 
         catalog[namespace] = section;
 
-        if (enrichWithBelongsTo) {
-          for (let j = i + 1; j < endIndex; j++) {
-            const child = siblings[j];
-            const d2 = (child.data ??= {});
-            const belongs = (d2 as Data & {
-              belongsToSection?: Record<string, SectionSchema>;
-            }).belongsToSection ??= {};
-            belongs[namespace] = section;
-          }
-        }
+        allSectionsForNamespace.push(section);
 
         if (encountered) {
           encountered(section, node);
         }
+      }
+    }
+
+    // Third pass: populate belongsToSection with innermost section per index.
+    if (enrichWithBelongsTo && allSectionsForNamespace.length > 0) {
+      for (let i = 0; i < siblings.length; i++) {
+        const node = siblings[i];
+        const inner = innermostSectionAtIndex(allSectionsForNamespace, i);
+        if (!inner) continue;
+
+        const d2 = (node.data ??= {});
+        const belongs = (d2 as Data & {
+          belongsToSection?: Record<string, SectionSchema>;
+        }).belongsToSection ??= {};
+
+        belongs[namespace] = inner;
       }
     }
   };
@@ -578,12 +634,15 @@ function findEnclosingHeadingSection(
   index: number,
   headingSectionsByStart: Map<number, HeadingSectionSchema>,
 ): HeadingSectionSchema | undefined {
+  let best: HeadingSectionSchema | undefined;
   for (const section of headingSectionsByStart.values()) {
     if (section.startIndex <= index && index < section.endIndex) {
-      return section;
+      if (!best || section.startIndex > best.startIndex) {
+        best = section;
+      }
     }
   }
-  return undefined;
+  return best;
 }
 
 export function stringifySections(sections: Iterable<SectionSchema>) {
@@ -597,73 +656,128 @@ export function stringifySections(sections: Iterable<SectionSchema>) {
   }
 
   const sectionLabel = (s: SectionSchema) => {
-    switch (s.nature) {
-      case "heading": {
-        const h = s as HeadingSectionSchema;
-        const text = h.heading.children
-          .map((c) => ("value" in c ? c.value : ""))
-          .join("");
-        return `heading: "${text}" depth=${h.depth}`;
+    const base = (() => {
+      switch (s.nature) {
+        case "heading": {
+          const h = s as HeadingSectionSchema;
+          const text = h.heading.children
+            .map((c) => ("value" in c ? c.value : ""))
+            .join("");
+          return `heading: "${text}" depth=${h.depth}`;
+        }
+        case "marker": {
+          const m = s as MarkerSectionSchema;
+          const t = "title" in m ? ` title="${m.title}"` : "";
+          return `marker: kind=${m.markerKind}${t}`;
+        }
       }
-      case "marker": {
-        const m = s as MarkerSectionSchema;
-        const mk = m.markerKind;
-        const t = "title" in m ? ` title="${m.title}"` : "";
-        return `marker: kind=${mk}${t}`;
-      }
+    })();
+
+    const childCount = s.children.length;
+    const parentInfo = s.parent
+      ? ` parent@${s.parent.startIndex}`
+      : " parent=null";
+
+    return `${base}${parentInfo} children=${childCount}`;
+  };
+
+  const nodeLabel = (node: RootContent, index: number) => {
+    let snippet = "";
+    if ("value" in node && typeof node.value === "string") {
+      snippet = node.value;
+    } else if ("children" in node && Array.isArray(node.children)) {
+      const texts = node.children
+        .filter((c) => "value" in c && typeof c.value === "string")
+        // deno-lint-ignore no-explicit-any
+        .map((c: any) => c.value)
+        .join(" ");
+      snippet = texts;
     }
+    snippet = snippet.replace(/\s+/g, " ").trim();
+    if (snippet.length > 40) {
+      snippet = `${snippet.slice(0, 37)}...`;
+    }
+    return `node[${index}]: type=${node.type}${snippet ? ` "${snippet}"` : ""}`;
   };
 
   const asciiTree = () => {
     const lines: string[] = [];
-    for (const ns of [...byNs.keys()].sort()) {
-      lines.push(`namespace: ${ns}`);
-      const roots = byNs.get(ns)!.filter((s) => s.parent == null);
-      for (const r of roots) {
-        lines.push(
-          `  - ${sectionLabel(r)} [${r.startIndex}, ${r.endIndex})`,
-        );
-        for (const c of r.children) {
+    const nsKeys = [...byNs.keys()].sort();
+
+    const dumpNode = (
+      s: SectionSchema,
+      prefix: string,
+      isLast: boolean,
+    ) => {
+      const connector = isLast ? "└─ " : "├─ ";
+      lines.push(
+        `${prefix}${connector}${
+          sectionLabel(s)
+        } [${s.startIndex}, ${s.endIndex})`,
+      );
+
+      const ns = s.namespace;
+      const rootChildren = s.parentNode.children as RootContent[];
+
+      const belongingNodes = rootChildren
+        .map((n, idx) => ({ n, idx }))
+        .filter(({ n }) =>
+          hasBelongsToSection(n) && n.data.belongsToSection?.[ns] === s
+        )
+        .sort((a, b) => a.idx - b.idx);
+
+      const sectionChildren = [...s.children].sort(
+        (a, b) => a.startIndex - b.startIndex,
+      );
+
+      const childEntries: Array<
+        | { kind: "section"; section: SectionSchema }
+        | { kind: "node"; node: RootContent; index: number }
+      > = [];
+
+      for (const childSection of sectionChildren) {
+        childEntries.push({ kind: "section", section: childSection });
+      }
+      for (const { n, idx } of belongingNodes) {
+        childEntries.push({ kind: "node", node: n, index: idx });
+      }
+
+      const childPrefix = prefix + (isLast ? "   " : "│  ");
+
+      childEntries.forEach((entry, idx) => {
+        const lastChild = idx === childEntries.length - 1;
+        if (entry.kind === "section") {
+          dumpNode(entry.section, childPrefix, lastChild);
+        } else {
+          const nodeConnector = lastChild ? "└─ " : "├─ ";
           lines.push(
-            `      * ${sectionLabel(c)} [${c.startIndex}, ${c.endIndex})`,
+            `${childPrefix}${nodeConnector}${
+              nodeLabel(entry.node, entry.index)
+            }`,
           );
         }
-      }
-    }
-    return lines.join("\n");
-  };
+      });
+    };
 
-  const dumpNode = (lines: string[], s: SectionSchema, pad: string) => {
-    lines.push(`${pad}- ${sectionLabel(s)} [${s.startIndex}, ${s.endIndex})`);
-    for (const c of s.children) {
-      dumpNode(lines, c, pad + "  ");
-    }
-  };
-
-  const asciiTreeByNamespace = () => {
-    const lines: string[] = [];
-    for (const ns of [...byNs.keys()].sort()) {
+    nsKeys.forEach((ns, nsIdx) => {
       lines.push(`namespace ${ns}`);
-      const roots = byNs.get(ns)!.filter((s) => s.parent == null);
-      for (const r of roots) {
-        dumpNode(lines, r, "  ");
+      const all = byNs.get(ns)!;
+      const roots = all
+        .filter((s) => s.parent == null)
+        .sort((a, b) => a.startIndex - b.startIndex);
+      roots.forEach((r, idx) => dumpNode(r, "  ", idx === roots.length - 1));
+      if (nsIdx < nsKeys.length - 1) {
+        lines.push("");
       }
-    }
+    });
+
     return lines.join("\n");
-  };
-
-  const listNamespaces = () => [...byNs.keys()];
-
-  const listSections = (namespace?: string) => {
-    if (!namespace) return arr;
-    return byNs.get(namespace) ?? [];
   };
 
   return {
+    sections: arr,
+    sectionByNS: byNs,
     asciiTree,
-    asciiTreeByNamespace,
-    listNamespaces,
-    listSections,
   };
 }
 
@@ -689,7 +803,7 @@ export function collectSectionsFromRoot(root: Root) {
   return out;
 }
 
-export function materializeRoot(root: Root) {
+export function stringifyRoot(root: Root) {
   return stringifySections(collectSectionsFromRoot(root));
 }
 
