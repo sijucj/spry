@@ -9,8 +9,9 @@
 
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import { collectSectionsFromRoot, hasBelongsToSection } from "./doc-schema.ts";
-import { hasNodeClass, type NodeClassMap } from "./node-classify.ts";
 import { mdastql, type MdastQlOptions } from "./mdastql.ts";
+import { hasNodeClass, type NodeClassMap } from "./node-classify.ts";
+import { hasNodeIdentities } from "./node-identities.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,9 +26,10 @@ export type MdAstTreeView = "physical" | "class" | "schema";
  * Different strategies for tabular (row-oriented) views.
  *
  * For now:
- *  - "physical" = depth-first listing of nodes with headingPath, etc.
+ *  - "physical"    = depth-first listing of nodes with headingPath, etc.
+ *  - "identifiers" = one row per node-identity pair
  */
-export type MdAstTabularView = "physical";
+export type MdAstTabularView = "physical" | "identifiers";
 
 /**
  * Parsed markdown tree with enough metadata for building views.
@@ -58,6 +60,7 @@ export interface TreeRow {
   readonly parentId?: string;
   readonly classInfo?: string;
   readonly dataKeys?: string;
+  readonly identityInfo?: string;
 
   /** Which logical view this row belongs to. */
   readonly view?: MdAstTreeView;
@@ -82,6 +85,14 @@ export interface TabularRow {
   readonly name: string;
   readonly classInfo?: string;
   readonly dataKeys?: string;
+
+  /**
+   * For the "identifiers" view:
+   *  - supplier → identity supplier name (SUPPLIER)
+   *  - identity → identity string (ID)
+   */
+  readonly supplier?: string;
+  readonly identity?: string;
 }
 
 export interface BuildMdAstTabularRowsOptions {
@@ -271,6 +282,41 @@ export function formatNodeClasses(
   return parts.length ? parts.join(" ") : undefined;
 }
 
+export function formatNodeIdentities(
+  node: RootContent,
+): string | undefined {
+  const data = (node as Any).data;
+  if (!data || typeof data !== "object") return undefined;
+  const ids = (data as Any).identities as
+    | Record<string, string[] | undefined>
+    | undefined;
+  if (!ids || typeof ids !== "object") return undefined;
+
+  const entries = Object.entries(ids).filter(
+    ([, v]) => Array.isArray(v) && v.length > 0,
+  ) as [string, string[]][];
+
+  if (entries.length === 0) return undefined;
+
+  const multipleSuppliers = entries.length > 1;
+  const parts: string[] = [];
+
+  for (const [supplier, list] of entries) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    if (multipleSuppliers) {
+      for (const id of list) {
+        parts.push(`${supplier}:${id}`);
+      }
+    } else {
+      for (const id of list) {
+        parts.push(id);
+      }
+    }
+  }
+
+  return parts.length ? parts.join(", ") : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Unified tree rows
 // ---------------------------------------------------------------------------
@@ -360,7 +406,8 @@ function shouldEmitNodeForTabular(
  * Unified builder for tabular rows.
  *
  * Currently supports:
- *  - "physical" → depth-first listing with heading path.
+ *  - "physical"    → depth-first listing with heading path.
+ *  - "identifiers" → one row per node-identity pair.
  */
 export function buildMdAstTabularRows(
   view: MdAstTabularView,
@@ -370,6 +417,8 @@ export function buildMdAstTabularRows(
   switch (view) {
     case "physical":
       return buildPhysicalTabularRows(pmt, opts);
+    case "identifiers":
+      return buildIdentifierTabularRows(pmt, opts);
     default:
       throw new Error(`Unknown MdAstTabularView: ${view satisfies never}`);
   }
@@ -447,6 +496,75 @@ function buildPhysicalTabularRows(
   return rows;
 }
 
+/**
+ * `identifiers` tabular view – one row per (node, supplier, identity) tuple:
+ *
+ * - Only nodes with identities (`hasNodeIdentities`) are included.
+ * - Each row includes:
+ *   - SUPPLIER (supplier)
+ *   - ID (identity)
+ *   - file, type, depth, headingPath, name, classInfo, dataKeys
+ */
+function buildIdentifierTabularRows(
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTabularRowsOptions = {},
+): TabularRow[] {
+  const { root, fileRef } = pmt;
+  const { includeDataKeys, query, mdastqlOptions } = opts;
+  const selected = selectNodes(root, query, mdastqlOptions);
+  const selectedSet = new Set(selected);
+
+  const rows: TabularRow[] = [];
+  let id = 1;
+
+  const headingStack: (string | undefined)[] = [];
+
+  walkTree(root, (node, { depth }) => {
+    if (node.type === "heading") {
+      const hd = (node.depth ?? 1) | 0;
+      const label = headingText(node as Heading);
+      if (hd > 0) {
+        headingStack.splice(hd - 1);
+        headingStack[hd - 1] = label;
+      }
+    }
+
+    if (!selectedSet.has(node)) return;
+    if (!hasNodeIdentities(node)) return;
+
+    const headingPath = headingStack.filter(Boolean).join(" → ");
+    const name = node.type === "heading"
+      ? `h${node.depth ?? "?"}: ${headingText(node as Heading)}`
+      : summarizeNode(node);
+
+    const classInfo = formatNodeClasses(node);
+    const dataKeys = includeDataKeys && node.data
+      ? Object.keys(node.data).join(", ")
+      : undefined;
+
+    const identities = node.data.identities;
+    for (const [supplier, ids] of Object.entries(identities)) {
+      if (!ids) continue;
+      for (const identity of ids) {
+        rows.push({
+          id: id++,
+          file: fileRef(node),
+          type: node.type,
+          depth,
+          headingPath,
+          name,
+          classInfo,
+          dataKeys,
+          supplier,
+          identity,
+        });
+      }
+    }
+  });
+
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
 // View: physical (file → headings → content)
 // ---------------------------------------------------------------------------
@@ -479,6 +597,7 @@ function buildPhysicalTreeRows(
     parentId: undefined,
     classInfo: undefined,
     dataKeys: undefined,
+    identityInfo: undefined,
     view: "physical",
   });
 
@@ -507,6 +626,7 @@ function buildPhysicalTreeRows(
         : undefined;
 
       const classInfo = formatNodeClasses(child);
+      const identityInfo = formatNodeIdentities(child);
 
       rows.push({
         id,
@@ -517,6 +637,7 @@ function buildPhysicalTreeRows(
         parentId,
         classInfo,
         dataKeys,
+        identityInfo,
         view: "physical",
       });
 
@@ -531,6 +652,7 @@ function buildPhysicalTreeRows(
         : undefined;
 
       const classInfo = formatNodeClasses(child);
+      const identityInfo = formatNodeIdentities(child);
 
       rows.push({
         id,
@@ -541,6 +663,7 @@ function buildPhysicalTreeRows(
         parentId,
         classInfo,
         dataKeys,
+        identityInfo,
         view: "physical",
       });
 
@@ -657,6 +780,7 @@ function buildClassTreeRows(
     parentId: undefined,
     classInfo: undefined,
     dataKeys: undefined,
+    identityInfo: undefined,
     view: "class",
   });
 
@@ -675,6 +799,7 @@ function buildClassTreeRows(
       parentId: rootId,
       classInfo: undefined,
       dataKeys: undefined,
+      identityInfo: undefined,
       view: "class",
     });
 
@@ -693,6 +818,7 @@ function buildClassTreeRows(
         parentId: classKeyId,
         classInfo: `${classKey}:${value}`,
         dataKeys: undefined,
+        identityInfo: undefined,
         view: "class",
       });
 
@@ -705,6 +831,7 @@ function buildClassTreeRows(
           : undefined;
 
         const classInfoForNode = formatNodeClasses(node);
+        const identityInfoForNode = formatNodeIdentities(node);
 
         rows.push({
           id: nodeId,
@@ -715,6 +842,7 @@ function buildClassTreeRows(
           parentId: valueId,
           classInfo: classInfoForNode,
           dataKeys: dataKeysForNode,
+          identityInfo: identityInfoForNode,
           view: "class",
         });
       }
@@ -751,6 +879,7 @@ function buildSchemaTreeRows(
     parentId: undefined,
     classInfo: undefined,
     dataKeys: undefined,
+    identityInfo: undefined,
     view: "schema",
     schemaLevel: undefined,
   });
@@ -849,6 +978,10 @@ function buildSchemaTreeRows(
       ? formatNodeClasses(sectionNode)
       : undefined;
 
+    const sectionIdentityInfo = sectionNode
+      ? formatNodeIdentities(sectionNode)
+      : undefined;
+
     rows.push({
       id,
       file: sectionNode ? fileRef(sectionNode) : fileRef(),
@@ -858,6 +991,7 @@ function buildSchemaTreeRows(
       parentId,
       classInfo: sectionClassInfo,
       dataKeys: sectionDataKeys,
+      identityInfo: sectionIdentityInfo,
       view: "schema",
       schemaLevel: level,
     });
@@ -900,6 +1034,7 @@ function buildSchemaTreeRows(
           ? Object.keys(node.data).join(", ")
           : undefined;
         const classInfo = formatNodeClasses(node);
+        const identityInfo = formatNodeIdentities(node);
 
         rows.push({
           id: nodeId,
@@ -910,6 +1045,7 @@ function buildSchemaTreeRows(
           parentId: id,
           classInfo,
           dataKeys,
+          identityInfo,
           view: "schema",
           schemaLevel: level + 1,
         });

@@ -47,6 +47,7 @@ export class CLI {
       .command("help", new HelpCommand())
       .command("completions", new CompletionsCommand())
       .command("ls", this.lsCommand())
+      .command("identifiers", this.identifiersCommand())
       .command("tree", this.treeCommand())
       .command("class", this.classCommand())
       .command("schema", this.schemaCommand())
@@ -116,6 +117,8 @@ export class CLI {
               "name",
               "classInfo",
               "dataKeys",
+              "supplier",
+              "identity",
             )
             .requireAtLeastOneColumn(true)
             .color(useColor)
@@ -176,6 +179,131 @@ export class CLI {
   }
 
   // -------------------------------------------------------------------------
+  // identifiers command (tabular "identifiers" view)
+  // -------------------------------------------------------------------------
+
+  /**
+   * `identifiers` – list mdast node identities in a tabular view.
+   *
+   * - Only nodes with identities are included.
+   * - One row per (node, SUPPLIER, ID) tuple.
+   * - Includes the same physical columns as `ls` plus SUPPLIER and ID.
+   */
+  protected identifiersCommand() {
+    return new Command()
+      .description(
+        `list mdast node identifiers (one row per SUPPLIER / ID pair)`,
+      )
+      .arguments("[paths...:string]")
+      .option(
+        "--select <query:string>",
+        "mdastql selection (default: every node with identities).",
+      )
+      .option("--data", "Include node.data keys as a DATA column.")
+      .option("--no-color", "Show output without using ANSI colors")
+      .action(
+        async (options, ...paths: string[]) => {
+          const files = resolveFiles(this.globalFiles, paths);
+          const trees = await readMarkdownTrees(files);
+          const allRows: TabularRow[] = [];
+
+          for (const pmt of trees) {
+            const rows = buildMdAstTabularRows("identifiers", pmt, {
+              includeDataKeys: !!options.data,
+              query: options.select,
+            });
+            allRows.push(...rows);
+          }
+
+          if (allRows.length === 0) {
+            console.log(gray("No nodes with identifiers to show."));
+            return;
+          }
+
+          const useColor = options.color;
+
+          const builder = new ListerBuilder<TabularRow>()
+            .from(allRows)
+            .declareColumns(
+              "id",
+              "file",
+              "type",
+              "depth",
+              "headingPath",
+              "name",
+              "classInfo",
+              "dataKeys",
+              "supplier",
+              "identity",
+            )
+            .requireAtLeastOneColumn(true)
+            .color(useColor)
+            .header(true)
+            .compact(false);
+
+          builder.numeric("id", (r) => r.id, {
+            header: "ROW",
+            defaultColor: yellow,
+          });
+          builder.field("file", "file", {
+            header: "FILE",
+            defaultColor: gray,
+          });
+          builder.field("type", "type", {
+            header: "TYPE",
+            defaultColor: cyan,
+          });
+          builder.numeric("depth", (r) => r.depth, {
+            header: "DEPTH",
+          });
+          builder.field("headingPath", "headingPath", {
+            header: "HEADING PATH",
+            defaultColor: gray,
+          });
+          builder.field("name", "name", {
+            header: "NAME",
+            defaultColor: bold,
+          });
+          builder.field("supplier", "supplier", {
+            header: "SUPPLIER",
+            defaultColor: cyan,
+          });
+          builder.field("identity", "identity", {
+            header: "ID",
+            defaultColor: yellow,
+          });
+          builder.field("classInfo", "classInfo", {
+            header: "CLASS",
+            defaultColor: magenta,
+          });
+
+          if (options.data) {
+            builder.field("dataKeys", "dataKeys", {
+              header: "DATA",
+              defaultColor: magenta,
+            });
+          }
+
+          const ids: Array<keyof TabularRow & string> = [
+            "id",
+            "file",
+            "supplier",
+            "identity",
+            "name",
+            "type",
+            "depth",
+            "classInfo",
+          ];
+          if (options.data) ids.push("dataKeys");
+          builder.select(...ids);
+
+          const lister = builder.build();
+          await lister.ls(true);
+        },
+      );
+  }
+
+  // -------------------------------------------------------------------------
   // tree command
   // -------------------------------------------------------------------------
 
@@ -213,7 +341,14 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "type", "file", "classInfo", "dataKeys")
+          .declareColumns(
+            "label",
+            "type",
+            "file",
+            "identityInfo",
+            "classInfo",
+            "dataKeys",
+          )
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
@@ -231,6 +366,10 @@ export class CLI {
           header: "FILE",
           defaultColor: gray,
         });
+        base.field("identityInfo", "identityInfo", {
+          header: "IDENTITY",
+          defaultColor: yellow,
+        });
         base.field("classInfo", "classInfo", {
           header: "CLASS",
           defaultColor: magenta,
@@ -243,9 +382,16 @@ export class CLI {
         }
 
         if (options.data) {
-          base.select("label", "type", "classInfo", "file", "dataKeys");
+          base.select(
+            "label",
+            "type",
+            "identityInfo",
+            "classInfo",
+            "file",
+            "dataKeys",
+          );
         } else {
-          base.select("label", "type", "classInfo", "file");
+          base.select("label", "type", "identityInfo", "classInfo", "file");
         }
 
         const treeLister = TreeLister.wrap(base)
@@ -304,7 +450,14 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "classInfo", "type", "file", "dataKeys")
+          .declareColumns(
+            "label",
+            "identityInfo",
+            "classInfo",
+            "type",
+            "file",
+            "dataKeys",
+          )
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
@@ -314,6 +467,10 @@ export class CLI {
         base.field("label", "label", {
           header: "NAME",
           defaultColor: (s) => s,
+        });
+        base.field("identityInfo", "identityInfo", {
+          header: "IDENTITY",
+          defaultColor: yellow,
         });
         base.field("classInfo", "classInfo", {
           header: "CLASS",
@@ -335,9 +492,16 @@ export class CLI {
         }
 
         if (options.data) {
-          base.select("label", "classInfo", "type", "file", "dataKeys");
+          base.select(
+            "label",
+            "identityInfo",
+            "classInfo",
+            "type",
+            "file",
+            "dataKeys",
+          );
         } else {
-          base.select("label", "classInfo", "type", "file");
+          base.select("label", "identityInfo", "classInfo", "type", "file");
         }
 
         const treeLister = TreeLister.wrap(base)
@@ -409,7 +573,14 @@ export class CLI {
 
         const base = new ListerBuilder<TreeRow>()
           .from(allRows)
-          .declareColumns("label", "type", "file", "classInfo", "dataKeys")
+          .declareColumns(
+            "label",
+            "type",
+            "file",
+            "identityInfo",
+            "classInfo",
+            "dataKeys",
+          )
           .requireAtLeastOneColumn(true)
           .color(useColor)
           .header(true)
@@ -428,6 +599,10 @@ export class CLI {
           header: "FILE",
           defaultColor: gray,
         });
+        base.field("identityInfo", "identityInfo", {
+          header: "IDENTITY",
+          defaultColor: yellow,
+        });
         base.field("classInfo", "classInfo", {
           header: "CLASS",
           defaultColor: magenta,
@@ -438,9 +613,16 @@ export class CLI {
         });
 
         if (options.data) {
-          base.select("label", "classInfo", "type", "file", "dataKeys");
+          base.select(
+            "label",
+            "identityInfo",
+            "classInfo",
+            "type",
+            "file",
+            "dataKeys",
+          );
         } else {
-          base.select("label", "classInfo", "file");
+          base.select("label", "identityInfo", "classInfo", "file");
         }
 
         const treeLister = TreeLister.wrap(base)

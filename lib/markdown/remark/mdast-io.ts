@@ -27,6 +27,7 @@ import headingFrontmatterPlugin from "./heading-frontmatter.ts";
 import nodeClassifierPlugin, {
   classifiersFromFrontmatter,
 } from "./node-classify.ts";
+import nodeIdentitiesPlugin from "./node-identities.ts";
 
 import type { ParsedMarkdownTree } from "./mdast-view.ts";
 
@@ -68,6 +69,15 @@ export async function readMarkdownTrees(
         boldParagraphSectionRule(),
         colonParagraphSectionRule(),
       ],
+    })
+    .use(nodeIdentitiesPlugin, {
+      identityFromHeadingFM: (fm, node) => {
+        if (!fm?.id || node.type !== "heading") return false as const;
+        return {
+          supplier: "headFM",
+          identity: String(fm.id),
+        };
+      },
     }),
 ): Promise<Array<ParsedMarkdownTree>> {
   if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
