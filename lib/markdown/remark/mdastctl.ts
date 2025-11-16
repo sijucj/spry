@@ -2,16 +2,7 @@
 /**
  * @module mdastctl
  *
- * @summary
  * General-purpose CLI for exploring **mdast** trees.
- *
- * Commands:
- *
- *   - `ls`    : tabular listing of nodes (every node by default, or filtered via `--select` mdastql)
- *   - `tree`  : heading/content hierarchy (headings as dirs, content as files), with file root node.
- *   - `class` : class-driven hierarchy:
- *               file → class key → class value → node
- *   - `md`    : run mdastql `--select` and print the matching nodes as Markdown.
  */
 
 import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
@@ -20,46 +11,34 @@ import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
 
 import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
 
-import { basename } from "jsr:@std/path@1";
-
-import remarkdDirective from "https://esm.sh/remark-directive@4";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import remarkFrontmatter from "npm:remark-frontmatter@^5";
-import remarkGfm from "npm:remark-gfm@^4";
-
-import { remark } from "npm:remark@^15";
 
 import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../../universal/lister-tree-tui.ts";
 
-import { mdastql, type MdastQlOptions } from "./mdastql.ts";
+import type { MdastQlOptions } from "./mdastql.ts";
 
-import codeFrontmatter from "../remark/code-frontmatter.ts";
-import docFrontmatter from "../remark/doc-frontmatter.ts";
-import headingFrontmatter from "../remark/heading-frontmatter.ts";
-import nodeClassifier, {
-  classifiersFromFrontmatter,
-} from "../remark/node-classify.ts";
+import {
+  buildMdAstTreeRows,
+  formatNodeClasses,
+  headingText,
+  type ParsedMarkdownTree,
+  selectNodes,
+  summarizeNode,
+  type TreeRow,
+  walkTree,
+} from "./mdast-view.ts";
 
-import { hasNodeClass, type NodeClassMap } from "../remark/node-classify.ts";
-// add to imports near the top
-import documentSchemaPlugin, {
-  boldParagraphSectionRule,
-  collectSectionsFromRoot,
-  colonParagraphSectionRule,
-  hasBelongsToSection,
-} from "../remark/doc-schema.ts";
+import {
+  computeSectionRangesForHeadings,
+  readMarkdownTrees,
+  resolveFiles,
+  sliceSourceForNode,
+} from "./mdast-io.ts";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-// deno-lint-ignore no-explicit-any
-type Any = any;
-
-type MdastNode = Root | RootContent;
-
-type ParentLike = Root | (RootContent & { children?: RootContent[] });
 
 export interface LsRow {
   readonly id: number;
@@ -72,186 +51,21 @@ export interface LsRow {
   readonly dataKeys?: string;
 }
 
-export interface TreeRow {
-  readonly id: string;
-  readonly file: string;
-  readonly kind: "heading" | "content";
-  readonly label: string;
-  readonly type: RootContent["type"] | "root" | "class-key" | "class-value";
-  readonly parentId?: string;
-  readonly classInfo?: string;
-  readonly dataKeys?: string;
-}
-
 // ---------------------------------------------------------------------------
-// Tiny mdast helpers
+// mdastql selection helpers for `ls`
 // ---------------------------------------------------------------------------
 
-function isParent(node: MdastNode): node is ParentLike {
-  return Array.isArray((node as Any).children);
+interface BuildLsRowsOptions {
+  readonly includeDataKeys?: boolean;
+  readonly query?: string;
+  readonly mdastqlOptions?: MdastQlOptions;
 }
-
-/**
- * Depth-first walk over mdast, exposing:
- *   - node (RootContent)
- *   - parent
- *   - depth (0 for root children, 1 for their children, etc.)
- *   - index within parent.children
- */
-function walkTree(
-  root: Root,
-  fn: (
-    node: RootContent,
-    ctx: { parent: ParentLike; depth: number; index: number },
-  ) => void,
-): void {
-  const children = root.children ?? [];
-
-  const visitChildren = (parent: ParentLike, depth: number): void => {
-    if (!parent.children) return;
-    parent.children.forEach((child, index) => {
-      fn(child, { parent, depth, index });
-      if (isParent(child)) {
-        visitChildren(child, depth + 1);
-      }
-    });
-  };
-
-  children.forEach((child, index) => {
-    fn(child, { parent: root, depth: 0, index });
-    if (isParent(child)) {
-      visitChildren(child, 1);
-    }
-  });
-}
-
-function markNodesContainingSelected(
-  root: Root,
-  selected: Set<RootContent>,
-): WeakMap<RootContent, boolean> {
-  const map = new WeakMap<RootContent, boolean>();
-
-  const visitNode = (node: RootContent): boolean => {
-    let has = selected.has(node);
-    if (isParent(node)) {
-      if (node.children) {
-        for (const child of node.children) {
-          if (visitNode(child)) has = true;
-        }
-      }
-    }
-    map.set(node, has);
-    return has;
-  };
-
-  for (const child of root.children ?? []) {
-    visitNode(child);
-  }
-
-  return map;
-}
-
-/** Collect visible text from a node and its descendants. */
-function nodeToPlainText(node: MdastNode): string {
-  const chunks: string[] = [];
-
-  const recur = (n: MdastNode): void => {
-    if ((n as Any).value && typeof (n as Any).value === "string") {
-      chunks.push((n as Any).value as string);
-    }
-    if (Array.isArray((n as Any).children)) {
-      for (const c of (n as Any).children as RootContent[]) {
-        recur(c);
-      }
-    }
-  };
-
-  recur(node);
-  return chunks.join("").replace(/\s+/g, " ").trim();
-}
-
-function headingText(h: Heading): string {
-  const text = nodeToPlainText(h);
-  return text || "(untitled)";
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return `${s.slice(0, max - 1)}…`;
-}
-
-function summarizeNode(node: RootContent): string {
-  switch (node.type) {
-    case "heading":
-      return headingText(node);
-    case "paragraph":
-      return truncate(nodeToPlainText(node), 60);
-    case "code": {
-      return node.lang ? truncate(`\`${node.lang}\` code`, 60) : "code";
-    }
-    case "list":
-      return "list";
-    case "listItem":
-      return truncate(nodeToPlainText(node), 60) || "list item";
-    case "thematicBreak":
-      return "hr";
-    case "leafDirective" as Any:
-      return `${(node as Any).name}:${nodeToPlainText(node)}`;
-    default:
-      return truncate(nodeToPlainText(node) || node.type, 60);
-  }
-}
-
-function formatNodeClasses(node: RootContent): string | undefined {
-  const data = (node as Any).data;
-  if (!data || typeof data !== "object") return undefined;
-
-  const cls = (data as Any).class;
-  if (!cls || typeof cls !== "object") return undefined;
-
-  const entries = Object.entries(cls as Record<string, unknown>);
-  const parts: string[] = [];
-
-  for (const [key, value] of entries) {
-    if (typeof value === "string") {
-      parts.push(`${key}:${value}`);
-    } else if (Array.isArray(value)) {
-      const vals = value.filter((v): v is string => typeof v === "string");
-      if (vals.length) {
-        parts.push(`${key}:${vals.join(",")}`);
-      }
-    }
-  }
-
-  return parts.length ? parts.join(" ") : undefined;
-}
-
-// ---------------------------------------------------------------------------
-// mdastql selection
-// ---------------------------------------------------------------------------
-
-function selectNodes(
-  root: Root,
-  query: string | undefined,
-  options?: MdastQlOptions,
-): RootContent[] {
-  if (!query) {
-    // Default: every node
-    const out: RootContent[] = [];
-    walkTree(root, (node) => out.push(node));
-    return out;
-  }
-  const { nodes } = mdastql(root, query, options);
-  return [...nodes];
-}
-
-// ---------------------------------------------------------------------------
-// LS rows: every node + heading path
-// ---------------------------------------------------------------------------
 
 function shouldEmitNodeForLs(
   node: RootContent,
-  parent: ParentLike,
+  parent:
+    | Root
+    | (RootContent & { children?: RootContent[] }),
   hasQuery: boolean,
 ): boolean {
   // If user provided --select, be literal: show whatever mdastql returned.
@@ -277,12 +91,6 @@ function shouldEmitNodeForLs(
   }
 
   return true;
-}
-
-interface BuildLsRowsOptions {
-  readonly includeDataKeys?: boolean;
-  readonly query?: string;
-  readonly mdastqlOptions?: MdastQlOptions;
 }
 
 /**
@@ -319,7 +127,7 @@ function buildLsRows(
     // Maintain heading stack for *all* nodes so descendants get correct paths
     if (node.type === "heading") {
       const hd = (node.depth ?? 1) | 0;
-      const label = headingText(node);
+      const label = headingText(node as Heading);
       if (hd > 0) {
         headingStack.splice(hd - 1);
         headingStack[hd - 1] = label;
@@ -334,7 +142,7 @@ function buildLsRows(
 
     const headingPath = headingStack.filter(Boolean).join(" → ");
     const name = node.type === "heading"
-      ? `h${node.depth ?? "?"}: ${headingText(node)}`
+      ? `h${node.depth ?? "?"}: ${headingText(node as Heading)}`
       : summarizeNode(node);
 
     const classInfo = formatNodeClasses(node);
@@ -356,572 +164,6 @@ function buildLsRows(
   });
 
   return rows;
-}
-
-// ---------------------------------------------------------------------------
-// TREE rows: heading/content hierarchy with synthetic file root
-// ---------------------------------------------------------------------------
-
-interface BuildTreeRowsOptions {
-  readonly selectedNodes?: RootContent[];
-}
-
-/**
- * Build `TreeRow`s:
- *
- * - Add a synthetic root per file:
- *   - id: `${file}#root`
- *   - label: basename(file) (or `<stdin>`)
- *   - type: "root"
- * - Headings become children of the nearest shallower heading, falling back to file root.
- * - Non-heading top-level nodes become "content" children under the last heading or the file root.
- */
-function buildTreeRows(
-  pmt: ParsedMarkdownTree,
-  root: Root,
-  opts: BuildTreeRowsOptions = {},
-): TreeRow[] {
-  const { rootId, label, fileRef, provenance: file } = pmt;
-  const rows: TreeRow[] = [];
-  let counter = 0;
-
-  // Synthetic file root row
-  rows.push({
-    id: rootId,
-    file: fileRef(),
-    kind: "heading",
-    type: "root",
-    label,
-    parentId: undefined,
-    classInfo: undefined,
-    dataKeys: undefined,
-  });
-
-  type StackEntry = { depth: number; id: string };
-  // Depth 0 synthetic root; real headings will be depth >= 1
-  const stack: StackEntry[] = [{ depth: 0, id: rootId }];
-
-  const children = root.children ?? [];
-
-  // Selection support
-  const selectedNodes = opts.selectedNodes;
-  const selectedSet = selectedNodes && selectedNodes.length > 0
-    ? new Set(selectedNodes)
-    : undefined;
-  const containsSelected = selectedSet
-    ? markNodesContainingSelected(root, selectedSet)
-    : undefined;
-
-  // Map row.id -> underlying top-level node (or null for synthetic root)
-  const rowNode = new Map<string, RootContent | null>();
-  rowNode.set(rootId, null);
-
-  for (const child of children) {
-    if (child.type === "heading") {
-      const hd = (child.depth ?? 1) | 0;
-
-      // Pop until parent has smaller depth, but never pop the synthetic root.
-      while (stack.length > 1 && stack[stack.length - 1]?.depth >= hd) {
-        stack.pop();
-      }
-
-      const parentId = stack[stack.length - 1]?.id;
-      const id = `${file}#h${counter++}`;
-
-      const dataKeys = child.data
-        ? Object.keys(child.data).join(",")
-        : undefined;
-
-      const classInfo = formatNodeClasses(child);
-
-      rows.push({
-        id,
-        file: fileRef(child),
-        kind: "heading",
-        type: "heading",
-        label: headingText(child),
-        parentId,
-        classInfo,
-        dataKeys,
-      });
-
-      rowNode.set(id, child);
-      stack.push({ depth: hd, id });
-    } else {
-      // Non-heading: treat as content under the last heading, or file root.
-      const parentId = stack[stack.length - 1]?.id ?? rootId;
-      const id = `${file}#n${counter++}`;
-
-      const dataKeys = child.data
-        ? Object.keys(child.data).join(", ")
-        : undefined;
-
-      const classInfo = formatNodeClasses(child);
-
-      rows.push({
-        id,
-        file: fileRef(child),
-        kind: "content",
-        type: child.type,
-        label: summarizeNode(child),
-        parentId,
-        classInfo,
-        dataKeys,
-      });
-
-      rowNode.set(id, child);
-    }
-  }
-
-  // If no selection, return full tree
-  if (!selectedSet) return rows;
-
-  // Determine which rows are directly "hit" by selection (their node subtree contains a selected node)
-  const prelim = new Set<string>();
-  for (const [id, node] of rowNode.entries()) {
-    if (!node) continue; // synthetic root; handle later
-    if (containsSelected?.get(node)) {
-      prelim.add(id);
-    }
-  }
-
-  if (prelim.size === 0) {
-    // Nothing matched in this file; keep only synthetic root so treeCommand
-    // can still merge multiple files sensibly.
-    return rows.filter((r) => r.id === rootId);
-  }
-
-  // Close upwards over ancestors: include all parents up to the file root
-  const byId = new Map<string, TreeRow>(rows.map((r) => [r.id, r]));
-  const allowed = new Set<string>();
-  const stackIds = [...prelim];
-
-  while (stackIds.length) {
-    const id = stackIds.pop()!;
-    if (allowed.has(id)) continue;
-    allowed.add(id);
-    const row = byId.get(id);
-    if (row?.parentId && !allowed.has(row.parentId)) {
-      stackIds.push(row.parentId);
-    }
-  }
-
-  // Always include the synthetic root
-  allowed.add(rootId);
-
-  return rows.filter((r) => allowed.has(r.id));
-}
-
-// ---------------------------------------------------------------------------
-// CLASS rows: class → value → parent headings → node
-// ---------------------------------------------------------------------------
-
-interface ClassNodeInfo {
-  readonly node: RootContent;
-  readonly classKey: string;
-  readonly classValue: string;
-}
-
-/**
- * Build an index:
- *   classKey → classValue → ClassNodeInfo[]
- */
-function buildClassIndex(
-  root: Root,
-): Map<string, Map<string, ClassNodeInfo[]>> {
-  const index = new Map<string, Map<string, ClassNodeInfo[]>>();
-
-  walkTree(root, (node) => {
-    if (!hasNodeClass(node)) return;
-    const classMap: NodeClassMap = node.data.class;
-    for (const [key, rawValue] of Object.entries(classMap)) {
-      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-      for (const v of values) {
-        const byValue = index.get(key) ?? new Map<string, ClassNodeInfo[]>();
-        if (!index.has(key)) index.set(key, byValue);
-        const bucket = byValue.get(v) ?? [];
-        if (!byValue.has(v)) byValue.set(v, bucket);
-        bucket.push({ node, classKey: key, classValue: v });
-      }
-    }
-  });
-
-  return index;
-}
-
-interface BuildClassTreeRowsOptions {
-  readonly includeDataKeys?: boolean;
-}
-
-/**
- * Build `TreeRow`s for the `class` command:
- *
- *   <file>
- *   ├─ <class key>      (e.g. "role")
- *   │  ├─ <class value> (e.g. "project")
- *   │  │  ├─ <node 1>
- *   │  │  ├─ <node 2>
- *   │  │  └─ ...
- *   └─ ...
- *
- * Nodes are shown directly under the class value.
- * Class keys and class values use different colors in the hierarchy.
- */
-function buildClassTreeRows(
-  pmt: ParsedMarkdownTree,
-  root: Root,
-  opts: BuildClassTreeRowsOptions = {},
-): TreeRow[] {
-  const { rootId, label, fileRef, provenance: file } = pmt;
-  const { includeDataKeys } = opts;
-
-  const index = buildClassIndex(root);
-  if (index.size === 0) return [];
-
-  const rows: TreeRow[] = [];
-  let counter = 0;
-
-  // Synthetic file root row (bold file label)
-  rows.push({
-    id: rootId,
-    file: fileRef(),
-    kind: "heading",
-    type: "root",
-    label: bold(label),
-    parentId: undefined,
-    classInfo: undefined,
-    dataKeys: undefined,
-  });
-
-  // Sort class keys and values for stable output
-  const classKeys = Array.from(index.keys()).sort();
-
-  for (const classKey of classKeys) {
-    const byValue = index.get(classKey)!;
-    const classKeyId = `${file}#cls:${classKey}`;
-
-    // Class key: cyan
-    rows.push({
-      id: classKeyId,
-      file: fileRef(),
-      kind: "heading",
-      type: "class-key",
-      label: cyan(classKey),
-      parentId: rootId,
-      classInfo: undefined,
-      dataKeys: undefined,
-    });
-
-    const values = Array.from(byValue.keys()).sort();
-
-    for (const value of values) {
-      const infos = byValue.get(value)!;
-      const valueId = `${file}#cls:${classKey}=${value}`;
-
-      // Class value: magenta
-      rows.push({
-        id: valueId,
-        file: fileRef(),
-        kind: "heading",
-        type: "class-value",
-        label: magenta(value),
-        parentId: classKeyId,
-        classInfo: `${classKey}:${value}`,
-        dataKeys: undefined,
-      });
-
-      // Directly attach each node under the class value
-      for (const info of infos) {
-        const node = info.node;
-        const nodeId = `${file}#cls:${classKey}=${value}#n${counter++}`;
-
-        const dataKeysForNode = includeDataKeys && node.data
-          ? Object.keys(node.data).join(", ")
-          : undefined;
-
-        const classInfoForNode = formatNodeClasses(node);
-
-        rows.push({
-          id: nodeId,
-          file: fileRef(node),
-          kind: "content",
-          type: node.type,
-          label: summarizeNode(node),
-          parentId: valueId,
-          classInfo: classInfoForNode,
-          dataKeys: dataKeysForNode,
-        });
-      }
-    }
-  }
-
-  return rows;
-}
-
-// ---------------------------------------------------------------------------
-// I/O helpers
-// ---------------------------------------------------------------------------
-
-interface ParsedMarkdownTree {
-  readonly provenance: string; // what the user supplied
-  readonly root: Root;
-  readonly source: string;
-  readonly fileRef: (node?: RootContent) => string;
-  readonly rootId: string;
-  readonly label: string;
-  readonly url?: URL; // in case provenance was fetched
-}
-
-function tryParseUrl(spec: string): URL | undefined {
-  try {
-    return new URL(spec);
-  } catch {
-    return undefined;
-  }
-}
-
-async function readMarkdownTrees(
-  sources: readonly string[],
-  processor = remark()
-    .use(remarkFrontmatter, ["yaml"])
-    .use(remarkdDirective)
-    .use(docFrontmatter)
-    .use(remarkGfm)
-    .use(headingFrontmatter)
-    .use(codeFrontmatter, {
-      coerceNumbers: true, // "9" -> 9
-      onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
-    })
-    .use(nodeClassifier, {
-      classifiers: classifiersFromFrontmatter(),
-    })
-    .use(documentSchemaPlugin, {
-      namespace: "prime",
-      enrichWithBelongsTo: true,
-      includeDefaultHeadingRule: true,
-      sectionRules: [
-        boldParagraphSectionRule(),
-        colonParagraphSectionRule(),
-      ],
-    }),
-): Promise<Array<ParsedMarkdownTree>> {
-  if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
-    const text = await new Response(Deno.stdin.readable).text();
-    const root = processor.parse(text);
-    await processor.run(root);
-    return [{
-      provenance: "<stdin>",
-      root,
-      source: text,
-      fileRef: () => `<STDIN>`,
-      rootId: `stdin#root`,
-      label: `<STDIN>`,
-    }];
-  }
-
-  const results: Array<ParsedMarkdownTree> = [];
-  for (const provenance of sources) {
-    const url = tryParseUrl(provenance);
-    let text: string;
-
-    if (url && (url.protocol === "http:" || url.protocol === "https:")) {
-      // Remote URL → fetch
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          console.error(
-            red(`Failed to fetch URL: ${provenance} – status ${resp.status}`),
-          );
-          continue;
-        }
-        text = await resp.text();
-      } catch (err) {
-        console.error(red(`Error fetching URL: ${provenance}`), err);
-        continue;
-      }
-    } else {
-      // Everything else → treat as local path
-      try {
-        text = await Deno.readTextFile(provenance);
-      } catch (err) {
-        console.error(red(`Error reading file: ${provenance}`), err);
-        continue;
-      }
-    }
-
-    const root = processor.parse(text);
-    await processor.run(root);
-    results.push({
-      provenance,
-      root,
-      source: text,
-      fileRef: url ? (() => basename(url.pathname)) : ((node) => {
-        const file = basename(provenance);
-        const line = node?.position?.start?.line;
-        if (typeof line !== "number") return file;
-        return `${file}:${line}`;
-      }),
-      rootId: `${provenance}#root`,
-      label: url ? basename(url.pathname) : basename(provenance),
-      url,
-    });
-  }
-  return results;
-}
-
-/** Merge global --file plus positional paths; default to stdin ("-") if none. */
-function resolveFiles(
-  globalFiles: string[] | undefined,
-  positional: string[],
-): string[] {
-  const merged = [...(globalFiles ?? []), ...positional];
-  return merged.length > 0 ? merged : ["-"];
-}
-
-function nodeOffsetsInSource(
-  source: string,
-  node: RootContent,
-): [number, number] | undefined {
-  const pos = node.position as Any;
-  if (!pos || !pos.start || !pos.end) return undefined;
-
-  const start = pos.start as Any;
-  const end = pos.end as Any;
-
-  if (
-    typeof start.offset === "number" &&
-    typeof end.offset === "number"
-  ) {
-    return [start.offset, end.offset];
-  }
-
-  const lines = source.split(/\r?\n/);
-
-  const startLineIdx = (start.line as number ?? 1) - 1;
-  const endLineIdx = (end.line as number ?? 1) - 1;
-  const startCol = (start.column as number ?? 1) - 1;
-  const endCol = (end.column as number ?? 1) - 1;
-
-  if (
-    startLineIdx < 0 || startLineIdx >= lines.length ||
-    endLineIdx < 0 || endLineIdx >= lines.length
-  ) {
-    return undefined;
-  }
-
-  const indexFromLineCol = (lineIdx: number, col: number): number => {
-    let idx = 0;
-    for (let i = 0; i < lineIdx; i++) {
-      // +1 for newline
-      idx += lines[i].length + 1;
-    }
-    return idx + col;
-  };
-
-  const startOffset = indexFromLineCol(startLineIdx, startCol);
-  const endOffset = indexFromLineCol(endLineIdx, endCol);
-  return [startOffset, endOffset];
-}
-
-function sliceSourceForNode(source: string, node: RootContent): string {
-  const offsets = nodeOffsetsInSource(source, node);
-  if (offsets) {
-    const [start, end] = offsets;
-    return source.slice(start, end);
-  }
-
-  // Fallback: as a last resort, re-stringify this node
-  const root: Root = { type: "root", children: [node] };
-  return remark().stringify(root);
-}
-
-interface SectionRange {
-  start: number;
-  end: number;
-}
-
-/**
- * Given the root, source, and a list of selected heading nodes that are
- * direct children of the root, compute non-overlapping section ranges:
- * each from a heading's start to the next heading of same or higher depth
- * (or end-of-file).
- */
-function computeSectionRangesForHeadings(
-  root: Root,
-  source: string,
-  headings: Heading[],
-): SectionRange[] {
-  const children = root.children ?? [];
-  if (children.length === 0 || headings.length === 0) return [];
-
-  // Map heading node -> its index in root.children (only for direct children)
-  const indexByNode = new Map<Heading, number>();
-  children.forEach((child, idx) => {
-    if (child.type === "heading") {
-      indexByNode.set(child as Heading, idx);
-    }
-  });
-
-  const indices: number[] = [];
-  for (const h of headings) {
-    const idx = indexByNode.get(h);
-    if (idx !== undefined) indices.push(idx);
-  }
-  if (indices.length === 0) return [];
-
-  indices.sort((a, b) => a - b);
-
-  const ranges: SectionRange[] = [];
-
-  for (const idx of indices) {
-    const heading = children[idx] as Heading;
-    const depth = heading.depth ?? 1;
-
-    const offsets = nodeOffsetsInSource(source, heading);
-    if (!offsets) continue;
-    const [startOffset] = offsets;
-
-    // Find next heading of same or higher depth
-    let endOffset = source.length;
-    for (let j = idx + 1; j < children.length; j++) {
-      const candidate = children[j];
-      if (candidate.type === "heading") {
-        const ch = candidate as Heading;
-        const cDepth = ch.depth ?? 1;
-        if (cDepth <= depth) {
-          const nextOffsets = nodeOffsetsInSource(
-            source,
-            candidate as RootContent,
-          );
-          if (nextOffsets) {
-            endOffset = nextOffsets[0];
-          }
-          break;
-        }
-      }
-    }
-
-    ranges.push({ start: startOffset, end: endOffset });
-  }
-
-  // Merge overlapping/adjacent ranges
-  ranges.sort((a, b) => a.start - b.start);
-  const merged: SectionRange[] = [];
-  for (const r of ranges) {
-    if (merged.length === 0) {
-      merged.push({ ...r });
-      continue;
-    }
-    const last = merged[merged.length - 1]!;
-    if (r.start <= last.end) {
-      // overlap or adjacency: extend the existing range
-      if (r.end > last.end) last.end = r.end;
-    } else {
-      merged.push({ ...r });
-    }
-  }
-
-  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -958,15 +200,6 @@ export class CLI {
   // ls command
   // -------------------------------------------------------------------------
 
-  /**
-   * `ls` – list mdast nodes in a tabular, content-hierarchy-friendly way.
-   *
-   * - By default: includes every node in the tree.
-   * - With `--select <expr>`: only nodes matching that mdastql expression.
-   * - With `--data`: adds a DATA column showing `Object.keys(node.data)`.
-   * - With automatic node classification (via frontmatter + nodeClassifier),
-   *   shows a CLASS column with key:value pairs.
-   */
   protected lsCommand() {
     return new Command()
       .description(`list mdast nodes in a tabular, content-hierarchy view`)
@@ -1050,7 +283,6 @@ export class CLI {
             });
           }
 
-          // Display in a sensible default order
           const ids: Array<keyof LsRow & string> = [
             "id",
             "file",
@@ -1073,14 +305,6 @@ export class CLI {
   // tree command
   // -------------------------------------------------------------------------
 
-  /**
-   * `tree` – show a heading/content hierarchy per file, similar to a file system:
-   *
-   * - Synthetic file root node is the top-level parent.
-   * - Headings are "directories".
-   * - Non-heading nodes under headings are "files" (content).
-   * - Includes CLASS column with key:value pairs from node `data.class`.
-   */
   protected treeCommand() {
     return new Command()
       .description(`heading/content hierarchy (per file)`)
@@ -1098,7 +322,11 @@ export class CLI {
             ? selectNodes(pmt.root, options.select)
             : undefined;
 
-          const rows = buildTreeRows(pmt, pmt.root, { selectedNodes });
+          const rows = buildMdAstTreeRows("physical", pmt, {
+            includeDataKeys: !!options.data,
+            selectedNodes,
+            pruneToSelection: !!options.select,
+          });
           allRows.push(...rows);
         }
 
@@ -1160,16 +388,6 @@ export class CLI {
   // class command
   // -------------------------------------------------------------------------
 
-  /**
-   * `class` – show a classification hierarchy per file:
-   *
-   *   file
-   *   ├─ <class key>
-   *   │  ├─ <class value>
-   *   │  │  ├─ <node>
-   *   │  │  └─ ...
-   *   └─ ...
-   */
   protected classCommand() {
     return new Command()
       .description(
@@ -1181,19 +399,32 @@ export class CLI {
       .action(async (options, ...paths: string[]) => {
         const files = resolveFiles(this.globalFiles, paths);
         const trees = await readMarkdownTrees(files);
-        const allRows: TreeRow[] = [];
+        const allRowsRaw: TreeRow[] = [];
 
         for (const pmt of trees) {
-          const rows = buildClassTreeRows(pmt, pmt.root, {
+          const rows = buildMdAstTreeRows("class", pmt, {
             includeDataKeys: !!options.data,
           });
-          allRows.push(...rows);
+          allRowsRaw.push(...rows);
         }
 
-        if (allRows.length === 0) {
+        if (allRowsRaw.length === 0) {
           console.log(gray("No classified nodes to show."));
           return;
         }
+
+        // Apply CLI-specific coloring to labels
+        const allRows: TreeRow[] = allRowsRaw.map((row) => {
+          let label = row.label;
+          if (row.type === "root") {
+            label = bold(label);
+          } else if (row.type === "class-key") {
+            label = cyan(label);
+          } else if (row.type === "class-value") {
+            label = magenta(label);
+          }
+          return { ...row, label };
+        });
 
         const useColor = options.color;
 
@@ -1205,7 +436,7 @@ export class CLI {
           .header(true)
           .compact(false);
 
-        // Identity color so pre-colored labels (cyan/magenta/bold) are preserved
+        // Identity color so pre-colored labels are preserved
         base.field("label", "label", {
           header: "NAME",
           defaultColor: (s) => s,
@@ -1249,53 +480,7 @@ export class CLI {
   // schema command
   // -------------------------------------------------------------------------
 
-  /**
-   * `schema` – show section schema hierarchy derived from documentSchema plugin.
-   */
   protected schemaCommand() {
-    function summarizeSectionLabel(s: Any): string {
-      const base = (() => {
-        if (s.nature === "heading") {
-          const text = nodeToPlainText(
-            s.heading ?? s.markerNode ?? s.parentNode,
-          );
-          const depth = s.depth ?? "?";
-          return `heading depth=${depth} "${text || ""}"`;
-        }
-
-        if (s.nature === "marker") {
-          const kind = s.markerKind ?? "marker";
-
-          const hasTitle = typeof s.title === "string" &&
-            s.title.trim().length > 0;
-          if (hasTitle) {
-            const title = s.title.trim();
-            return `marker kind=${kind} "${title}"`;
-          }
-
-          // no title: show abbreviated content as key=value
-          const srcNode: MdastNode = (s.markerNode as MdastNode | undefined) ??
-            (s.heading as MdastNode | undefined) ??
-            (s.parentNode as MdastNode);
-
-          const rawText = srcNode ? nodeToPlainText(srcNode) : "";
-          const value = truncate(
-            rawText.replace(/\s+/g, " ").trim() || kind,
-            40,
-          );
-          return `marker ${kind}=${value}`;
-        }
-
-        return String(s.nature ?? "section");
-      })();
-
-      const ns = s.namespace ?? "prime";
-      const childrenCount = Array.isArray(s.children) ? s.children.length : 0;
-      const range = `[${s.startIndex ?? "?"}, ${s.endIndex ?? "?"})`;
-
-      return `${base} ns=${ns} children=${childrenCount} ${range}`;
-    }
-
     return new Command()
       .description(
         `show section schema hierarchy (per file) using documentSchema plugin`,
@@ -1309,156 +494,34 @@ export class CLI {
         const allRows: TreeRow[] = [];
 
         for (const pmt of trees) {
-          const { root, label, fileRef, provenance: file, rootId } = pmt;
-
-          const sections = collectSectionsFromRoot(root);
-          const primeSections = sections.filter((s) => s.namespace === "prime");
-          if (primeSections.length === 0) continue;
-
-          const rows: TreeRow[] = [];
-
-          // synthetic file root row (bold file label)
-          rows.push({
-            id: rootId,
-            file: fileRef(),
-            kind: "heading",
-            type: "root",
-            label: bold(`📁 ${label}`),
-            parentId: undefined,
-            classInfo: undefined,
-            dataKeys: undefined,
+          const baseRows = buildMdAstTreeRows("schema", pmt, {
+            includeDataKeys: !!options.data,
           });
 
-          const rootChildren = (root.children ?? []) as RootContent[];
-          let counter = 0;
-          const sectionId = new WeakMap<Any, string>();
+          if (baseRows.length === 0) continue;
 
-          // collect all section start nodes so we don't also show them as plain nodes
-          const sectionStartNodes = new Set<RootContent>();
-          for (const s of primeSections) {
-            if (s.nature === "heading" && s.heading) {
-              sectionStartNodes.add(s.heading as RootContent);
-            } else if (s.nature === "marker" && s.markerNode) {
-              sectionStartNodes.add(s.markerNode as RootContent);
-            }
-          }
+          // Apply CLI-specific coloring and icons
+          const rows = baseRows.map((row) => {
+            let label = row.label;
 
-          const getIdForSection = (s: Any): string => {
-            const existing = sectionId.get(s);
-            if (existing) return existing;
-            const id = `${file}#sec:${counter++}`;
-            sectionId.set(s, id);
-            return id;
-          };
-
-          const belongingNodesForSection = (s: Any) =>
-            rootChildren
-              .map((n, idx) => ({ n, idx }))
-              .filter(({ n }) =>
-                // must belong to this section, and must NOT be a section-start node
-                hasBelongsToSection(n) &&
-                (n.data as Any).belongsToSection?.["prime"] === s &&
-                !sectionStartNodes.has(n)
-              )
-              .sort((a, b) => a.idx - b.idx);
-
-          const colorSectionLabel = (raw: string, level: number): string => {
-            if (level === 0) return cyan(raw);
-            if (level === 1) return yellow(raw);
-            return magenta(raw);
-          };
-
-          const emitSection = (s: Any, parentId: string, level: number) => {
-            const id = getIdForSection(s);
-            const rawLabel = summarizeSectionLabel(s);
-            const labelColored = colorSectionLabel(rawLabel, level);
-
-            const sectionNode: RootContent | undefined = s.nature === "heading"
-              ? (s.heading as RootContent | undefined)
-              : s.nature === "marker"
-              ? (s.markerNode as RootContent | undefined)
-              : undefined;
-
-            const sectionDataKeys = sectionNode?.data
-              ? Object.keys(sectionNode.data).join(", ")
-              : undefined;
-
-            const sectionClassInfo = sectionNode
-              ? formatNodeClasses(sectionNode)
-              : undefined;
-
-            rows.push({
-              id,
-              file: fileRef(sectionNode),
-              kind: "heading",
-              type: "heading",
-              label: `📁 ${labelColored}`,
-              parentId,
-              classInfo: sectionClassInfo,
-              dataKeys: sectionDataKeys,
-            });
-
-            const sectionChildren: Any[] = Array.isArray(s.children)
-              ? s.children
-              : [];
-            const belonging = belongingNodesForSection(s);
-
-            type ChildEntry =
-              | { kind: "section"; section: Any; order: number }
-              | { kind: "node"; node: RootContent; order: number };
-
-            const entries: ChildEntry[] = [];
-
-            for (const childSec of sectionChildren) {
-              entries.push({
-                kind: "section",
-                section: childSec,
-                order: childSec.startIndex ?? 0,
-              });
-            }
-
-            for (const { n, idx } of belonging) {
-              entries.push({
-                kind: "node",
-                node: n,
-                order: idx,
-              });
-            }
-
-            entries.sort((a, b) => a.order - b.order);
-
-            for (const entry of entries) {
-              if (entry.kind === "section") {
-                emitSection(entry.section, id, level + 1);
+            if (row.type === "root") {
+              label = bold(`📁 ${label}`);
+            } else if (row.kind === "heading") {
+              const schemaLevel = row.schemaLevel ?? 0;
+              const base = `📁 ${label}`;
+              if (schemaLevel === 0) {
+                label = cyan(base);
+              } else if (schemaLevel === 1) {
+                label = yellow(base);
               } else {
-                const node = entry.node;
-                const nodeId = `${file}#secnode:${counter++}`;
-
-                const dataKeys = node.data
-                  ? Object.keys(node.data).join(", ")
-                  : undefined;
-                const classInfo = formatNodeClasses(node);
-
-                const nodeLabel = gray(summarizeNode(node));
-
-                rows.push({
-                  id: nodeId,
-                  file: fileRef(node),
-                  kind: "content",
-                  type: node.type,
-                  label: `📄 ${nodeLabel}`,
-                  parentId: id,
-                  classInfo,
-                  dataKeys,
-                });
+                label = magenta(base);
               }
+            } else {
+              label = `📄 ${gray(label)}`;
             }
-          };
 
-          const roots = primeSections.filter((s) => !s.parent);
-          for (const s of roots) {
-            emitSection(s, rootId, 0);
-          }
+            return { ...row, label };
+          });
 
           allRows.push(...rows);
         }
@@ -1520,12 +583,6 @@ export class CLI {
   // md command
   // -------------------------------------------------------------------------
 
-  /**
-   * `md` – run mdastql and print the selected nodes as Markdown.
-   *
-   * Example:
-   *   mdastq md --select 'h2 + code[lang=ts]' README.md
-   */
   protected mdCommand() {
     return new Command()
       .description(`run mdastql and print the selected nodes as Markdown`)
@@ -1587,8 +644,7 @@ export class CLI {
               allChunks.push(source.slice(r.start, r.end));
             }
           } else {
-            // No usable sections (e.g., no direct-root headings selected):
-            // fall back to per-node snippets for *all* selected nodes in this file.
+            // No usable sections: fall back to per-node snippets for all selected nodes.
             for (const node of nodes) {
               const snippet = sliceSourceForNode(source, node);
               if (snippet) allChunks.push(snippet);
@@ -1601,7 +657,6 @@ export class CLI {
           return;
         }
 
-        // Separate chunks with a blank line for readability
         console.log(allChunks.join("\n\n"));
       });
   }

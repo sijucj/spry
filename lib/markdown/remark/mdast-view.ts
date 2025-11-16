@@ -1,0 +1,772 @@
+// mdast-view.ts
+/**
+ * Shared view-model builders + helpers for mdast trees.
+ *
+ * - Node traversal & selection (mdastql-based)
+ * - Presentation-oriented helpers (summaries, classes)
+ * - Unified tree rows for physical, class, and schema views
+ */
+
+import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
+import {
+  collectSectionsFromRoot,
+  hasBelongsToSection,
+} from "../remark/doc-schema.ts";
+import { hasNodeClass, type NodeClassMap } from "../remark/node-classify.ts";
+import { mdastql, type MdastQlOptions } from "./mdastql.ts";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
+
+export type MdAstTreeView = "physical" | "class" | "schema";
+
+/**
+ * Parsed markdown tree with enough metadata for building views.
+ *
+ * Instances are constructed in `mdast-io.ts` and consumed here
+ * by the view builders, and by CLI / web front-ends.
+ */
+export interface ParsedMarkdownTree {
+  readonly provenance: string; // what the user supplied
+  readonly root: Root;
+  readonly source: string;
+  readonly fileRef: (node?: RootContent) => string;
+  readonly rootId: string;
+  readonly label: string;
+  readonly url?: URL;
+}
+
+export interface TreeRow {
+  readonly id: string;
+  readonly file: string;
+  readonly kind: "heading" | "content";
+  readonly label: string;
+  readonly type:
+    | RootContent["type"]
+    | "root"
+    | "class-key"
+    | "class-value";
+  readonly parentId?: string;
+  readonly classInfo?: string;
+  readonly dataKeys?: string;
+
+  /** Which logical view this row belongs to. */
+  readonly view?: MdAstTreeView;
+
+  /**
+   * For schema view, the nesting level of the section:
+   *  - 0 for top-level sections
+   *  - 1 for their children, etc.
+   */
+  readonly schemaLevel?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Node traversal & selection
+// ---------------------------------------------------------------------------
+
+export function isParent(
+  node: Root | RootContent,
+): node is
+  | Root & { children: RootContent[] }
+  | (RootContent & { children: RootContent[] }) {
+  return Array.isArray((node as Any).children);
+}
+
+/**
+ * Depth-first walk over mdast, exposing:
+ *   - node (RootContent)
+ *   - parent
+ *   - depth (0 for root children, 1 for their children, etc.)
+ *   - index within parent.children
+ */
+export function walkTree(
+  root: Root,
+  fn: (
+    node: RootContent,
+    ctx: {
+      parent: Root | (RootContent & { children?: RootContent[] });
+      depth: number;
+      index: number;
+    },
+  ) => void,
+): void {
+  const children = root.children ?? [];
+
+  const visitChildren = (
+    parent: Root | (RootContent & { children?: RootContent[] }),
+    depth: number,
+  ): void => {
+    if (!parent.children) return;
+    parent.children.forEach((child, index) => {
+      fn(child, { parent, depth, index });
+      if (isParent(child)) {
+        visitChildren(child, depth + 1);
+      }
+    });
+  };
+
+  children.forEach((child, index) => {
+    fn(child, { parent: root, depth: 0, index });
+    if (isParent(child)) {
+      visitChildren(child, 1);
+    }
+  });
+}
+
+/**
+ * mdastql-backed selection helper.
+ *
+ * - If query is undefined → returns every node in depth-first order.
+ * - If query is provided  → returns mdastql matches.
+ */
+export function selectNodes(
+  root: Root,
+  query: string | undefined,
+  options?: MdastQlOptions,
+): RootContent[] {
+  if (!query) {
+    const out: RootContent[] = [];
+    walkTree(root, (node) => out.push(node));
+    return out;
+  }
+  const { nodes } = mdastql(root, query, options);
+  return [...nodes];
+}
+
+function markNodesContainingSelected(
+  root: Root,
+  selected: Set<RootContent>,
+): WeakMap<RootContent, boolean> {
+  const map = new WeakMap<RootContent, boolean>();
+
+  const visitNode = (node: RootContent): boolean => {
+    let has = selected.has(node);
+    if (isParent(node)) {
+      if (node.children) {
+        for (const child of node.children) {
+          if (visitNode(child)) has = true;
+        }
+      }
+    }
+    map.set(node, has);
+    return has;
+  };
+
+  for (const child of root.children ?? []) {
+    visitNode(child);
+  }
+
+  return map;
+}
+
+// ---------------------------------------------------------------------------
+// Presentation helpers
+// ---------------------------------------------------------------------------
+
+export type MdastNode = Root | RootContent;
+
+export function nodeToPlainText(node: MdastNode): string {
+  const chunks: string[] = [];
+
+  const recur = (n: MdastNode): void => {
+    if ((n as Any).value && typeof (n as Any).value === "string") {
+      chunks.push((n as Any).value as string);
+    }
+    if (Array.isArray((n as Any).children)) {
+      for (const c of (n as Any).children as RootContent[]) {
+        recur(c);
+      }
+    }
+  };
+
+  recur(node);
+  return chunks.join("").replace(/\s+/g, " ").trim();
+}
+
+export function headingText(h: Heading): string {
+  const text = nodeToPlainText(h);
+  return text || "(untitled)";
+}
+
+export function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1)}…`;
+}
+
+export function summarizeNode(node: RootContent): string {
+  switch (node.type) {
+    case "heading":
+      return headingText(node as Heading);
+    case "paragraph":
+      return truncate(nodeToPlainText(node), 60);
+    case "code": {
+      return node.lang ? truncate(`\`${node.lang}\` code`, 60) : "code";
+    }
+    case "list":
+      return "list";
+    case "listItem":
+      return truncate(nodeToPlainText(node), 60) || "list item";
+    case "thematicBreak":
+      return "hr";
+    case "leafDirective" as Any:
+      return `${(node as Any).name}:${nodeToPlainText(node)}`;
+    default:
+      return truncate(nodeToPlainText(node) || node.type, 60);
+  }
+}
+
+export function formatNodeClasses(
+  node: RootContent,
+): string | undefined {
+  const data = (node as Any).data;
+  if (!data || typeof data !== "object") return undefined;
+
+  const cls = (data as Any).class;
+  if (!cls || typeof cls !== "object") return undefined;
+
+  const entries = Object.entries(cls as Record<string, unknown>);
+  const parts: string[] = [];
+
+  for (const [key, value] of entries) {
+    if (typeof value === "string") {
+      parts.push(`${key}:${value}`);
+    } else if (Array.isArray(value)) {
+      const vals = value.filter((v): v is string => typeof v === "string");
+      if (vals.length) {
+        parts.push(`${key}:${vals.join(",")}`);
+      }
+    }
+  }
+
+  return parts.length ? parts.join(" ") : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Unified tree rows
+// ---------------------------------------------------------------------------
+
+export interface BuildMdAstTreeRowsOptions {
+  readonly includeDataKeys?: boolean;
+
+  /**
+   * For "physical" view:
+   *   - if provided, we compute which tree nodes contain any of these.
+   */
+  readonly selectedNodes?: RootContent[];
+
+  /**
+   * For "physical" view:
+   *   - if true and `selectedNodes` is provided, we prune the tree to only
+   *     nodes whose subtree contains at least one selected node, plus
+   *     all ancestors up to the file root.
+   */
+  readonly pruneToSelection?: boolean;
+}
+
+/**
+ * Unified builder for tree rows.
+ *
+ * - "physical" → file → heading → content
+ * - "class"    → file → class key → class value → node
+ * - "schema"   → file → section → section children + nodes
+ */
+export function buildMdAstTreeRows(
+  view: MdAstTreeView,
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTreeRowsOptions = {},
+): TreeRow[] {
+  switch (view) {
+    case "physical":
+      return buildPhysicalTreeRows(pmt, opts);
+    case "class":
+      return buildClassTreeRows(pmt, opts);
+    case "schema":
+      return buildSchemaTreeRows(pmt, opts);
+    default:
+      // exhaustive check
+      throw new Error(`Unknown MdAstTreeView: ${view satisfies never}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// View: physical (file → headings → content)
+// ---------------------------------------------------------------------------
+
+function buildPhysicalTreeRows(
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTreeRowsOptions,
+): TreeRow[] {
+  const { root, fileRef, label, provenance, rootId } = pmt;
+  const { includeDataKeys, selectedNodes, pruneToSelection } = opts;
+
+  const rows: TreeRow[] = [];
+  let counter = 0;
+
+  // Selection support
+  const selectedSet = selectedNodes && selectedNodes.length > 0
+    ? new Set(selectedNodes)
+    : undefined;
+  const containsSelected = selectedSet
+    ? markNodesContainingSelected(root, selectedSet)
+    : undefined;
+
+  // Synthetic file root row
+  rows.push({
+    id: rootId,
+    file: fileRef(),
+    kind: "heading",
+    type: "root",
+    label,
+    parentId: undefined,
+    classInfo: undefined,
+    dataKeys: undefined,
+    view: "physical",
+  });
+
+  type StackEntry = { depth: number; id: string };
+  const stack: StackEntry[] = [{ depth: 0, id: rootId }];
+
+  const children = root.children ?? [];
+
+  // Map row.id -> underlying top-level node (or null for synthetic root)
+  const rowNode = new Map<string, RootContent | null>();
+  rowNode.set(rootId, null);
+
+  for (const child of children) {
+    if (child.type === "heading") {
+      const hd = (child.depth ?? 1) | 0;
+
+      while (stack.length > 1 && stack[stack.length - 1]?.depth >= hd) {
+        stack.pop();
+      }
+
+      const parentId = stack[stack.length - 1]?.id;
+      const id = `${provenance}#h${counter++}`;
+
+      const dataKeys = includeDataKeys && child.data
+        ? Object.keys(child.data).join(",")
+        : undefined;
+
+      const classInfo = formatNodeClasses(child);
+
+      rows.push({
+        id,
+        file: fileRef(child),
+        kind: "heading",
+        type: "heading",
+        label: headingText(child as Heading),
+        parentId,
+        classInfo,
+        dataKeys,
+        view: "physical",
+      });
+
+      rowNode.set(id, child);
+      stack.push({ depth: hd, id });
+    } else {
+      const parentId = stack[stack.length - 1]?.id ?? rootId;
+      const id = `${provenance}#n${counter++}`;
+
+      const dataKeys = includeDataKeys && child.data
+        ? Object.keys(child.data).join(", ")
+        : undefined;
+
+      const classInfo = formatNodeClasses(child);
+
+      rows.push({
+        id,
+        file: fileRef(child),
+        kind: "content",
+        type: child.type,
+        label: summarizeNode(child),
+        parentId,
+        classInfo,
+        dataKeys,
+        view: "physical",
+      });
+
+      rowNode.set(id, child);
+    }
+  }
+
+  if (!selectedSet || !pruneToSelection) {
+    return rows;
+  }
+
+  // Determine which rows are directly "hit" by selection
+  const prelim = new Set<string>();
+  for (const [id, node] of rowNode.entries()) {
+    if (!node) continue; // synthetic root; handle later
+    if (containsSelected?.get(node)) {
+      prelim.add(id);
+    }
+  }
+
+  if (prelim.size === 0) {
+    // Nothing matched in this file; keep only synthetic root
+    return rows.filter((r) => r.id === rootId);
+  }
+
+  // Close upwards over ancestors: include all parents up to the file root
+  const byId = new Map<string, TreeRow>(rows.map((r) => [r.id, r]));
+  const allowed = new Set<string>();
+  const stackIds = [...prelim];
+
+  while (stackIds.length) {
+    const id = stackIds.pop()!;
+    if (allowed.has(id)) continue;
+    allowed.add(id);
+    const row = byId.get(id);
+    if (row?.parentId && !allowed.has(row.parentId)) {
+      stackIds.push(row.parentId);
+    }
+  }
+
+  // Always include the synthetic root
+  allowed.add(rootId);
+
+  return rows.filter((r) => allowed.has(r.id));
+}
+
+// ---------------------------------------------------------------------------
+// View: class (file → class key → class value → nodes)
+// ---------------------------------------------------------------------------
+
+interface ClassNodeInfo {
+  readonly node: RootContent;
+  readonly classKey: string;
+  readonly classValue: string;
+}
+
+function buildClassIndex(
+  root: Root,
+): Map<string, Map<string, ClassNodeInfo[]>> {
+  const index = new Map<string, Map<string, ClassNodeInfo[]>>();
+
+  const visit = (node: RootContent) => {
+    if (!hasNodeClass(node)) return;
+    const classMap: NodeClassMap = (node.data as Any).class;
+    for (const [key, rawValue] of Object.entries(classMap)) {
+      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+      for (const v of values) {
+        const byValue = index.get(key) ?? new Map<string, ClassNodeInfo[]>();
+        if (!index.has(key)) index.set(key, byValue);
+        const bucket = byValue.get(v) ?? [];
+        if (!byValue.has(v)) byValue.set(v, bucket);
+        bucket.push({ node, classKey: key, classValue: v });
+      }
+    }
+  };
+
+  const walk = (node: RootContent) => {
+    visit(node);
+    const children = (node as Any).children as RootContent[] | undefined;
+    if (Array.isArray(children)) {
+      for (const c of children) walk(c);
+    }
+  };
+
+  for (const child of root.children ?? []) {
+    walk(child);
+  }
+
+  return index;
+}
+
+function buildClassTreeRows(
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTreeRowsOptions,
+): TreeRow[] {
+  const { root, fileRef, label, provenance, rootId } = pmt;
+  const { includeDataKeys } = opts;
+
+  const index = buildClassIndex(root);
+  if (index.size === 0) {
+    return [];
+  }
+
+  const rows: TreeRow[] = [];
+  let counter = 0;
+
+  // Synthetic file root row
+  rows.push({
+    id: rootId,
+    file: fileRef(),
+    kind: "heading",
+    type: "root",
+    label,
+    parentId: undefined,
+    classInfo: undefined,
+    dataKeys: undefined,
+    view: "class",
+  });
+
+  const classKeys = Array.from(index.keys()).sort();
+
+  for (const classKey of classKeys) {
+    const byValue = index.get(classKey)!;
+    const classKeyId = `${provenance}#cls:${classKey}`;
+
+    rows.push({
+      id: classKeyId,
+      file: fileRef(),
+      kind: "heading",
+      type: "class-key",
+      label: classKey,
+      parentId: rootId,
+      classInfo: undefined,
+      dataKeys: undefined,
+      view: "class",
+    });
+
+    const values = Array.from(byValue.keys()).sort();
+
+    for (const value of values) {
+      const infos = byValue.get(value)!;
+      const valueId = `${provenance}#cls:${classKey}=${value}`;
+
+      rows.push({
+        id: valueId,
+        file: fileRef(),
+        kind: "heading",
+        type: "class-value",
+        label: value,
+        parentId: classKeyId,
+        classInfo: `${classKey}:${value}`,
+        dataKeys: undefined,
+        view: "class",
+      });
+
+      for (const info of infos) {
+        const node = info.node;
+        const nodeId = `${provenance}#cls:${classKey}=${value}#n${counter++}`;
+
+        const dataKeysForNode = includeDataKeys && node.data
+          ? Object.keys(node.data).join(", ")
+          : undefined;
+
+        const classInfoForNode = formatNodeClasses(node);
+
+        rows.push({
+          id: nodeId,
+          file: fileRef(node),
+          kind: "content",
+          type: node.type,
+          label: summarizeNode(node),
+          parentId: valueId,
+          classInfo: classInfoForNode,
+          dataKeys: dataKeysForNode,
+          view: "class",
+        });
+      }
+    }
+  }
+
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// View: schema (file → section → section children + nodes)
+// ---------------------------------------------------------------------------
+
+function buildSchemaTreeRows(
+  pmt: ParsedMarkdownTree,
+  opts: BuildMdAstTreeRowsOptions,
+): TreeRow[] {
+  const { root, label, fileRef, provenance, rootId } = pmt;
+  const { includeDataKeys } = opts;
+
+  const sections = collectSectionsFromRoot(root);
+  const primeSections = sections.filter((s) => s.namespace === "prime");
+  if (primeSections.length === 0) return [];
+
+  const rows: TreeRow[] = [];
+
+  // synthetic file root row
+  rows.push({
+    id: rootId,
+    file: fileRef(),
+    kind: "heading",
+    type: "root",
+    label,
+    parentId: undefined,
+    classInfo: undefined,
+    dataKeys: undefined,
+    view: "schema",
+    schemaLevel: undefined,
+  });
+
+  const rootChildren = (root.children ?? []) as RootContent[];
+  let counter = 0;
+  const sectionId = new WeakMap<Any, string>();
+
+  // collect all section start nodes so we don't also show them as plain nodes
+  const sectionStartNodes = new Set<RootContent>();
+  for (const s of primeSections) {
+    if (s.nature === "heading" && s.heading) {
+      sectionStartNodes.add(s.heading as RootContent);
+    } else if (s.nature === "marker" && s.markerNode) {
+      sectionStartNodes.add(s.markerNode as RootContent);
+    }
+  }
+
+  const getIdForSection = (s: Any): string => {
+    const existing = sectionId.get(s);
+    if (existing) return existing;
+    const id = `${provenance}#sec:${counter++}`;
+    sectionId.set(s, id);
+    return id;
+  };
+
+  const belongingNodesForSection = (s: Any) =>
+    rootChildren
+      .map((n, idx) => ({ n, idx }))
+      .filter(({ n }) =>
+        hasBelongsToSection(n) &&
+        (n.data as Any).belongsToSection?.["prime"] === s &&
+        !sectionStartNodes.has(n)
+      )
+      .sort((a, b) => a.idx - b.idx);
+
+  const summarizeSectionLabel = (s: Any): string => {
+    const base = (() => {
+      if (s.nature === "heading") {
+        const text = nodeToPlainText(
+          (s.heading as MdastNode | undefined) ??
+            (s.markerNode as MdastNode | undefined) ??
+            (s.parentNode as MdastNode),
+        );
+        const depth = s.depth ?? "?";
+        return `heading depth=${depth} "${text || ""}"`;
+      }
+
+      if (s.nature === "marker") {
+        const kind = s.markerKind ?? "marker";
+
+        const hasTitle = typeof s.title === "string" &&
+          s.title.trim().length > 0;
+        if (hasTitle) {
+          const title = s.title.trim();
+          return `marker kind=${kind} "${title}"`;
+        }
+
+        const srcNode: MdastNode = (s.markerNode as MdastNode | undefined) ??
+          (s.heading as MdastNode | undefined) ??
+          (s.parentNode as MdastNode);
+
+        const rawText = srcNode ? nodeToPlainText(srcNode) : "";
+        const value = truncate(
+          rawText.replace(/\s+/g, " ").trim() || kind,
+          40,
+        );
+        return `marker ${kind}=${value}`;
+      }
+
+      return String(s.nature ?? "section");
+    })();
+
+    const ns = s.namespace ?? "prime";
+    const childrenCount = Array.isArray(s.children) ? s.children.length : 0;
+    const range = `[${s.startIndex ?? "?"}, ${s.endIndex ?? "?"})`;
+
+    return `${base} ns=${ns} children=${childrenCount} ${range}`;
+  };
+
+  const emitSection = (s: Any, parentId: string, level: number) => {
+    const id = getIdForSection(s);
+    const rawLabel = summarizeSectionLabel(s);
+
+    const sectionNode: RootContent | undefined = s.nature === "heading"
+      ? (s.heading as RootContent | undefined)
+      : s.nature === "marker"
+      ? (s.markerNode as RootContent | undefined)
+      : undefined;
+
+    const sectionDataKeys = includeDataKeys && sectionNode?.data
+      ? Object.keys(sectionNode.data).join(", ")
+      : undefined;
+
+    const sectionClassInfo = sectionNode
+      ? formatNodeClasses(sectionNode)
+      : undefined;
+
+    rows.push({
+      id,
+      file: sectionNode ? fileRef(sectionNode) : fileRef(),
+      kind: "heading",
+      type: "heading",
+      label: rawLabel,
+      parentId,
+      classInfo: sectionClassInfo,
+      dataKeys: sectionDataKeys,
+      view: "schema",
+      schemaLevel: level,
+    });
+
+    const sectionChildren: Any[] = Array.isArray(s.children) ? s.children : [];
+    const belonging = belongingNodesForSection(s);
+
+    type ChildEntry =
+      | { kind: "section"; section: Any; order: number }
+      | { kind: "node"; node: RootContent; order: number };
+
+    const entries: ChildEntry[] = [];
+
+    for (const childSec of sectionChildren) {
+      entries.push({
+        kind: "section",
+        section: childSec,
+        order: childSec.startIndex ?? 0,
+      });
+    }
+
+    for (const { n, idx } of belonging) {
+      entries.push({
+        kind: "node",
+        node: n,
+        order: idx,
+      });
+    }
+
+    entries.sort((a, b) => a.order - b.order);
+
+    for (const entry of entries) {
+      if (entry.kind === "section") {
+        emitSection(entry.section, id, level + 1);
+      } else {
+        const node = entry.node;
+        const nodeId = `${provenance}#secnode:${counter++}`;
+
+        const dataKeys = includeDataKeys && node.data
+          ? Object.keys(node.data).join(", ")
+          : undefined;
+        const classInfo = formatNodeClasses(node);
+
+        rows.push({
+          id: nodeId,
+          file: fileRef(node),
+          kind: "content",
+          type: node.type,
+          label: summarizeNode(node),
+          parentId: id,
+          classInfo,
+          dataKeys,
+          view: "schema",
+          schemaLevel: level + 1,
+        });
+      }
+    }
+  };
+
+  const roots = primeSections.filter((s) => !s.parent);
+  for (const s of roots) {
+    emitSection(s, rootId, 0);
+  }
+
+  return rows;
+}
