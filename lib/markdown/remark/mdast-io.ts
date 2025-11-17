@@ -10,10 +10,12 @@
 import { red } from "jsr:@std/fmt@1/colors";
 import { basename } from "jsr:@std/path@1";
 
-import remarkdDirective from "https://esm.sh/remark-directive@4";
+import remarkDirective from "https://esm.sh/remark-directive@4";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
 import remarkGfm from "npm:remark-gfm@^4";
+import remarkParse from "npm:remark-parse@^11";
+import { unified } from "npm:unified@^11";
 
 import { remark } from "npm:remark@^15";
 
@@ -34,35 +36,28 @@ import type { ParsedMarkdownTree } from "./mdast-view.ts";
 type Any = any;
 
 // ---------------------------------------------------------------------------
-// Source acquisition
+// Remark orchestration
 // ---------------------------------------------------------------------------
 
-export function tryParseUrl(spec: string): URL | undefined {
-  try {
-    return new URL(spec);
-  } catch {
-    return undefined;
-  }
-}
-
-export async function readMarkdownTrees(
-  sources: readonly string[],
-  processor = remark()
-    .use(remarkFrontmatter, ["yaml"])
-    .use(remarkdDirective)
-    .use(docFrontmatterPlugin)
-    .use(remarkGfm)
-    .use(headingFrontmatterPlugin)
-    .use(codeFrontmatterPlugin, {
+export function mdParser() {
+  return unified()
+    .use(remarkParse)
+    .use(remarkFrontmatter, ["yaml"]) // extracts to YAML node but does not parse
+    .use(remarkDirective) // creates directives from :[x] ::[x] and :::x
+    .use(docFrontmatterPlugin) // parses extract YAML and stores at md AST root
+    .use(remarkGfm) // support GitHub flavored markdown
+    .use(headingFrontmatterPlugin) // find closest YAML blocks near headings and attached to heading.data[headingFM]
+    .use(codeFrontmatterPlugin, { // finds code cells and extract posix PI and attributes to treat as "code frontmatter"
       coerceNumbers: true, // "9" -> 9
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     })
     .use(nodeClassifierPlugin, {
+      // classifies nodes using instructions from markdown document and headings frontmatter
       // be sure that all frontmatter plugins are run before this
       classifiers: classifiersFromFrontmatter(),
     })
     .use(nodeIdentitiesPlugin, {
-      // establish entities last, after everything else is done for stability
+      // establish identities last, after everything else is done for stability
       identityFromHeadingFM: (fm, node) => {
         if (!fm?.id || node.type !== "heading") return false as const;
         return {
@@ -81,7 +76,24 @@ export async function readMarkdownTrees(
         boldParagraphSectionRule(),
         colonParagraphSectionRule(),
       ],
-    }),
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Source acquisition
+// ---------------------------------------------------------------------------
+
+export function tryParseUrl(spec: string): URL | undefined {
+  try {
+    return new URL(spec);
+  } catch {
+    return undefined;
+  }
+}
+
+export async function readMarkdownTrees(
+  sources: readonly string[],
+  processor = mdParser(),
 ): Promise<Array<ParsedMarkdownTree>> {
   if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
     const text = await new Response(Deno.stdin.readable).text();
