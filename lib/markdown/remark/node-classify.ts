@@ -35,19 +35,13 @@ import type { Plugin } from "npm:unified@^11";
 
 import { mdastql } from "./mdastql.ts";
 
+/** mdast node we classify (content nodes only for now). */
+export type RootNode = RootContent;
+
 export type ClassificationNamespace = string;
 export type ClassificationPath = string;
 
-export type AnyBaggage = Record<string, unknown>;
-
-/**
- * A single classification instance attached to a node:
- *
- * - `path` identifies the specific class within a namespace.
- * - `baggage` carries arbitrary, structured metadata associated with this
- *   classification (e.g. IDs, severity, feature flags, etc.).
- */
-export type Classification<Baggage extends AnyBaggage> = {
+export type Classification<Baggage extends Record<string, unknown>> = {
   readonly path: ClassificationPath;
   readonly baggage?: Baggage;
 };
@@ -55,56 +49,36 @@ export type Classification<Baggage extends AnyBaggage> = {
 /**
  * Per-node class map: namespace → list of classifications.
  */
-export type NodeClassMap<Baggage extends AnyBaggage> = Record<
+export type NodeClassMap<Baggage extends Record<string, unknown>> = Record<
   ClassificationNamespace,
   Classification<Baggage>[]
 >;
 
-/**
- * Data shape we attach to nodes that are classified.
- *
- * (We intersect this into remark/unist `Data` at usage sites.)
- */
-export interface ClassifiedNodeData<Baggage extends AnyBaggage> {
+export interface ClassifiedNodeData<Baggage extends Record<string, unknown>> {
   readonly class?: NodeClassMap<Baggage>;
 }
 
-/**
- * Node type with guaranteed `data.class` map.
- */
 export type ClassedNode<
   T extends { data?: RootContent["data"] },
-  Baggage extends AnyBaggage,
+  Baggage extends Record<string, unknown>,
 > = T & {
   data: RootContent["data"] & {
     class: NodeClassMap<Baggage>;
   };
 };
 
-/**
- * Catalog type: namespace → path → nodes.
- *
- * This is purely an in-memory structure. The plugin no longer decides
- * where it is stored; callers decide via the `catalog` callback.
- *
- * Note: the catalog does not carry `baggage`—it is an index of where
- * particular (namespace, path) pairs occur.
- */
 export type ClassifierCatalog = Record<
   ClassificationNamespace,
   Record<ClassificationPath, RootContent[]>
 >;
 
 /**
- * Single classification entry produced by a rule.
+ * Single classification entry.
  *
- * - `namespace` is the top-level classifier namespace.
- * - `path` is one or more classification paths within that namespace.
- * - `baggage` is optional extra metadata to attach to each (namespace, path)
- *   classification entry applied to the target nodes.
+ * `path` can be a single path or a list of paths in the same namespace.
  */
 export interface ClassificationEntry<
-  Baggage extends AnyBaggage = AnyBaggage,
+  Baggage extends Record<string, unknown> = Record<string, unknown>,
 > {
   readonly namespace: ClassificationNamespace;
   readonly path: ClassificationPath | ClassificationPath[];
@@ -114,52 +88,33 @@ export interface ClassificationEntry<
 /**
  * Single classifier rule.
  */
-export interface NodeClassifierRule<
-  Baggage extends AnyBaggage = AnyBaggage,
-> {
+export interface NodeClassifierRule {
   readonly nodes: readonly string[] | ((root: Root) => Iterable<RootContent>);
   readonly classify: (
     found: readonly RootContent[],
   ) =>
     | false
-    | ClassificationEntry<Baggage>
-    | Iterator<ClassificationEntry<Baggage>>;
+    | ClassificationEntry
+    | Iterator<ClassificationEntry>;
 }
 
 /**
  * Options for the nodeClassifier plugin.
- *
- * The `Baggage` type describes the shape of the per-classification metadata
- * carried on nodes in `NodeClassMap<Baggage>`.
  */
-export interface NodeClassifierOptions<
-  Baggage extends AnyBaggage = AnyBaggage,
-> {
-  readonly classifiers: (
-    root: Root,
-  ) => Iterable<NodeClassifierRule<Baggage>>;
-
+export interface NodeClassifierOptions {
+  readonly classifiers: (root: Root) => Iterable<NodeClassifierRule>;
   readonly catalog?: <CC extends ClassifierCatalog>(
     catalog: CC,
     root: Root,
   ) => void;
 }
 
-/**
- * Convenience: wrap a fixed list of rules into a classifier factory.
- */
-export function staticClassifiers<
-  Baggage extends AnyBaggage = AnyBaggage,
->(
-  ...rules: NodeClassifierRule<Baggage>[]
-): (root: Root) => Iterable<NodeClassifierRule<Baggage>> {
+export function staticClassifiers(
+  ...rules: NodeClassifierRule[]
+): (root: Root) => Iterable<NodeClassifierRule> {
   return (_root: Root) => rules;
 }
 
-/**
- * Convenience: create a catalog callback that stores the catalog on
- * `root.data[fieldName]`.
- */
 export function catalogToRootData(
   fieldName = "classifierCatalog",
 ): (catalog: ClassifierCatalog, root: Root) => void {
@@ -174,13 +129,10 @@ export function catalogToRootData(
 
 /**
  * Type guard: does this node have a strongly-typed `data.class` map?
- *
- * Note: at runtime we only check that `data.class` exists and is an object;
- * the specific `Baggage` type is enforced at compile time.
  */
 export function hasNodeClass<
   T extends { data?: RootContent["data"] },
-  Baggage extends AnyBaggage,
+  Baggage extends Record<string, unknown>,
 >(
   node: T,
 ): node is ClassedNode<T, Baggage> {
@@ -199,8 +151,124 @@ export function hasNodeClass<
 }
 
 /**
- * remark plugin: classify nodes based on selectors or a node-supplying
- * function, and attach `Classification<Baggage>` entries to node.data.class.
+ * Idempotent helper: upsert a single (path, baggage) into a namespace’s list.
+ * If a classification with the same path exists, it is replaced (last wins).
+ */
+function upsertClassification<Baggage extends Record<string, unknown>>(
+  list: Classification<Baggage>[],
+  path: string,
+  baggage: Baggage | undefined,
+): Classification<Baggage>[] {
+  let replaced = false;
+  const next = list.map((cls) => {
+    if (cls.path !== path) return cls;
+    replaced = true;
+    return baggage
+      ? { path, baggage } as Classification<Baggage>
+      : { path } as Classification<Baggage>;
+  });
+
+  if (!replaced) {
+    next.push(
+      baggage
+        ? { path, baggage } as Classification<Baggage>
+        : { path } as Classification<Baggage>,
+    );
+  }
+
+  return next;
+}
+
+/**
+ * Manually classify one or more nodes with one or more classification entries.
+ *
+ * - `nodes` can be a single node or an array of nodes.
+ * - `classifiers` can be:
+ *     - a single `ClassificationEntry`, or
+ *     - an `Iterator<ClassificationEntry>` yielding multiple entries.
+ *
+ * Idempotent semantics:
+ *   - For each node, within a given `namespace`, a given `path` appears
+ *     at most once.
+ *   - Re-applying the same namespace/path overwrites the existing
+ *     classification for that path (including its baggage).
+ */
+export function classifyNode<
+  Baggage extends Record<string, unknown> = Record<string, unknown>,
+>(
+  nodes: RootNode | RootNode[],
+  classifiers:
+    | ClassificationEntry<Baggage>
+    | Iterator<ClassificationEntry<Baggage>>,
+): void {
+  const targets: RootNode[] = Array.isArray(nodes) ? nodes : [nodes];
+
+  // Normalize classifiers into a concrete array so we can re-use them.
+  const entries: ClassificationEntry<Baggage>[] = [];
+
+  const isSingleEntry = (
+    c:
+      | ClassificationEntry<Baggage>
+      | Iterator<ClassificationEntry<Baggage>>,
+  ): c is ClassificationEntry<Baggage> =>
+    "namespace" in (c as ClassificationEntry<Baggage>) &&
+    "path" in (c as ClassificationEntry<Baggage>);
+
+  if (isSingleEntry(classifiers)) {
+    entries.push(classifiers);
+  } else {
+    let step = classifiers.next();
+    while (!step.done) {
+      entries.push(step.value);
+      step = classifiers.next();
+    }
+  }
+
+  if (entries.length === 0) return;
+
+  for (const node of targets) {
+    const anyNode = node as RootContent & {
+      data?:
+        | (RootContent["data"] & {
+          class?: NodeClassMap<Baggage>;
+        })
+        | undefined;
+    };
+
+    if (!anyNode.data) {
+      anyNode.data = {} as RootContent["data"];
+    }
+
+    const data = anyNode.data as RootContent["data"] & {
+      class?: NodeClassMap<Baggage>;
+    };
+
+    if (!data.class || typeof data.class !== "object") {
+      data.class = {} as NodeClassMap<Baggage>;
+    }
+
+    const classMap = data.class as NodeClassMap<Baggage>;
+
+    for (const entry of entries) {
+      const { namespace, path, baggage } = entry;
+      const paths = Array.isArray(path) ? path : [path];
+
+      let list = classMap[namespace] ?? [];
+      for (const p of paths) {
+        list = upsertClassification(list, p, baggage);
+      }
+      classMap[namespace] = list;
+    }
+  }
+}
+
+/**
+ * remark plugin: classify nodes based on either:
+ *   - mdastql selector strings (NodeClassifierRule.nodes as string[]), or
+ *   - a function that directly returns nodes to classify.
+ *
+ * It delegates the per-node mutation semantics to `classifyNode` so that
+ * plugin usage and manual usage behave identically.
  */
 export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
   options,
@@ -219,65 +287,25 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
     // If no rules and no catalog callback, nothing to do.
     if (rules.length === 0 && !catalog) return;
 
-    // Helper: ensure a node has data + class map.
-    const ensureClassMap = (
-      node: RootContent,
-    ): NodeClassMap<AnyBaggage> => {
-      const anyNode = node as RootContent & {
-        data?:
-          | (RootContent["data"] & {
-            class?: NodeClassMap<AnyBaggage>;
-          })
-          | undefined;
-      };
+    const isSingleEntry = (
+      r: ClassificationEntry | Iterator<ClassificationEntry>,
+    ): r is ClassificationEntry =>
+      "namespace" in (r as ClassificationEntry) &&
+      "path" in (r as ClassificationEntry);
 
-      if (!anyNode.data) {
-        anyNode.data = {} as RootContent["data"];
-      }
-
-      const data = anyNode.data as RootContent["data"] & {
-        class?: NodeClassMap<AnyBaggage>;
-      };
-
-      if (!data.class || typeof data.class !== "object") {
-        data.class = {};
-      }
-
-      return data.class;
-    };
-
-    const applyClassificationEntry = (
-      entry: ClassificationEntry<AnyBaggage>,
+    const updateCatalog = (
+      catalog: ClassifierCatalog,
+      entries: readonly ClassificationEntry[],
       nodes: readonly RootContent[],
     ) => {
-      const { namespace, path, baggage } = entry;
-      const paths = Array.isArray(path) ? path : [path];
-
-      for (const node of nodes) {
-        const classMap = ensureClassMap(node);
-
-        const existingList = classMap[namespace] ??
-          (classMap[namespace] = [] as Classification<AnyBaggage>[]);
+      for (const entry of entries) {
+        const { namespace, path } = entry;
+        const paths = Array.isArray(path) ? path : [path];
 
         for (const p of paths) {
-          // Avoid duplicate path entries; keep the first baggage we see.
-          if (!existingList.some((c) => c.path === p)) {
-            existingList.push(
-              baggage ? { path: p, baggage } : { path: p },
-            );
-          }
-        }
-
-        if (catalog) {
-          const byNamespace = catalog[namespace] ??
-            (catalog[namespace] = {} as Record<
-              ClassificationPath,
-              RootContent[]
-            >);
-
-          for (const p of paths) {
-            const bucket = byNamespace[p] ??
-              (byNamespace[p] = [] as RootContent[]);
+          const byNs = catalog[namespace] ?? (catalog[namespace] = {});
+          const bucket = byNs[p] ?? (byNs[p] = []);
+          for (const node of nodes) {
             if (!bucket.includes(node)) {
               bucket.push(node);
             }
@@ -295,26 +323,42 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
       const result = classify(foundNodes);
       if (!result) return;
 
-      if ("namespace" in result) {
-        // Single classification entry.
-        applyClassificationEntry(
-          result as ClassificationEntry<AnyBaggage>,
-          foundNodes,
-        );
+      const entries: ClassificationEntry[] = [];
+
+      if (
+        isSingleEntry(
+          result as ClassificationEntry | Iterator<ClassificationEntry>,
+        )
+      ) {
+        entries.push(result as ClassificationEntry);
       } else {
-        // Iterator of classification entries.
-        const iterator = result as Iterator<ClassificationEntry<AnyBaggage>>;
-        let step = iterator.next();
+        let step = (result as Iterator<ClassificationEntry>).next();
         while (!step.done) {
-          applyClassificationEntry(step.value, foundNodes);
-          step = iterator.next();
+          entries.push(step.value);
+          step = (result as Iterator<ClassificationEntry>).next();
         }
+      }
+
+      if (!entries.length) return;
+
+      // Apply to nodes via shared helper.
+      classifyNode(
+        foundNodes as RootNode[],
+        (function* () {
+          yield* entries;
+        })(),
+      );
+
+      // Update catalog if enabled.
+      if (catalog) {
+        updateCatalog(catalog, entries, foundNodes);
       }
     };
 
     for (const rule of rules) {
       const { nodes, classify } = rule;
 
+      // Case 1: nodes is an array of mdastql selector strings.
       if (Array.isArray(nodes)) {
         if (nodes.length === 0) continue;
 
@@ -328,6 +372,7 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
         continue;
       }
 
+      // Case 2: nodes is a function returning Iterable<RootContent>.
       if (typeof nodes === "function") {
         const iterable = nodes(root);
         const foundNodes = Array.from(iterable);
@@ -338,6 +383,7 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
       }
     }
 
+    // After all classification, invoke catalog callback if any.
     if (catalog && catalogCallback) {
       catalogCallback(catalog, root);
     }

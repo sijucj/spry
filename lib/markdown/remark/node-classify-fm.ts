@@ -142,17 +142,17 @@ export function classifiersFromFrontmatter<
     fm: Dict,
     node: Heading,
   ) => Array<unknown>;
-}): (root: Root) => Iterable<NodeClassifierRule<Baggage>> {
+}): (root: Root) => Iterable<NodeClassifierRule> {
   const {
     classifiersFromDocFM = (fm: Dict) => fm["doc-classify"],
     classifiersFromHeadFM = (fm: Dict) => fm["nature"] ?? fm["doc-classify"],
   } = options ?? {};
 
-  return (root: Root): Iterable<NodeClassifierRule<Baggage>> => {
+  return (root: Root): Iterable<NodeClassifierRule> => {
     if (!isRootWithDocumentFrontmatter(root)) return [];
 
     const fm = root.data.documentFrontmatter.parsed.fm as Dict;
-    const rules: NodeClassifierRule<Baggage>[] = [];
+    const rules: NodeClassifierRule[] = [];
 
     // ---------------------------------------------------------------------
     // 1) DOCUMENT-LEVEL CLASSIFIERS
@@ -179,7 +179,7 @@ export function classifiersFromFrontmatter<
         const classEntries = classificationEntriesFromEntry<Baggage>(entry);
         if (!classEntries.length) continue;
 
-        const classify: NodeClassifierRule<Baggage>["classify"] = (found) => {
+        const classify: NodeClassifierRule["classify"] = (found) => {
           if (!found.length) return false;
           if (classEntries.length === 1) return classEntries[0]!;
           return classEntries.values();
@@ -213,7 +213,7 @@ export function classifiersFromFrontmatter<
           const classEntries = classificationEntriesFromEntry<Baggage>(rule);
           if (!classEntries.length) continue;
 
-          const classify: NodeClassifierRule<Baggage>["classify"] = (found) => {
+          const classify: NodeClassifierRule["classify"] = (found) => {
             if (!found.length) return false;
             if (classEntries.length === 1) return classEntries[0]!;
             return classEntries.values();
