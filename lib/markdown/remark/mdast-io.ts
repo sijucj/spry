@@ -108,7 +108,7 @@ export async function readMarkdownTrees(
         const resp = await fetch(url);
         if (!resp.ok) {
           console.error(
-            red(`Failed to fetch URL: ${provenance} – status ${resp.status}`),
+            red(`Failed to fetch URL: ${provenance} - status ${resp.status}`),
           );
           continue;
         }
@@ -151,8 +151,12 @@ export async function readMarkdownTrees(
 export function resolveFiles(
   globalFiles: string[] | undefined,
   positional: string[],
+  defaults: string[],
 ): string[] {
-  const merged = [...(globalFiles ?? []), ...positional];
+  const merged = [
+    ...(globalFiles ?? []),
+    ...(positional.length ? positional : defaults),
+  ];
   return merged.length > 0 ? merged : ["-"];
 }
 

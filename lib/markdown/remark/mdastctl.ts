@@ -30,19 +30,30 @@ import {
   resolveFiles,
   sliceSourceForNode,
 } from "./mdast-io.ts";
+import { computeSemVerSync } from "../../universal/version.ts";
 
 // ---------------------------------------------------------------------------
 // CLI wiring
 // ---------------------------------------------------------------------------
 
 export class CLI {
-  constructor(readonly globalFiles?: string[]) {
+  constructor(
+    readonly conf?: {
+      readonly globalFiles?: string[];
+      readonly defaultFiles?: string[];
+      readonly cmdName?: string;
+    },
+  ) {
+  }
+
+  async run(args = Deno.args) {
+    await this.rootCmd().parse(args);
   }
 
   rootCmd() {
     return new Command()
-      .name("mdastctl.ts")
-      .version("0.1.0")
+      .name(this.conf?.cmdName ?? "mdastctl.ts")
+      .version(() => computeSemVerSync(import.meta.url))
       .description(`query and explore Markdown ASTs (mdast)`)
       .command("help", new HelpCommand())
       .command("completions", new CompletionsCommand())
@@ -54,14 +65,29 @@ export class CLI {
       .command("md", this.mdCommand());
   }
 
-  static instance(): CLI {
-    return new CLI();
+  protected baseCommand({ examplesCmd }: { examplesCmd: string }) {
+    return new Command()
+      .example(
+        "default",
+        `${this.conf?.cmdName} ${examplesCmd}`,
+      )
+      .example(
+        "stdin",
+        `${this.conf?.cmdName} ${examplesCmd} -`,
+      )
+      .example(
+        "local",
+        `${this.conf?.cmdName} ${examplesCmd} ./Qualityfolio.md`,
+      )
+      .example(
+        "remote",
+        `${this.conf?.cmdName} ${examplesCmd} https://qualityfolio.dev/example.md`,
+      )
+      .example(
+        "mixed",
+        `${this.conf?.cmdName} ${examplesCmd} ./Qualityfolio.md https://qualityfolio.dev/example.md local.md`,
+      );
   }
-
-  async run(args = Deno.args) {
-    await this.rootCmd().parse(args);
-  }
-
   // -------------------------------------------------------------------------
   // ls command (tabular "physical" view)
   // -------------------------------------------------------------------------
@@ -75,8 +101,8 @@ export class CLI {
    * - With automatic node classification (via frontmatter + nodeClassifier),
    *   shows a CLASS column with key:value pairs.
    */
-  protected lsCommand() {
-    return new Command()
+  protected lsCommand(cmdName = "ls") {
+    return this.baseCommand({ examplesCmd: cmdName })
       .description(`list mdast nodes in a tabular, content-hierarchy view`)
       .arguments("[paths...:string]")
       .option(
@@ -87,7 +113,11 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(
         async (options, ...paths: string[]) => {
-          const files = resolveFiles(this.globalFiles, paths);
+          const files = resolveFiles(
+            this.conf?.globalFiles,
+            paths,
+            this.conf?.defaultFiles ?? [],
+          );
           const trees = await readMarkdownTrees(files);
           const allRows: TabularRow[] = [];
 
@@ -189,8 +219,8 @@ export class CLI {
    * - One row per (node, SUPPLIER, ID) tuple.
    * - Includes the same physical columns as `ls` plus SUPPLIER and ID.
    */
-  protected identifiersCommand() {
-    return new Command()
+  protected identifiersCommand(cmdName = "identifiers") {
+    return this.baseCommand({ examplesCmd: cmdName })
       .description(
         `list mdast node identifiers (one row per SUPPLIER / ID pair)`,
       )
@@ -203,7 +233,11 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(
         async (options, ...paths: string[]) => {
-          const files = resolveFiles(this.globalFiles, paths);
+          const files = resolveFiles(
+            this.conf?.globalFiles,
+            paths,
+            this.conf?.defaultFiles ?? [],
+          );
           const trees = await readMarkdownTrees(files);
           const allRows: TabularRow[] = [];
 
@@ -307,15 +341,19 @@ export class CLI {
   // tree command
   // -------------------------------------------------------------------------
 
-  protected treeCommand() {
-    return new Command()
+  protected treeCommand(cmdName = "tree") {
+    return this.baseCommand({ examplesCmd: cmdName })
       .description(`heading/content hierarchy (per file)`)
       .arguments("[paths...:string]")
       .option("--select <query:string>", "mdastql selection to focus the tree.")
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
-        const files = resolveFiles(this.globalFiles, paths);
+        const files = resolveFiles(
+          this.conf?.globalFiles,
+          paths,
+          this.conf?.defaultFiles ?? [],
+        );
         const trees = await readMarkdownTrees(files);
         const allRows: TreeRow[] = [];
 
@@ -408,8 +446,8 @@ export class CLI {
   // class command
   // -------------------------------------------------------------------------
 
-  protected classCommand() {
-    return new Command()
+  protected classCommand(cmdName = "class") {
+    return this.baseCommand({ examplesCmd: cmdName })
       .description(
         `show classification hierarchy per file (class key → value → nodes)`,
       )
@@ -417,7 +455,11 @@ export class CLI {
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
-        const files = resolveFiles(this.globalFiles, paths);
+        const files = resolveFiles(
+          this.conf?.globalFiles,
+          paths,
+          this.conf?.defaultFiles ?? [],
+        );
         const trees = await readMarkdownTrees(files);
         const allRowsRaw: TreeRow[] = [];
 
@@ -518,8 +560,8 @@ export class CLI {
   // schema command
   // -------------------------------------------------------------------------
 
-  protected schemaCommand() {
-    return new Command()
+  protected schemaCommand(cmdName = "schema") {
+    return this.baseCommand({ examplesCmd: cmdName })
       .description(
         `show section schema hierarchy (per file) using documentSchema plugin`,
       )
@@ -527,7 +569,11 @@ export class CLI {
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
-        const files = resolveFiles(this.globalFiles, paths);
+        const files = resolveFiles(
+          this.conf?.globalFiles,
+          paths,
+          this.conf?.defaultFiles ?? [],
+        );
         const trees = await readMarkdownTrees(files);
         const allRows: TreeRow[] = [];
 
@@ -639,8 +685,8 @@ export class CLI {
   // md command
   // -------------------------------------------------------------------------
 
-  protected mdCommand() {
-    return new Command()
+  protected mdCommand(cmdName = "md") {
+    return this.baseCommand({ examplesCmd: cmdName })
       .description(`run mdastql and print the selected nodes as Markdown`)
       .arguments("[paths...:string]")
       .option(
@@ -658,7 +704,11 @@ export class CLI {
           Deno.exit(1);
         }
 
-        const files = resolveFiles(this.globalFiles, paths);
+        const files = resolveFiles(
+          this.conf?.globalFiles,
+          paths,
+          this.conf?.defaultFiles ?? [],
+        );
         const trees = await readMarkdownTrees(files);
         const allChunks: string[] = [];
 
@@ -723,5 +773,5 @@ export class CLI {
 // ---------------------------------------------------------------------------
 
 if (import.meta.main) {
-  await CLI.instance().run();
+  await new CLI().run();
 }

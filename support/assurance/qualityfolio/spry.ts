@@ -3,4 +3,4 @@
 
 import { CLI } from "../../../lib/markdown/remark/mdastctl.ts";
 
-CLI.instance().run();
+await new CLI({ cmdName: "spry.ts", defaultFiles: ["Qualityfolio.md"] }).run();
