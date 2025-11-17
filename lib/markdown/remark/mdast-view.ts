@@ -13,10 +13,6 @@ import { mdastql, type MdastQlOptions } from "./mdastql.ts";
 import { hasNodeClass, type NodeClassMap } from "./node-classify.ts";
 import { hasNodeIdentities } from "./node-identities.ts";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
@@ -259,23 +255,46 @@ export function summarizeNode(node: RootContent): string {
 export function formatNodeClasses(
   node: RootContent,
 ): string | undefined {
-  const data = (node as Any).data;
-  if (!data || typeof data !== "object") return undefined;
+  if (!hasNodeClass(node)) return undefined;
 
-  const cls = (data as Any).class;
-  if (!cls || typeof cls !== "object") return undefined;
+  // We don’t care about the specific baggage shape here, just that it’s an object.
+  const classMap = node.data.class as NodeClassMap<Record<string, unknown>>;
 
-  const entries = Object.entries(cls as Record<string, unknown>);
   const parts: string[] = [];
 
-  for (const [key, value] of entries) {
-    if (typeof value === "string") {
-      parts.push(`${key}:${value}`);
-    } else if (Array.isArray(value)) {
-      const vals = value.filter((v): v is string => typeof v === "string");
-      if (vals.length) {
-        parts.push(`${key}:${vals.join(",")}`);
+  for (const [namespace, classifications] of Object.entries(classMap)) {
+    if (!Array.isArray(classifications) || classifications.length === 0) {
+      continue;
+    }
+
+    const rendered: string[] = [];
+
+    for (const cls of classifications) {
+      const path = cls.path;
+      const baggage = cls.baggage;
+
+      // No baggage → just the path.
+      if (!baggage || typeof baggage !== "object") {
+        rendered.push(path);
+        continue;
       }
+
+      const entries = Object.entries(baggage);
+      if (entries.length === 0) {
+        rendered.push(path);
+        continue;
+      }
+
+      // Compact baggage rendering: key=value pairs.
+      const bagStr = entries
+        .map(([k, v]) => `${k}=${String(v)}`)
+        .join(",");
+
+      rendered.push(`${path}{${bagStr}}`);
+    }
+
+    if (rendered.length > 0) {
+      parts.push(`${namespace}:${rendered.join(",")}`);
     }
   }
 
@@ -716,8 +735,8 @@ function buildPhysicalTreeRows(
 
 interface ClassNodeInfo {
   readonly node: RootContent;
-  readonly classKey: string;
-  readonly classValue: string;
+  readonly classKey: string; // namespace
+  readonly classValue: string; // path
 }
 
 function buildClassIndex(
@@ -727,15 +746,34 @@ function buildClassIndex(
 
   const visit = (node: RootContent) => {
     if (!hasNodeClass(node)) return;
-    const classMap: NodeClassMap = (node.data as Any).class;
-    for (const [key, rawValue] of Object.entries(classMap)) {
-      const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-      for (const v of values) {
-        const byValue = index.get(key) ?? new Map<string, ClassNodeInfo[]>();
-        if (!index.has(key)) index.set(key, byValue);
-        const bucket = byValue.get(v) ?? [];
-        if (!byValue.has(v)) byValue.set(v, bucket);
-        bucket.push({ node, classKey: key, classValue: v });
+
+    const classMap = node.data.class as NodeClassMap<Record<string, unknown>>;
+
+    for (const [namespace, classifications] of Object.entries(classMap)) {
+      if (!Array.isArray(classifications) || classifications.length === 0) {
+        continue;
+      }
+
+      let byValue = index.get(namespace);
+      if (!byValue) {
+        byValue = new Map<string, ClassNodeInfo[]>();
+        index.set(namespace, byValue);
+      }
+
+      for (const cls of classifications) {
+        const path = cls.path;
+
+        let bucket = byValue.get(path);
+        if (!bucket) {
+          bucket = [];
+          byValue.set(path, bucket);
+        }
+
+        bucket.push({
+          node,
+          classKey: namespace,
+          classValue: path,
+        });
       }
     }
   };

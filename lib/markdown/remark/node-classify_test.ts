@@ -79,6 +79,19 @@ doc-classify:
 #### Case Heading
 `.trim() + "\n";
 
+const FRONTMATTER_BAGGAGE_MD = `
+---
+doc-classify:
+  - select: h1
+    role:
+      path: project
+      baggage:
+        id: proj-123
+        severity: high
+---
+# Project With Baggage
+`.trim() + "\n";
+
 Deno.test("nodeClassifier remark plugin", async (t) => {
   await t.step(
     "classifies nodes and builds catalog via callback stored on root.data",
@@ -92,34 +105,32 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
             nodes: ["h1"],
             classify: (nodes) => {
               assertEquals(nodes.length, 1);
-              return { superclass: "role", subclass: "title" };
+              return { namespace: "role", path: "title" };
             },
           },
           // Mark all h2 headings as sections
           {
             nodes: ["h2"],
-            classify: () => ({ superclass: "role", subclass: "section" }),
+            classify: () => ({ namespace: "role", path: "section" }),
           },
           // Mark all paragraphs as "body"
           {
             nodes: ["paragraph"],
             classify: (nodes) =>
-              nodes.length > 0
-                ? { superclass: "kind", subclass: "body" }
-                : false,
+              nodes.length > 0 ? { namespace: "kind", path: "body" } : false,
           },
           // Mark SQL code blocks with two tags to exercise array merging
           {
             nodes: ["code[lang=sql]"],
             classify: () => ({
-              superclass: "tag",
-              subclass: ["sql", "example"],
+              namespace: "tag",
+              path: ["sql", "example"],
             }),
           },
           // Second classifier for the same SQL code on the same key (merge)
           {
             nodes: ["code[lang=sql]"],
-            classify: () => ({ superclass: "tag", subclass: "snippet" }),
+            classify: () => ({ namespace: "tag", path: "snippet" }),
           },
         ],
         // store the catalog on root.data.classifierCatalog like the old behavior.
@@ -168,22 +179,27 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
 
       // h1 classification
       assert(hasNodeClass(h1));
-      assertEquals(h1.data!.class["role"], "title");
+      const h1Role = h1.data!.class["role"] ?? [];
+      const h1RolePaths = h1Role.map((c) => c.path).sort();
+      assertEquals(h1RolePaths, ["title"]);
 
       // h2 classification
       assert(hasNodeClass(h2A));
-      assertEquals(h2A.data!.class["role"], "section");
+      const h2Role = h2A.data!.class["role"] ?? [];
+      const h2RolePaths = h2Role.map((c) => c.path).sort();
+      assertEquals(h2RolePaths, ["section"]);
 
       // paragraph classification (at least intro paragraph)
       assert(hasNodeClass(pIntro));
-      assertEquals(pIntro.data!.class["kind"], "body");
+      const introKind = pIntro.data!.class["kind"] ?? [];
+      const introKindPaths = introKind.map((c) => c.path).sort();
+      assertEquals(introKindPaths, ["body"]);
 
       // SQL code: ensure merging of multiple classifications on same key
       assert(hasNodeClass(sqlCode));
-      const tagValue = sqlCode.data!.class["tag"];
-      assert(Array.isArray(tagValue));
-      const sorted = [...tagValue].sort();
-      assertEquals(sorted, ["example", "snippet", "sql"].sort());
+      const tagClasses = sqlCode.data!.class["tag"] ?? [];
+      const tagPaths = tagClasses.map((c) => c.path).sort();
+      assertEquals(tagPaths, ["example", "snippet", "sql"].sort());
 
       // Catalog callback should have received a populated catalog.
       assert(catalogSeen);
@@ -231,7 +247,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
         classifiers: (_root: Root) => [
           {
             nodes: ["h1"],
-            classify: () => ({ superclass: "role", subclass: "title" }),
+            classify: () => ({ namespace: "role", path: "title" }),
           },
         ],
         // no catalog callback
@@ -242,7 +258,9 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
 
       // Node still gets classification
       assert(hasNodeClass(h1));
-      assertEquals(h1.data.class["role"], "title");
+      const roleClasses = h1.data.class["role"] ?? [];
+      const rolePaths = roleClasses.map((c) => c.path).sort();
+      assertEquals(rolePaths, ["title"]);
 
       // But root has no classifierCatalog (we never set it)
       const anyRoot = root as Root & { data?: Record<string, unknown> };
@@ -288,7 +306,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
             classify: (nodes) => {
               // simulate early exit: skip applying any class
               if (nodes.length > 0) return false;
-              return { superclass: "kind", subclass: "body" };
+              return { namespace: "kind", path: "body" };
             },
           },
         ],
@@ -297,8 +315,6 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
         },
       });
 
-      // We know SAMPLE_MD has paragraphs, but our classifier returned false.
-      // So no paragraph should have a class map.
       const paragraphs = root.children.filter(
         (n) => n.type === "paragraph",
       ) as RootContent[];
@@ -321,7 +337,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
         classifiers: (_root: Root) => [
           {
             nodes: ["h1"],
-            classify: () => ({ superclass: "role", subclass: "title" }),
+            classify: () => ({ namespace: "role", path: "title" }),
           },
         ],
         // no catalog needed here
@@ -350,8 +366,8 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
         yield {
           nodes: ["h1"],
           classify: (nodes) => ({
-            superclass: "role",
-            subclass: nodes.length === 1 ? "title" : "heading",
+            namespace: "role",
+            path: nodes.length === 1 ? "title" : "heading",
           }),
         };
       }
@@ -367,7 +383,9 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
 
       assert(h1);
       assert(hasNodeClass(h1));
-      assertEquals(h1.data.class["role"], "title");
+      const roles = h1.data.class["role"] ?? [];
+      const rolePaths = roles.map((c) => c.path).sort();
+      assertEquals(rolePaths, ["title"]);
 
       // Using catalogToRootData helper, catalog is stored on root.data
       const anyRoot = root as Root & {
@@ -396,8 +414,8 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
             classify: (_nodes) => {
               // Multiple class entries for the same selection
               function* entries() {
-                yield { superclass: "role", subclass: "title" as const };
-                yield { superclass: "kind", subclass: "heading" as const };
+                yield { namespace: "role", path: "title" as const };
+                yield { namespace: "kind", path: "heading" as const };
               }
               return entries();
             },
@@ -415,9 +433,13 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       assert(h1);
       assert(hasNodeClass(h1));
 
-      // Both classifications from the iterator should be present
-      assertEquals(h1.data.class["role"], "title");
-      assertEquals(h1.data.class["kind"], "heading");
+      const roleClasses = h1.data.class["role"] ?? [];
+      const kindClasses = h1.data.class["kind"] ?? [];
+      const rolePaths = roleClasses.map((c) => c.path).sort();
+      const kindPaths = kindClasses.map((c) => c.path).sort();
+
+      assertEquals(rolePaths, ["title"]);
+      assertEquals(kindPaths, ["heading"]);
 
       // Catalog should have both keys and include the h1 under both.
       assert(catalogSeen);
@@ -455,16 +477,28 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       assert(h1 && h2 && h3 && h4);
 
       assert(hasNodeClass(h1));
-      assertEquals(h1.data.class["role"], "project");
+      assertEquals(
+        (h1.data.class["role"] ?? []).map((c) => c.path),
+        ["project"],
+      );
 
       assert(hasNodeClass(h2));
-      assertEquals(h2.data.class["role"], "test-strategy");
+      assertEquals(
+        (h2.data.class["role"] ?? []).map((c) => c.path),
+        ["test-strategy"],
+      );
 
       assert(hasNodeClass(h3));
-      assertEquals(h3.data.class["role"], "test-plan");
+      assertEquals(
+        (h3.data.class["role"] ?? []).map((c) => c.path),
+        ["test-plan"],
+      );
 
       assert(hasNodeClass(h4));
-      assertEquals(h4.data.class["role"], "test-case");
+      assertEquals(
+        (h4.data.class["role"] ?? []).map((c) => c.path),
+        ["test-case"],
+      );
 
       // Catalog should show all these roles too via catalogToRootData
       const anyRoot = root as Root & {
@@ -482,6 +516,61 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       assert(strat.includes(h2));
       assert(plan.includes(h3));
       assert(tcase.includes(h4));
+    },
+  );
+
+  await t.step(
+    "supports baggage on classifications from rules",
+    async () => {
+      const root = await parseMarkdown("# Title\n", {
+        classifiers: (_root: Root) => [
+          {
+            nodes: ["h1"],
+            classify: () => ({
+              namespace: "role",
+              path: "project",
+              baggage: { id: "proj-1", severity: "high" },
+            }),
+          },
+        ],
+      });
+
+      const h1 = root.children.find(
+        (n) => n.type === "heading",
+      ) as Heading | undefined;
+      assert(h1);
+      assert(hasNodeClass(h1));
+
+      const roleClasses = h1.data.class["role"] ?? [];
+      assertEquals(roleClasses.length, 1);
+      assertEquals(roleClasses[0].path, "project");
+      assertEquals(roleClasses[0].baggage, {
+        id: "proj-1",
+        severity: "high",
+      });
+    },
+  );
+
+  await t.step(
+    "supports baggage on classifications from document frontmatter",
+    async () => {
+      const root = await parseMarkdown(FRONTMATTER_BAGGAGE_MD, {
+        classifiers: classifiersFromFrontmatter(),
+      });
+
+      const h1 = root.children.find(
+        (n) => n.type === "heading",
+      ) as Heading | undefined;
+      assert(h1);
+      assert(hasNodeClass(h1));
+
+      const roleClasses = h1.data.class["role"] ?? [];
+      assertEquals(roleClasses.length, 1);
+      assertEquals(roleClasses[0].path, "project");
+      assertEquals(roleClasses[0].baggage, {
+        id: "proj-123",
+        severity: "high",
+      });
     },
   );
 });
