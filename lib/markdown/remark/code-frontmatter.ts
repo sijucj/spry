@@ -56,16 +56,16 @@
  *   node data and not duplicate work.
  * - Designed to be used standalone or as a helper for selector engines
  *   and Markdown-driven execution/orchestration engines.
- * - Does not mutate the code `value`; only attaches metadata on `node.data`.
+ * - Does not mutate the code content; only attaches metadata on `node.data`.
  */
 
 import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
+import { visit } from "npm:unist-util-visit@^5";
 import { getLanguageByIdOrAlias, LanguageSpec } from "../../universal/code.ts";
 import {
   instructionsFromText,
   PosixStylePI,
 } from "../../universal/posix-pi.ts";
-import { visit } from "npm:unist-util-visit@^5";
 
 /** The structured enrichment attached to a code node by this plugin. */
 export interface CodeFrontmatter {
