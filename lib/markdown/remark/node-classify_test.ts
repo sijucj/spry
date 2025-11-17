@@ -12,12 +12,12 @@ import { remark } from "npm:remark@^15";
 import {
   catalogToRootData,
   type ClassifierCatalog,
-  classifiersFromFrontmatter,
   hasNodeClass,
   nodeClassifier,
   type NodeClassifierRule,
 } from "./node-classify.ts";
 import { documentFrontmatter } from "./doc-frontmatter.ts";
+import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
 
 /**
  * Helper: parse markdown into an mdast Root using the full pipeline:

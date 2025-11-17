@@ -24,9 +24,8 @@ import documentSchemaPlugin, {
   colonParagraphSectionRule,
 } from "./doc-schema.ts";
 import headingFrontmatterPlugin from "./heading-frontmatter.ts";
-import nodeClassifierPlugin, {
-  classifiersFromFrontmatter,
-} from "./node-classify.ts";
+import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
+import nodeClassifierPlugin from "./node-classify.ts";
 import nodeIdentitiesPlugin from "./node-identities.ts";
 
 import type { ParsedMarkdownTree } from "./mdast-view.ts";
@@ -59,18 +58,11 @@ export async function readMarkdownTrees(
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     })
     .use(nodeClassifierPlugin, {
+      // be sure that all frontmatter plugins are run before this
       classifiers: classifiersFromFrontmatter(),
     })
-    .use(documentSchemaPlugin, {
-      namespace: "prime",
-      enrichWithBelongsTo: true,
-      includeDefaultHeadingRule: true,
-      sectionRules: [
-        boldParagraphSectionRule(),
-        colonParagraphSectionRule(),
-      ],
-    })
     .use(nodeIdentitiesPlugin, {
+      // establish entities last, after everything else is done for stability
       identityFromHeadingFM: (fm, node) => {
         if (!fm?.id || node.type !== "heading") return false as const;
         return {
@@ -78,6 +70,17 @@ export async function readMarkdownTrees(
           identity: String(fm.id),
         };
       },
+    })
+    .use(documentSchemaPlugin, {
+      // this plugin maintains node indexes so if you plan on mutating the AST,
+      // do it before this plugin
+      namespace: "prime",
+      enrichWithBelongsTo: true,
+      includeDefaultHeadingRule: true,
+      sectionRules: [
+        boldParagraphSectionRule(),
+        colonParagraphSectionRule(),
+      ],
     }),
 ): Promise<Array<ParsedMarkdownTree>> {
   if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
