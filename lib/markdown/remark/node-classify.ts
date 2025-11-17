@@ -102,7 +102,19 @@ export interface NodeClassifierRule {
  * Options for the nodeClassifier plugin.
  */
 export interface NodeClassifierOptions {
-  readonly classifiers: (root: Root) => Iterable<NodeClassifierRule>;
+  /**
+   * Classifiers can be:
+   *   - A single function:      (root: Root) => Iterable<NodeClassifierRule>
+   *   - An iterable of functions, e.g.:
+   *         [
+   *           (root) => [...],
+   *           (root) => generator()
+   *         ]
+   */
+  readonly classifiers:
+    | ((root: Root) => Iterable<NodeClassifierRule>)
+    | Iterable<(root: Root) => Iterable<NodeClassifierRule>>;
+
   readonly catalog?: <CC extends ClassifierCatalog>(
     catalog: CC,
     root: Root,
@@ -276,15 +288,25 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
   const { classifiers, catalog: catalogCallback } = options;
 
   return (root: Root) => {
-    const rulesIterable = classifiers(root);
-    const rules = Array.from(rulesIterable);
+    // Normalize classifiers into an array of functions
+    const classifierFns: Array<(root: Root) => Iterable<NodeClassifierRule>> =
+      typeof classifiers === "function"
+        ? [classifiers]
+        : Array.from(classifiers);
 
-    // Only build a catalog if a callback is supplied.
+    // Expand all functions → rules
+    const rules: NodeClassifierRule[] = [];
+    for (const fn of classifierFns) {
+      const produced = fn(root);
+      for (const rule of produced) {
+        rules.push(rule);
+      }
+    }
+
     const catalog: ClassifierCatalog | undefined = catalogCallback
       ? {}
       : undefined;
 
-    // If no rules and no catalog callback, nothing to do.
     if (rules.length === 0 && !catalog) return;
 
     const isSingleEntry = (
