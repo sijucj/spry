@@ -3,4 +3,7 @@
 
 import { CLI } from "../../../lib/markdown/remark/mdastctl.ts";
 
-await new CLI({ cmdName: "spry.ts", defaultFiles: ["Qualityfolio.md"] }).run();
+await new CLI({
+  cmdName: import.meta.filename?.split("/").pop(),
+  defaultFiles: ["Qualityfolio.md"],
+}).run();

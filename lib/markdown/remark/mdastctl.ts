@@ -39,9 +39,10 @@ import { computeSemVerSync } from "../../universal/version.ts";
 export class CLI {
   constructor(
     readonly conf?: {
-      readonly globalFiles?: string[];
-      readonly defaultFiles?: string[];
-      readonly cmdName?: string;
+      readonly ensureGlobalFiles?: string[]; // load these markdown files/remotes before CLI arguments or error if not available
+      readonly optionalGlobalFiles?: string[]; // TODO: load these if available, skip otherwise
+      readonly defaultFiles?: string[]; // load these markdown files/remotes when no CLI arguments given
+      readonly cmdName?: string; // the cmd name to show as the CLI entry point in help
     },
   ) {
   }
@@ -66,26 +67,29 @@ export class CLI {
   }
 
   protected baseCommand({ examplesCmd }: { examplesCmd: string }) {
+    const { cmdName = "mdastctl.ts", defaultFiles } = this.conf ?? {};
     return new Command()
       .example(
-        "default",
-        `${this.conf?.cmdName} ${examplesCmd}`,
+        `default ${
+          (defaultFiles?.length ?? 0) > 0 ? `(${defaultFiles?.join(", ")})` : ""
+        }`,
+        `${cmdName} ${examplesCmd}`,
       )
       .example(
-        "stdin",
-        `${this.conf?.cmdName} ${examplesCmd} -`,
+        "load md from stdin",
+        `${cmdName} ${examplesCmd} -`,
       )
       .example(
-        "local",
-        `${this.conf?.cmdName} ${examplesCmd} ./Qualityfolio.md`,
+        "load md from local fs",
+        `${cmdName} ${examplesCmd} ./Qualityfolio.md`,
       )
       .example(
-        "remote",
-        `${this.conf?.cmdName} ${examplesCmd} https://qualityfolio.dev/example.md`,
+        "load md from remote URL",
+        `${cmdName} ${examplesCmd} https://qualityfolio.dev/example.md`,
       )
       .example(
-        "mixed",
-        `${this.conf?.cmdName} ${examplesCmd} ./Qualityfolio.md https://qualityfolio.dev/example.md local.md`,
+        "load md from multiple",
+        `${cmdName} ${examplesCmd} ./Qualityfolio.md https://qualityfolio.dev/example.md local.md`,
       );
   }
 
@@ -115,7 +119,7 @@ export class CLI {
       .action(
         async (options, ...paths: string[]) => {
           const files = resolveFiles(
-            this.conf?.globalFiles,
+            this.conf?.ensureGlobalFiles,
             paths,
             this.conf?.defaultFiles ?? [],
           );
@@ -235,7 +239,7 @@ export class CLI {
       .action(
         async (options, ...paths: string[]) => {
           const files = resolveFiles(
-            this.conf?.globalFiles,
+            this.conf?.ensureGlobalFiles,
             paths,
             this.conf?.defaultFiles ?? [],
           );
@@ -351,7 +355,7 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
         const files = resolveFiles(
-          this.conf?.globalFiles,
+          this.conf?.ensureGlobalFiles,
           paths,
           this.conf?.defaultFiles ?? [],
         );
@@ -457,7 +461,7 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
         const files = resolveFiles(
-          this.conf?.globalFiles,
+          this.conf?.ensureGlobalFiles,
           paths,
           this.conf?.defaultFiles ?? [],
         );
@@ -571,7 +575,7 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
         const files = resolveFiles(
-          this.conf?.globalFiles,
+          this.conf?.ensureGlobalFiles,
           paths,
           this.conf?.defaultFiles ?? [],
         );
@@ -706,7 +710,7 @@ export class CLI {
         }
 
         const files = resolveFiles(
-          this.conf?.globalFiles,
+          this.conf?.ensureGlobalFiles,
           paths,
           this.conf?.defaultFiles ?? [],
         );
