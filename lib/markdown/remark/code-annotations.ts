@@ -5,38 +5,6 @@
  * The output is stored on each **mdast** `code` node at:
  *
  *   `node.data[codeAnns] = [{ language, annotations, annsCatalog }]`
- *
- * @example
- * ```ts
- * import { remark } from "npm:remark@^15";
- * import codeAnnotations from "./code-annotations.ts";
- *
- * const md = [
- *   "```bash --env prod -L 9 tag tag { priority: 3, note: 'ok' }",
- *   "# @description 'test'",
- *   "echo hi",
- *   "```",
- * ].join("\n");
- *
- * const tree = remark().use(codeAnnotations).parse(md);
- *
- * // Walk to a code node and inspect:
- * const code = (tree.children.find(n => n.type === "code") as any);
- * const { codeFM } = code.data;
- *
- * console.log(codeFM.lang);            // "bash"
- * console.log(codeFM.pi.pos);          // ["env","L","tag","tag","level","key"]
- * console.log(codeFM.pi.flags.env);    // "prod"
- * console.log(codeFM.pi.flags.level);  // 9  (coerced)
- * console.log(codeFM.attrs.priority);  // 3  (from JSON5)
- * ```
- *
- * @remarks
- * - This plugin is **idempotent**; running it more than once will reuse
- *   node data and not duplicate work.
- * - Designed to be used standalone or as a helper for selector engines
- *   and Markdown-driven execution/orchestration engines.
- * - Does not mutate the code content; only attaches metadata on `node.data`.
  */
 
 import { z } from "jsr:@zod/zod@4";
@@ -46,7 +14,11 @@ import {
   AnnotationCatalog,
   extractAnnotationsFromTextSync,
 } from "../../universal/code-comments.ts";
-import { LanguageSpec } from "../../universal/code.ts";
+import {
+  getLanguageByIdOrAlias,
+  type LanguageSpec,
+} from "../../universal/code.ts";
+import { isCodeWithFrontmatterNode } from "./code-frontmatter.ts";
 
 /** The structured enrichment attached to a code node by this plugin. */
 export type CodeAnnotations<Anns extends Record<string, unknown>> = {
@@ -96,43 +68,102 @@ export interface CodeAnnotationsOptions<Anns extends Record<string, unknown>> {
 }
 
 /**
+ * Core helper: discover and attach code annotations to a single `Code` node.
+ * - Idempotent: if `CODEANNS_KEY` is already present, it reuses the existing data.
+ * - Returns the annotated node (narrowed) or `undefined` if nothing was attached.
+ */
+export function discoverCodeAnnotations<Anns extends Record<string, unknown>>(
+  node: Code,
+  init: {
+    language: LanguageSpec;
+    prefix?: string;
+    defaults?: Partial<Anns>;
+    schema?: z.ZodType;
+  },
+): CodeWithAnnotationsNode<Anns> | undefined {
+  // deno-lint-ignore no-explicit-any
+  const untyped = node as any;
+  const data = (untyped.data ??= {});
+
+  // Already annotated: reuse
+  if (data[CODEANNS_KEY]) {
+    return node as CodeWithAnnotationsNode<Anns>;
+  }
+
+  const factory = annotationsFactory<Anns>(init);
+  const annsCatalog = factory.catalog(node.value);
+  const annotations = factory.transform(annsCatalog);
+
+  data[CODEANNS_KEY] = {
+    annotations,
+    annsCatalog,
+    factory,
+  } satisfies CodeAnnotations<Anns>;
+
+  return node as CodeWithAnnotationsNode<Anns>;
+}
+
+/**
+ * Default ingest behavior when the user does NOT provide CodeAnnotationsOptions.ingest.
+ *
+ * Logic:
+ *   1. If code-frontmatter enrichment exists AND
+ *   2. "--annotations" flag is set
+ *   → derive language and return an ingest-init object.
+ */
+export function defaultIngest(
+  code: Code,
+): false | {
+  language: LanguageSpec;
+  prefix?: string;
+  defaults?: Partial<Record<string, unknown>>;
+  schema?: z.ZodType;
+} {
+  // Case: rely on code-frontmatter
+  if (!isCodeWithFrontmatterNode(code)) return false;
+  const { codeFM } = code.data;
+
+  const flags = codeFM?.pi?.flags ?? {};
+  const enabled = Boolean(flags.annotations);
+  if (!enabled) return false;
+
+  // Determine language
+  const langId: string | undefined = codeFM.lang ?? code.lang ?? undefined;
+  if (!langId) return false;
+
+  const language = getLanguageByIdOrAlias(langId);
+  if (!language) return false;
+
+  return { language };
+}
+
+/**
  * CodeAnnotations remark plugin.
  *
  * @param options - See {@link CodeAnnotationsOptions}.
  * @returns A remark transformer that annotates `code` nodes with {@link CodeAnnotations}.
- *
- * @example
- * ```ts
- * import { remark } from "npm:remark@^15";
- * import codeAnnotations from "./code-annotations.ts";
- *
- * const processor = remark().use(codeAnnotations);
  */
-export default function codeAnnotations<Anns extends Record<string, unknown>>(
-  options: CodeAnnotationsOptions<Anns> = {},
+export default function codeAnnotations(
+  options: CodeAnnotationsOptions<Record<string, unknown>> = {},
 ) {
-  const { ingest, collect } = options;
+  const { ingest = defaultIngest, collect } = options;
 
   return function transformer(tree: Root) {
-    if (!ingest) return;
     visit(tree, "code", (node) => {
-      // deno-lint-ignore no-explicit-any
-      const untypedNode = node as any;
-      const data = (untypedNode.data ??= {});
-      if (!data[CODEANNS_KEY]) {
-        const answer = ingest(node);
-        if (answer) {
-          const factory = annotationsFactory(answer);
-          const annsCatalog = factory.catalog(node.value);
-          const annotations = factory.transform(annsCatalog);
-          data[CODEANNS_KEY] = {
-            annotations,
-            annsCatalog,
-            factory,
-          } satisfies CodeAnnotations<Anns>;
+      let annotated:
+        | CodeWithAnnotationsNode<Record<string, unknown>>
+        | undefined;
+
+      const answer = ingest(node);
+      if (answer) {
+        annotated = discoverCodeAnnotations<Record<string, unknown>>(
+          node,
+          answer,
+        );
+        if (annotated) {
+          collect?.(annotated);
         }
       }
-      collect?.(node as CodeWithAnnotationsNode<Anns>);
     });
   };
 }
