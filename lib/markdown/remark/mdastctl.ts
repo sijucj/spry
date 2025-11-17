@@ -31,6 +31,7 @@ import {
   sliceSourceForNode,
 } from "./mdast-io.ts";
 import { computeSemVerSync } from "../../universal/version.ts";
+import { doctor } from "../../universal/doctor.ts";
 
 // ---------------------------------------------------------------------------
 // CLI wiring
@@ -63,7 +64,18 @@ export class CLI {
       .command("tree", this.treeCommand())
       .command("class", this.classCommand())
       .command("schema", this.schemaCommand())
-      .command("md", this.mdCommand());
+      .command("md", this.mdCommand())
+      .command("doctor", this.doctorCommand());
+  }
+
+  protected doctorCommand() {
+    return new Command().name("doctor").description(
+      "Show dependencies and their availability",
+    ).action(async () => {
+      const diags = doctor(["deno --version", "sqlpage --version"]);
+      const result = await diags.run();
+      diags.render.cli(result);
+    });
   }
 
   protected baseCommand({ examplesCmd }: { examplesCmd: string }) {
