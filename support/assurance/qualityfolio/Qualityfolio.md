@@ -36,7 +36,10 @@ End-to-end user lifecycle: sign-up, verify, login, MFA, password reset.
 
 @id acct-create-plan
 
-```yaml
+```yaml HFM
+doc-classify:
+  - role: requirement
+    tags: ["one", "two"]
 owner: "[riya@example.org](mailto:riya@example.org)"
 objective: Sign-up → login → profile bootstrap
 ```
@@ -107,6 +110,7 @@ Focuses on lockout and reset flows.
 
 ```yaml HFM
 id: pwd-recovery-plan
+nature: { "role": "expectation" }
 owner: "[riya@example.org](mailto:riya@example.org)"
 objective: Lockout policy & reset email
 ```
