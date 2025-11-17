@@ -517,13 +517,12 @@ export type ExtractorConfig<T = unknown> = {
 
 const DEFAULT_SPRY = { enabled: false, at: "@", bang: "!", blockFence: "..." };
 
-// deno-lint-ignore require-await
-export async function extractAnnotationsFromText<T = unknown>(
+export function extractAnnotationsFromTextSync<T = unknown>(
   text: string,
   lang: LanguageSpec,
   cfg?: ExtractorConfig<T>,
   opts?: { path?: string },
-): Promise<AnnotationCatalog<T>> {
+): AnnotationCatalog<T> {
   const comments = scanComments(text, lang);
   const items: AnnotationItem[] = [];
 
@@ -641,6 +640,16 @@ export async function extractAnnotationsFromText<T = unknown>(
   }
 
   return finalizeCatalog<T>(lang.id, items as AnnotationItem<T>[]);
+}
+
+// deno-lint-ignore require-await
+export async function extractAnnotationsFromText<T = unknown>(
+  text: string,
+  lang: LanguageSpec,
+  cfg?: ExtractorConfig<T>,
+  opts?: { path?: string },
+): Promise<AnnotationCatalog<T>> {
+  return extractAnnotationsFromTextSync(text, lang, cfg, opts);
 }
 
 /* -------------------------------------------------------------------------------------------------
