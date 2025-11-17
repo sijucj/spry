@@ -88,6 +88,7 @@ export class CLI {
         `${this.conf?.cmdName} ${examplesCmd} ./Qualityfolio.md https://qualityfolio.dev/example.md local.md`,
       );
   }
+
   // -------------------------------------------------------------------------
   // ls command (tabular "physical" view)
   // -------------------------------------------------------------------------
