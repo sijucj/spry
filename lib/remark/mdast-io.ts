@@ -69,6 +69,7 @@ export function mardownParserPipeline() {
           identity: String(fm.id),
         };
       },
+      persistCatalogInRoot: true,
     })
     .use(documentSchemaPlugin, {
       // this plugin maintains node indexes so if you plan on mutating the AST,

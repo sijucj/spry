@@ -250,6 +250,34 @@ export interface NodeIdentitiesOptions<
   readonly catalog?: (
     catalog: Record<Supplier, Record<TextIdentity, Node>>,
   ) => void;
+
+  /**
+   * Optionally store the identities in the root node and then you can use
+   * it later in the pipeline.
+   */
+  readonly persistCatalogInRoot?: boolean;
+}
+
+/**
+ * Top-level type guard.
+ *
+ * Returns true only if:
+ *   - root.data exists
+ *   - root.data.nodeIdsCatalog exists
+ *   - root.data.nodeIdsCatalog is object
+ */
+export function hasNodeIdsCatalog<Supplier extends string = string>(
+  root: Root,
+): root is Root & {
+  data: Root["data"] & {
+    nodeIdsCatalog: Record<Supplier, Record<TextIdentity, Node>>;
+  };
+} {
+  const data = root.data;
+  return Boolean(
+    data && typeof data === "object" &&
+      typeof (data as Any).nodeIdsCatalog === "object",
+  );
 }
 
 // deno-lint-ignore no-explicit-any
@@ -319,16 +347,18 @@ export const nodeIdentities: Plugin<
     identityFromSection,
     identifiedAs,
     catalog,
+    persistCatalogInRoot,
   } = options;
 
   return (tree: Root) => {
-    let catalogMap:
-      | Map<string, Map<TextIdentity, Node>>
-      | undefined;
+    const isCatalogging = (catalog || persistCatalogInRoot) ?? false;
+    const catalogDict: Record<string, Map<TextIdentity, Node>> = {};
 
-    if (catalog) {
-      catalogMap = new Map();
-    }
+    //     const data = (root.data ??= {});
+    // const existing: readonly Graph[] = Array.isArray((data as Any).graphs)
+    //   ? (data as Any).graphs
+    //   : [];
+    // (data as Any).graphs = [...existing, graph];
 
     visit(tree, (node) => {
       const perNodeIdentities: Partial<NodeIdentities<string>> = {};
@@ -365,15 +395,15 @@ export const nodeIdentities: Plugin<
           identifiedAs(node, finalized);
         }
 
-        if (catalog && catalogMap) {
+        if (isCatalogging) {
           for (const supplier of suppliers) {
             const ids = finalized[supplier] ?? [];
             if (ids.length === 0) continue;
 
-            let byId = catalogMap.get(supplier);
+            let byId = catalogDict[supplier];
             if (!byId) {
               byId = new Map<TextIdentity, Node>();
-              catalogMap.set(supplier, byId);
+              catalogDict[supplier] = byId;
             }
 
             for (const id of ids) {
@@ -384,10 +414,10 @@ export const nodeIdentities: Plugin<
       }
     });
 
-    if (catalog && catalogMap) {
+    if (isCatalogging) {
       const out: Record<string, Record<TextIdentity, Node>> = {} as Any;
 
-      for (const [supplier, byId] of catalogMap.entries()) {
+      for (const [supplier, byId] of Object.entries(catalogDict)) {
         const m: Record<TextIdentity, Node> = {};
         for (const [id, node] of byId.entries()) {
           m[id] = node;
@@ -395,7 +425,12 @@ export const nodeIdentities: Plugin<
         out[supplier] = m;
       }
 
-      catalog(out);
+      catalog?.(out);
+
+      if (persistCatalogInRoot) {
+        const data = (tree.data ??= {});
+        (data as Any).nodeIdsCatalog = out;
+      }
     }
 
     return tree;
