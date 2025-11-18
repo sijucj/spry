@@ -16,6 +16,7 @@ import { unified } from "unified";
 
 import { remark } from "remark";
 
+import { VFile } from "vfile";
 import codeFrontmatterPlugin from "./code-frontmatter.ts";
 import docFrontmatterPlugin from "./doc-frontmatter.ts";
 import documentSchemaPlugin, {
@@ -28,9 +29,10 @@ import nodeClassifierPlugin from "./node-classify.ts";
 import nodeIdentitiesPlugin from "./node-identities.ts";
 
 import {
+  Source,
+  SourceLabel,
   SourceProvenance,
   sources,
-  textSources,
   uniqueSources,
 } from "../universal/resource.ts";
 
@@ -81,26 +83,153 @@ export function mardownParserPipeline() {
     });
 }
 
+/**
+ * Typed metadata attached to each VFile created from a Source.
+ *
+ * Stored as `file.data.resource`.
+ */
+export interface ResourceMeta<
+  PathKey extends string = "path",
+  SP extends SourceProvenance<PathKey> = SourceProvenance<PathKey>,
+> {
+  readonly origin: Source<PathKey, SP>;
+  readonly label: SourceLabel;
+  readonly nature: Source<PathKey, SP>["nature"];
+  readonly provenance: SP;
+}
+
+/**
+ * A VFile whose `data.resource` field carries typed resource metadata.
+ */
+export type ResourceVFile<
+  PathKey extends string = "path",
+  SP extends SourceProvenance<PathKey> = SourceProvenance<PathKey>,
+> = VFile & {
+  data: VFile["data"] & {
+    resource: ResourceMeta<PathKey, SP>;
+  };
+};
+
+/**
+ * Async generator that materializes `VFile` instances for each Source.
+ *
+ * Each yielded file has:
+ *
+ * - `file.value` → text contents
+ * - `file.path`  → derived from `origin.label` (override via `pathFromSource`)
+ * - `file.data.resource` → strongly-typed `ResourceMeta`
+ *
+ * Error behavior mirrors `textSources()`:
+ *
+ * - If loading succeeds → yields `{ origin, file }`.
+ * - If loading fails:
+ *   - If `options.onError` is provided → caller may return a replacement file
+ *     or `false` to skip.
+ *   - If `options.onError` is absent or returns `false` → skips that source.
+ */
+export async function* vfiles<
+  PathKey extends string = "path",
+  SP extends SourceProvenance<PathKey> = SourceProvenance<PathKey>,
+>(
+  srcs:
+    | Iterable<Source<PathKey, SP>>
+    | AsyncIterable<Source<PathKey, SP>>,
+  options?: {
+    /**
+     * Optional working directory for created vfiles.
+     */
+    readonly cwd?: string | URL;
+
+    /**
+     * Optional override for the vfile path derived from a Source.
+     * Defaults to `origin.label`.
+     */
+    readonly pathFromSource?: (
+      origin: Source<PathKey, SP>,
+    ) => string | undefined;
+
+    /**
+     * Error handler. Can:
+     * - return a replacement `{ origin, file }` to keep the record
+     * - return `false` to skip this source entirely
+     */
+    readonly onError?: (
+      origin: Source<PathKey, SP>,
+      error: Error,
+    ) =>
+      | {
+        origin: Source<PathKey, SP>;
+        file: ResourceVFile<PathKey, SP>;
+        text: string;
+      }
+      | false
+      | Promise<
+        | {
+          origin: Source<PathKey, SP>;
+          file: ResourceVFile<PathKey, SP>;
+          text: string;
+        }
+        | false
+      >;
+  },
+) {
+  const { cwd, pathFromSource } = options ?? {};
+
+  for await (const origin of srcs) {
+    const loaded = await origin.safeText();
+
+    if (typeof loaded === "string") {
+      const path = pathFromSource?.(origin) ?? origin.label;
+
+      const file = new VFile({
+        value: loaded,
+        path,
+        cwd: String(cwd),
+      }) as ResourceVFile<PathKey, SP>;
+
+      file.data.resource = {
+        origin,
+        label: origin.label,
+        nature: origin.nature,
+        provenance: origin.provenance,
+      };
+
+      yield { origin, file, text: loaded };
+      continue;
+    }
+
+    // Handle error case
+    const error = loaded instanceof Error ? loaded : new Error(String(loaded));
+    const replaced = await options?.onError?.(origin, error);
+
+    if (replaced) {
+      // Trust caller's typing of ResourceVFile
+      yield replaced;
+    }
+    // if we get to here we've ignored the file
+  }
+}
+
 export async function* markdownASTs(
   src: Iterable<SourceProvenance> | AsyncIterable<SourceProvenance>,
-  options?: Parameters<typeof textSources>[1] & {
+  options?: Parameters<typeof vfiles>[1] & {
     readonly mdParsePipeline?: ReturnType<typeof mardownParserPipeline>;
   },
 ) {
   const mdpp = options?.mdParsePipeline ?? mardownParserPipeline();
   for await (
-    const ts of textSources(uniqueSources(sources(src)), options)
+    const vf of vfiles(uniqueSources(sources(src)), options)
   ) {
-    const mdastRoot = mdpp.parse(ts.text);
+    const mdastRoot = mdpp.parse(vf.file);
     await mdpp.run(mdastRoot);
     yield {
-      ...ts,
+      ...vf,
       mdastRoot,
       mdText: {
-        nodeOffsets: (node: RootContent) => nodeOffsetsInSource(ts.text, node),
-        sliceForNode: (node: RootContent) => sliceSourceForNode(ts.text, node),
+        nodeOffsets: (node: RootContent) => nodeOffsetsInSource(vf.text, node),
+        sliceForNode: (node: RootContent) => sliceSourceForNode(vf.text, node),
         sectionRangesForHeadings: (headings: Heading[]) =>
-          computeSectionRangesForHeadings(mdastRoot, ts.text, headings),
+          computeSectionRangesForHeadings(mdastRoot, vf.text, headings),
       },
     };
   }
