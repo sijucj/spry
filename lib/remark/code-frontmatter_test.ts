@@ -1,8 +1,8 @@
-import { assert, assertEquals, assertThrows } from "jsr:@std/assert@^1";
-import remarkFrontmatter from "npm:remark-frontmatter@^5";
-import remarkGfm from "npm:remark-gfm@^4";
-import { remark } from "npm:remark@^15";
-import { ensureLanguageByIdOrAlias } from "../../universal/code.ts";
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import { remark } from "remark";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
+import { ensureLanguageByIdOrAlias } from "../universal/code.ts";
 import codeFrontmatter, {
   type CodeFrontmatterOptions,
   parseFrontmatterFromCode,

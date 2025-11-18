@@ -7,14 +7,14 @@
  * - Slicing original source text for nodes / sections
  */
 
-import remarkDirective from "https://esm.sh/remark-directive@4";
-import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import remarkFrontmatter from "npm:remark-frontmatter@^5";
-import remarkGfm from "npm:remark-gfm@^4";
-import remarkParse from "npm:remark-parse@^11";
-import { unified } from "npm:unified@^11";
+import remarkDirective from "remark-directive";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import type { Heading, Root, RootContent } from "types/mdast";
+import { unified } from "unified";
 
-import { remark } from "npm:remark@^15";
+import { remark } from "remark";
 
 import codeFrontmatterPlugin from "./code-frontmatter.ts";
 import docFrontmatterPlugin from "./doc-frontmatter.ts";
@@ -32,7 +32,7 @@ import {
   sources,
   textSources,
   uniqueSources,
-} from "../../universal/resource.ts";
+} from "../universal/resource.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

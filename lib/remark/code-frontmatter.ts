@@ -24,7 +24,7 @@
  *
  * @example
  * ```ts
- * import { remark } from "npm:remark@^15";
+ * import { remark } from "remark";
  * import codeFrontmatter from "./code-frontmatter.ts";
  *
  * const md = [
@@ -59,13 +59,10 @@
  * - Does not mutate the code content; only attaches metadata on `node.data`.
  */
 
-import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
-import { visit } from "npm:unist-util-visit@^5";
-import { getLanguageByIdOrAlias, LanguageSpec } from "../../universal/code.ts";
-import {
-  instructionsFromText,
-  PosixStylePI,
-} from "../../universal/posix-pi.ts";
+import type { Code, Root, RootContent } from "types/mdast";
+import { visit } from "unist-util-visit";
+import { getLanguageByIdOrAlias, LanguageSpec } from "../universal/code.ts";
+import { instructionsFromText, PosixStylePI } from "../universal/posix-pi.ts";
 
 /** The structured enrichment attached to a code node by this plugin. */
 export interface CodeFrontmatter {
@@ -142,7 +139,7 @@ export interface CodeFrontmatterOptions {
  *
  * @example
  * ```ts
- * import { remark } from "npm:remark@^15";
+ * import { remark } from "remark";
  * import codeFrontmatter from "./code-frontmatter.ts";
  *
  * const processor = remark().use(codeFrontmatter, {

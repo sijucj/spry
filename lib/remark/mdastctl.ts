@@ -5,16 +5,16 @@
  * General-purpose CLI for exploring **mdast** trees.
  */
 
-import { Command } from "jsr:@cliffy/command@1.0.0-rc.8";
-import { CompletionsCommand } from "jsr:@cliffy/command@1.0.0-rc.8/completions";
-import { HelpCommand } from "jsr:@cliffy/command@1.0.0-rc.8/help";
+import { Command } from "@cliffy/command";
+import { CompletionsCommand } from "@cliffy/command/completions";
+import { HelpCommand } from "@cliffy/command/help";
 
-import { bold, cyan, gray, magenta, red, yellow } from "jsr:@std/fmt@1/colors";
+import { bold, cyan, gray, magenta, red, yellow } from "@std/fmt/colors";
 
-import type { Heading, RootContent } from "npm:@types/mdast@^4";
+import type { Heading, RootContent } from "types/mdast";
 
-import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
-import { TreeLister } from "../../universal/lister-tree-tui.ts";
+import { ListerBuilder } from "../universal/lister-tabular-tui.ts";
+import { TreeLister } from "../universal/lister-tree-tui.ts";
 
 import {
   buildMdAstTabularRows,
@@ -25,8 +25,8 @@ import {
   viewableMarkdownASTs,
 } from "./mdast-view.ts";
 
-import { doctor } from "../../universal/doctor.ts";
-import { computeSemVerSync } from "../../universal/version.ts";
+import { doctor } from "../universal/doctor.ts";
+import { computeSemVerSync } from "../universal/version.ts";
 
 // ---------------------------------------------------------------------------
 // CLI wiring

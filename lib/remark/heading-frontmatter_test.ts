@@ -1,8 +1,8 @@
 // lib/markdown/remark/heading-frontmatter_test.ts
 
-import { assert, assertEquals } from "jsr:@std/assert@^1";
-import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import { remark } from "npm:remark@^15";
+import { assert, assertEquals } from "@std/assert";
+import { remark } from "remark";
+import type { Heading, Root, RootContent } from "types/mdast";
 
 import {
   headingFrontmatter,

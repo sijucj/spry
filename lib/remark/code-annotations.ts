@@ -7,17 +7,17 @@
  *   `node.data[codeAnns] = [{ language, annotations, annsCatalog }]`
  */
 
-import { z } from "jsr:@zod/zod@4";
-import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
-import { visit } from "npm:unist-util-visit@^5";
+import { z } from "@zod";
+import type { Code, Root, RootContent } from "types/mdast";
+import { visit } from "unist-util-visit";
 import {
   AnnotationCatalog,
   extractAnnotationsFromTextSync,
-} from "../../universal/code-comments.ts";
+} from "../universal/code-comments.ts";
 import {
   getLanguageByIdOrAlias,
   type LanguageSpec,
-} from "../../universal/code.ts";
+} from "../universal/code.ts";
 import { isCodeWithFrontmatterNode } from "./code-frontmatter.ts";
 
 /** The structured enrichment attached to a code node by this plugin. */

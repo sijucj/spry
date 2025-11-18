@@ -1,10 +1,10 @@
 // node-identities_test.ts
 
-import { assert, assertArrayIncludes, assertEquals } from "jsr:@std/assert@^1";
-import { unified } from "npm:unified@^11";
-import remarkParse from "npm:remark-parse@^11";
-import { visit } from "npm:unist-util-visit@^5";
-import type { Heading, Node, Paragraph, Root } from "npm:@types/mdast@^4";
+import { assert, assertArrayIncludes, assertEquals } from "@std/assert";
+import remarkParse from "remark-parse";
+import type { Heading, Node, Paragraph, Root } from "types/mdast";
+import { unified } from "unified";
+import { visit } from "unist-util-visit";
 
 import {
   hasNodeIdentities,

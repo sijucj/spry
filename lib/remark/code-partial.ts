@@ -8,7 +8,7 @@
  * It is intended to be added *after* the `codeFrontmatter` plugin:
  *
  * ```ts
- * import { remark } from "npm:remark@^15";
+ * import { remark } from "remark";
  * import codeFrontmatter from "./enriched-cell.ts";
  * import codePartials from "./code-partial.ts";
  *
@@ -31,10 +31,10 @@
  * will be detected as a “partial” and passed to `collect()`.
  */
 
-import { globToRegExp, isGlob, normalize } from "jsr:@std/path@^1";
-import { z, ZodType } from "jsr:@zod/zod@4";
-import type { Code, Root, RootContent } from "npm:@types/mdast@^4";
-import { jsonToZod } from "../../universal/zod-aide.ts";
+import { globToRegExp, isGlob, normalize } from "@std/path";
+import { z, ZodType } from "@zod";
+import type { Code, Root, RootContent } from "types/mdast";
+import { jsonToZod } from "../universal/zod-aide.ts";
 import {
   CodeWithFrontmatterData,
   CodeWithFrontmatterNode,

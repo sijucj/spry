@@ -493,6 +493,19 @@ export interface PosixPIQuery {
   getFlag<T = unknown>(...names: string[]): T | undefined;
 
   /**
+   * Return the value of the first matching string typed flag among `names`, or
+   * `undefined`.
+   *
+   * Names can be short or long (e.g. `"L"`, `"level"`, `"--level"`); they are
+   * normalized by stripping leading dashes and then passing through
+   * `options.normalizeFlagKey` when supplied.
+   *
+   * If the underlying PI stored an array for this flag, first element is returned
+   * as-is. If a scalar was stored, the scalar is returned.
+   */
+  getTextFlag<T extends string = string>(...names: string[]): T | undefined;
+
+  /**
    * True if any of the given flag names is present in `pi.flags`.
    *
    * The same normalization rules as {@link getFlag} apply.
@@ -510,6 +523,18 @@ export interface PosixPIQuery {
    * same logical option (e.g. `-t`, `--tag`, `--tags`).
    */
   getFlagValues<T = unknown>(...names: string[]): T[];
+
+  /**
+   * Return all values for the given text flag names as a flattened array.
+   *
+   * - Scalar flag values are pushed as a single element.
+   * - Array-valued flags are concatenated.
+   * - Flags that are not present are skipped.
+   *
+   * This is useful when multiple names should be treated as the
+   * same logical option (e.g. `-t`, `--tag`, `--tags`).
+   */
+  getTextFlagValues<T extends string = string>(...names: string[]): T[];
 
   /**
    * Convenience helper for boolean-style flags.
@@ -630,12 +655,25 @@ export function queryPosixPI(
       return lookupFirstValue(...names) as T | undefined;
     },
 
+    getTextFlag<T extends string = string>(...names: string[]): T | undefined {
+      let value = lookupFirstValue(...names);
+      if (Array.isArray(value) && value.length > 0) value = value[0];
+      if (typeof value === "string") return value as T;
+      return undefined;
+    },
+
     hasFlag(...names: string[]): boolean {
       return lookupFirstValue(...names) !== undefined;
     },
 
     getFlagValues<T = unknown>(...names: string[]): T[] {
       return collectValues(...names) as T[];
+    },
+
+    getTextFlagValues<T extends string = string>(...names: string[]): T[] {
+      return collectValues(...names).filter((v) =>
+        typeof v === "string"
+      ) as T[];
     },
 
     isEnabled(...names: string[]): boolean {

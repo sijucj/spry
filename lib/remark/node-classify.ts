@@ -30,8 +30,8 @@
  * - Code generation / orchestration based on annotated headings or blocks.
  */
 
-import type { Root, RootContent } from "npm:@types/mdast@^4";
-import type { Plugin } from "npm:unified@^11";
+import type { Root, RootContent } from "types/mdast";
+import type { Plugin } from "unified";
 
 import { mdastql } from "./mdastql.ts";
 

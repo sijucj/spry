@@ -1,9 +1,9 @@
 // injected-nodes_test.ts
 
-import { assert, assertEquals, assertMatch } from "jsr:@std/assert@^1";
-import { join } from "jsr:@std/path@^1";
-import { remark } from "npm:remark@^15";
-import type { Code, Root } from "npm:@types/mdast@^4";
+import { assert, assertEquals, assertMatch } from "@std/assert";
+import { join } from "@std/path";
+import { remark } from "remark";
+import type { Code, Root } from "types/mdast";
 
 import { injectedNodes, isInjectedCode } from "./injected-nodes.ts";
 

@@ -1,14 +1,10 @@
-import { assert, assertEquals, assertFalse } from "jsr:@std/assert@^1";
-import type {
-  Code,
-  Heading,
-  Paragraph,
-  Root,
-  RootContent,
-} from "npm:@types/mdast@^4";
-import remarkFrontmatter from "npm:remark-frontmatter@^5";
-import { remark } from "npm:remark@^15";
+import { assert, assertEquals, assertFalse } from "@std/assert";
+import { remark } from "remark";
+import remarkFrontmatter from "remark-frontmatter";
+import type { Code, Heading, Paragraph, Root, RootContent } from "types/mdast";
 
+import { documentFrontmatter } from "./doc-frontmatter.ts";
+import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
 import {
   catalogToRootData,
   type ClassifierCatalog,
@@ -16,8 +12,6 @@ import {
   nodeClassifier,
   type NodeClassifierRule,
 } from "./node-classify.ts";
-import { documentFrontmatter } from "./doc-frontmatter.ts";
-import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
 
 /**
  * Helper: parse markdown into an mdast Root using the full pipeline:

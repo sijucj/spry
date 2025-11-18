@@ -205,17 +205,17 @@
  *   .parse(src);
  * ```
  */
-import { type WalkEntry, walkSync } from "jsr:@std/fs@^1";
-import { globToRegExp, isAbsolute, relative } from "jsr:@std/path@^1";
-import type { Code, Root } from "npm:@types/mdast@^4";
-import type { Plugin } from "npm:unified@^11";
-import { visit } from "npm:unist-util-visit@^5";
+import { type WalkEntry, walkSync } from "@std/fs";
+import { globToRegExp, isAbsolute, relative } from "@std/path";
+import type { Code, Root } from "types/mdast";
+import type { Plugin } from "unified";
+import { visit } from "unist-util-visit";
 import {
   isTextHttpUrl,
   lazyFileBytesReader,
   lazyUrlBytesReader,
   relativeUrlAsFsPath,
-} from "../../universal/content-acquisition.ts";
+} from "../universal/content-acquisition.ts";
 // Adjust this import to wherever you export it:
 import { parseFrontmatterFromCode } from "./code-frontmatter.ts";
 

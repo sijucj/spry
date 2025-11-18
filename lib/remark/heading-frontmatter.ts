@@ -18,12 +18,12 @@
  *   - `headFM`, `headingFM` (any case)
  */
 
-import type { Code, Heading, Root, RootContent } from "npm:@types/mdast@^4";
-import type { Data, Node } from "npm:@types/unist@^3";
-import type { Plugin } from "npm:unified@^11";
+import type { Code, Heading, Root, RootContent } from "types/mdast";
+import type { Data, Node } from "types/unist";
+import type { Plugin } from "unified";
 
-import { parse as parseYaml } from "jsr:@std/yaml@^1";
-import JSON5 from "npm:json5@^2";
+import { parse as parseYaml } from "@std/yaml";
+import JSON5 from "json5";
 
 // ... existing imports, types, plugin code above ...
 

@@ -4,10 +4,10 @@
  * Markdown / mdast classification helpers for node-classify remark plugin for
  * attaching structured "classes" to nodes based on frontmatter.
  */
-import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
+import type { Heading, Root, RootContent } from "types/mdast";
 
-import { assert } from "https://deno.land/std@0.198.0/assert/assert.ts";
-import { visit } from "npm:unist-util-visit@^5";
+import { assert } from "@std/assert";
+import { visit } from "unist-util-visit";
 
 import { isRootWithDocumentFrontmatter } from "./doc-frontmatter.ts";
 import { isHeadingWithFrontmatter } from "./heading-frontmatter.ts";

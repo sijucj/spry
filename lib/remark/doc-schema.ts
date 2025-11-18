@@ -31,9 +31,9 @@ import type {
   Root,
   RootContent,
   Strong,
-} from "npm:@types/mdast@^4";
-import type { Data } from "npm:@types/unist@^3";
-import type { Plugin } from "npm:unified@^11";
+} from "types/mdast";
+import type { Data } from "types/unist";
+import type { Plugin } from "unified";
 
 /**
  * Base section schema shared by all section kinds.

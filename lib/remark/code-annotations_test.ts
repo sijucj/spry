@@ -1,7 +1,7 @@
 // lib/markdown/remark/code-annotations_test.ts
-import { assert, assertEquals, assertStrictEquals } from "jsr:@std/assert@^1";
-import { remark } from "npm:remark@^15";
-import type { Code, Root } from "npm:@types/mdast@^4";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import type { Code, Root } from "types/mdast";
+import { remark } from "remark";
 
 import codeAnnotationsPlugin, {
   type CodeAnnotationsOptions,
@@ -12,7 +12,7 @@ import codeAnnotationsPlugin, {
 import {
   ensureLanguageByIdOrAlias,
   type LanguageSpec,
-} from "../../universal/code.ts";
+} from "../universal/code.ts";
 
 /** Helper to parse + run remark with our plugin. */
 function runWithPlugin<Anns extends Record<string, unknown>>(

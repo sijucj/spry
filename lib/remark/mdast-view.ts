@@ -7,8 +7,8 @@
  * - Unified tabular rows for physical "ls" style views
  */
 
-import { basename } from "jsr:@std/path@^1";
-import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
+import { basename } from "@std/path";
+import type { Heading, Root, RootContent } from "types/mdast";
 import { collectSectionsFromRoot, hasBelongsToSection } from "./doc-schema.ts";
 import { markdownASTs } from "./mdast-io.ts";
 import { mdastql, type MdastQlOptions } from "./mdastql.ts";

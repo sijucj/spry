@@ -1,15 +1,12 @@
-// lib/markdown/code-partial_test.ts
-// deno-lint-ignore-file no-explicit-any
-
 import {
   assert,
   assertEquals,
   assertStringIncludes,
   assertThrows,
-} from "jsr:@std/assert@^1";
-import { remark } from "npm:remark@^15";
-import remarkGfm from "npm:remark-gfm@^4";
-import remarkFrontmatter from "npm:remark-frontmatter@^5";
+} from "@std/assert";
+import { remark } from "remark";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
 
 import codeFrontmatter from "./code-frontmatter.ts";
 import codePartials, {
@@ -20,7 +17,10 @@ import codePartials, {
   isCodePartial,
 } from "./code-partial.ts";
 
-import type { Root } from "npm:@types/mdast@^4";
+import type { Root } from "types/mdast";
+
+// deno-lint-ignore no-explicit-any
+type Any = any;
 
 // Helper: normalize sync-or-async renderer to a Promise result
 async function render(
@@ -38,9 +38,9 @@ function pipeline() {
     .use(codePartials);
 }
 
-function codeNodes(tree: Root): any[] {
-  const out: any[] = [];
-  const walk = (n: any) => {
+function codeNodes(tree: Root) {
+  const out: Any[] = [];
+  const walk = (n: Any) => {
     if (n.type === "code") out.push(n);
     if (Array.isArray(n.children)) n.children.forEach(walk);
   };

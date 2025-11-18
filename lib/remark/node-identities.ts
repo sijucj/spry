@@ -171,11 +171,11 @@
  * decides what constitutes an identity and how suppliers are interpreted.
  */
 
-import type { Node, Root, RootContent } from "npm:@types/mdast@^4";
-import type { Plugin } from "npm:unified@^11";
-import { isHeadingWithFrontmatter } from "./heading-frontmatter.ts";
-import { visit } from "npm:unist-util-visit@^5";
+import type { Node, Root, RootContent } from "types/mdast";
+import type { Plugin } from "unified";
+import { visit } from "unist-util-visit";
 import { hasSectionSchema } from "./doc-schema.ts";
+import { isHeadingWithFrontmatter } from "./heading-frontmatter.ts";
 
 export type TextIdentity = string;
 

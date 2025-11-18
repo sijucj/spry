@@ -22,7 +22,7 @@
  *   mdast Root  +  query string  →  RootContent[]
  */
 
-import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
+import type { Heading, Root, RootContent } from "types/mdast";
 
 /** All mdast node.type values we care about. */
 export type MdastNodeType = RootContent["type"];

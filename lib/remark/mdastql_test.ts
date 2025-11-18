@@ -1,17 +1,11 @@
 // lib/markdown/mdastql_test.ts
 
-import { assertEquals } from "jsr:@std/assert@^1";
+import { assertEquals } from "@std/assert";
 
-import type {
-  Code,
-  Heading,
-  Root,
-  RootContent,
-  Text,
-} from "npm:@types/mdast@^4";
+import type { Code, Heading, Root, RootContent, Text } from "types/mdast";
 
-import { remark } from "npm:remark@^15";
-import remarkGfm from "npm:remark-gfm@^4";
+import { remark } from "remark";
+import remarkGfm from "remark-gfm";
 
 import {
   mdastql,

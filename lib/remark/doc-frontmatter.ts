@@ -12,11 +12,11 @@
  *   - the VFile: file.data.frontmatter (fm only, for convenience)
  */
 
-import { parse as YAMLparse } from "jsr:@std/yaml@^1";
-import type { Root, RootContent } from "npm:@types/mdast@^4";
-import type { Plugin } from "npm:unified@^11";
-import type { VFile } from "npm:vfile@^6";
-import { z } from "npm:zod@^4";
+import { parse as YAMLparse } from "@std/yaml";
+import { z } from "@zod";
+import type { Root, RootContent } from "types/mdast";
+import type { Plugin } from "unified";
+import type { VFile } from "vfile";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

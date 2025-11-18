@@ -1,7 +1,7 @@
-import { assert, assertEquals } from "jsr:@std/assert@^1";
+import { assert, assertEquals } from "@std/assert";
 
-import remarkParse from "npm:remark-parse@^11";
-import { unified } from "npm:unified@^11";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   boldParagraphSectionRule,
@@ -16,7 +16,7 @@ import {
   stringifyRoot,
 } from "./doc-schema.ts";
 
-import type { Paragraph, Root, RootContent } from "npm:@types/mdast@^4";
+import type { Paragraph, Root, RootContent } from "types/mdast";
 
 // ---------------------------------------------------------------------------
 // Fixtures

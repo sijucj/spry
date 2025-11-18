@@ -1,12 +1,12 @@
 // lib/markdown/remark/document-frontmatter_test.ts
 
-import { assert, assertEquals } from "jsr:@std/assert@^1";
-import type { Root, RootContent } from "npm:@types/mdast@^4";
-import remarkFrontmatter from "npm:remark-frontmatter@^5";
-import { remark } from "npm:remark@^15";
-import type { Plugin } from "npm:unified@^11";
-import type { VFile } from "npm:vfile@^6";
-import { z } from "npm:zod@^4";
+import { assert, assertEquals } from "@std/assert";
+import { z } from "@zod";
+import { remark } from "remark";
+import remarkFrontmatter from "remark-frontmatter";
+import type { Root, RootContent } from "types/mdast";
+import type { Plugin } from "unified";
+import type { VFile } from "vfile";
 
 import {
   documentFrontmatter,
