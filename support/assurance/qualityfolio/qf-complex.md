@@ -106,7 +106,7 @@ Verifies visibility and ordering of CMMC Level 1 and Level 2 sections.
 - Detection of missing or unconfigured items.
 - Audit evidence capture.
 
-##### Verify Left Navigation Displays All Sections for Level 1 and Level 2
+##### Verify left navigation displays all sections for Level 1 and Level 2
 
 @id TC-CMMC-0001
 
@@ -176,8 +176,9 @@ Verify that all CMMC Level 1 and Level 2 self-assessment sections are correctly 
 
 @id TC-CMMC-0001
 
-```yaml META
-role: evidence
+```yaml HFM
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: prathitha
 status: passed
@@ -203,7 +204,7 @@ Validates section-to-section navigation through UI controls.
 - No skipped or duplicated navigation events.
 - Cross-level consistency validation.
 
-##### Verify Previous and Next Buttons Navigate Between Sections Correctly
+##### Verify Previous and Next buttons navigate between sections correctly
 
 @id TC-CMMC-0002
 
@@ -232,7 +233,7 @@ Ensure that the **Previous** and **Next** buttons correctly navigate between ass
 - [x] Click **Next** → verify navigation to Access Control.
 - [x] Click **Previous** → verify navigation back to Company Information.
 - [x] Navigate to a middle section (e.g., \*\*Media Protection).
-- [x] . Repeat **Next** and **Previous** navigation checks.
+- [x] Repeat **Next** and **Previous** navigation checks.
 
 **Expected Results**
 
@@ -245,8 +246,9 @@ Ensure that the **Previous** and **Next** buttons correctly navigate between ass
 
 @id TC-CMMC-0002
 
-```yaml META
-role: evidence
+```yaml HFM
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: prathitha
 status: passed
@@ -266,13 +268,13 @@ Validates dynamic and accurate readiness percentage updates when sections are co
 
 **Scope**
 
--Readiness percentage update after completing and submitting a section.
--Correct readiness calculation based on completed vs. total sections.
--Immediate UI update on dashboard/progress widget without manual refresh.
--No lag, incorrect values, or inconsistent readiness between dashboard and section views.
--Readiness percentage must reach 100% when all assessment sections are fully completed.
+- Readiness percentage update after completing and submitting a section.
+- Correct readiness calculation based on completed vs. total sections.
+- Immediate UI update on dashboard/progress widget without manual refresh.
+- No lag, incorrect values, or inconsistent readiness between dashboard and section views.
+- Readiness percentage must reach 100% when all assessment sections are fully completed.
 
-##### Verify Readiness Percentage Updates Dynamically on Completing a Section
+##### Verify readiness percentage updates dynamically on completing a section
 
 @id TC-CMMC-0003
 
@@ -312,8 +314,8 @@ Ensure that the **readiness percentage** updates dynamically when a section is c
 
 @id TC-CMMC-0003
 
-```yaml META
-role: evidence
+```yaml HFM
+  role: evidence
 cycle: 1.5
 assignee: arun-ramanan
 status: passed
@@ -325,7 +327,7 @@ status: passed
 - [Readiness screenshot](./evidence/TC-CMMC-0003/1.5/cmmc1.auto.png)
 - [Run MD](./evidence/TC-CMMC-0003/1.5/run.auto.md)
 
-##### Verify Readiness Bar Reflects Accurate Percentage Completion
+##### Verify readiness bar reflects accurate percentage completion
 
 @id TC-CMMC-0004
 
@@ -365,9 +367,9 @@ Validate that the **readiness bar** displays correct percentage values based on 
 
 @id TC-CMMC-0004
 
-```yaml META
+```yaml HFM
 doc-classify:
-role: evidence
+  role: evidence
 cycle: 1.5
 assignee: arun-ramanan
 status: passed
@@ -380,7 +382,7 @@ status: passed
 - [Readiness screenshot2](./evidence/TC-CMMC-0004/1.5/cmmc2.auto.png)
 - [Run MD](./evidence/TC-CMMC-0004/1.5/run.auto.md)
 
-##### Verify Readiness Percentage Reaches 100% After Completing All Sections
+##### Verify readiness percentage reaches 100% after completing all sections
 
 @id TC-CMMC-0005
 
@@ -421,7 +423,8 @@ Ensure that the readiness percentage becomes 100% once all sections in the CMMC 
 @id TC-CMMC-0005
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.5
 assignee: arun-ramanan
 status: failed
@@ -436,8 +439,9 @@ status: failed
 
 **Issue**
 
-```yaml META
-role: issue
+```yaml HFM
+doc-classify:
+  role: issue
 issue_id: BUG-CMMC-001
 test_case_id: TC-CMMC-0005
 title: "No incorrect or partial percentage is shown"
@@ -547,7 +551,8 @@ Ensure the Login button is visible on the Opsfolio CMMC page and leads correctly
 @id TC-LOGIN-0001
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Ann Jose
 status: passed
@@ -595,7 +600,8 @@ Validate successful authentication and dashboard redirection for valid users.
 @id TC-LOGIN-0002
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Dency
 status: passed
@@ -643,7 +649,8 @@ Validate proper error handling for incorrect login attempts.
 @id TC-LOGIN-0003
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Ann Jose
 status: passed
@@ -693,7 +700,8 @@ Validate proper error handling for login attempts due to network timeout on Opsf
 @id TC-LOGIN-0004
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Prathitha
 status: failed
@@ -704,6 +712,22 @@ issue_id: ["BUG-OPS-001"]
 - [Run MD](./evidence/TC-LOGIN-0004/1.1/run.auto.md)
 - [Error - screenshot](./evidence/TC-LOGIN-0004/1.1/network-error.auto.png)
 - [Bug MD](./evidence/TC-LOGIN-0004/1.1/bug.md)
+
+
+**Issue**
+
+```yaml HFM
+doc-classify:
+  role: issue
+issue_id: BUG-OPS-001
+test_case_id: TC-LOGIN-0004
+title: "Login fails due to network timeout"
+status: open
+```
+
+**Issue Details**
+
+- Login fails due to network timeout on Opsfolio login page
 
 ### Login Automation Plan
 
@@ -778,7 +802,8 @@ Automated verification of the **Login button presence and accessibility** on the
 @id TC-LOGIN-0101
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Prathitha
 status: passed
@@ -831,7 +856,8 @@ Automated validation ensuring users can successfully log in using valid credenti
 @id TC-LOGIN-0102
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Prathitha
 status: passed
@@ -884,7 +910,8 @@ Automated validation of proper error message display and security behavior for i
 @id TC-LOGIN-0103
 
 ```yaml HFM
-role: evidence
+doc-classify:
+  role: evidence
 cycle: 1.1
 assignee: Ann Jose
 status: passed
