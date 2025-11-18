@@ -7,9 +7,6 @@
  * - Slicing original source text for nodes / sections
  */
 
-import { red } from "jsr:@std/fmt@1/colors";
-import { basename } from "jsr:@std/path@1";
-
 import remarkDirective from "https://esm.sh/remark-directive@4";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import remarkFrontmatter from "npm:remark-frontmatter@^5";
@@ -30,7 +27,12 @@ import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
 import nodeClassifierPlugin from "./node-classify.ts";
 import nodeIdentitiesPlugin from "./node-identities.ts";
 
-import type { ParsedMarkdownTree } from "./mdast-view.ts";
+import {
+  SourceProvenance,
+  sources,
+  textSources,
+  uniqueSources,
+} from "../../universal/resource.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -39,7 +41,7 @@ type Any = any;
 // Remark orchestration
 // ---------------------------------------------------------------------------
 
-export function mdParser() {
+export function mardownParserPipeline() {
   return unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ["yaml"]) // extracts to YAML node but does not parse
@@ -79,101 +81,24 @@ export function mdParser() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Source acquisition
-// ---------------------------------------------------------------------------
-
-export function tryParseUrl(spec: string): URL | undefined {
-  try {
-    return new URL(spec);
-  } catch {
-    return undefined;
+export async function* markdownASTs(
+  src: Iterable<SourceProvenance> | AsyncIterable<SourceProvenance>,
+  options?: Parameters<typeof textSources>[1] & {
+    readonly mdParsePipeline?: ReturnType<typeof mardownParserPipeline>;
+  },
+) {
+  const mdpp = options?.mdParsePipeline ?? mardownParserPipeline();
+  for await (
+    const ts of textSources(uniqueSources(sources(src)), options)
+  ) {
+    const mdastRoot = mdpp.parse(ts.text);
+    await mdpp.run(mdastRoot);
+    yield { ...ts, mdastRoot };
   }
-}
-
-export async function readMarkdownTrees(
-  sources: readonly string[],
-  processor = mdParser(),
-): Promise<Array<ParsedMarkdownTree>> {
-  if (sources.length === 0 || (sources.length === 1 && sources[0] === "-")) {
-    const text = await new Response(Deno.stdin.readable).text();
-    const root = processor.parse(text);
-    await processor.run(root);
-    return [{
-      provenance: "<stdin>",
-      root,
-      source: text,
-      fileRef: () => `<STDIN>`,
-      rootId: `stdin#root`,
-      label: `<STDIN>`,
-    }];
-  }
-
-  const results: Array<ParsedMarkdownTree> = [];
-  for (const provenance of sources) {
-    const url = tryParseUrl(provenance);
-    let text: string;
-
-    if (url && (url.protocol === "http:" || url.protocol === "https:")) {
-      // Remote URL → fetch
-      try {
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          console.error(
-            red(`Failed to fetch URL: ${provenance} - status ${resp.status}`),
-          );
-          continue;
-        }
-        text = await resp.text();
-      } catch (err) {
-        console.error(red(`Error fetching URL: ${provenance}`), err);
-        continue;
-      }
-    } else {
-      // Everything else → treat as local path
-      try {
-        text = await Deno.readTextFile(provenance);
-      } catch (err) {
-        console.error(red(`Error reading file: ${provenance}`), err);
-        continue;
-      }
-    }
-
-    const root = processor.parse(text);
-    await processor.run(root);
-    results.push({
-      provenance,
-      root,
-      source: text,
-      fileRef: url ? (() => basename(url.pathname)) : ((node) => {
-        const file = basename(provenance);
-        const line = node?.position?.start?.line;
-        if (typeof line !== "number") return file;
-        return `${file}:${line}`;
-      }),
-      rootId: `${provenance}#root`,
-      label: url ? basename(url.pathname) : basename(provenance),
-      url,
-    });
-  }
-  return results;
-}
-
-/** Merge global --file plus positional paths; default to stdin ("-") if none. */
-export function resolveFiles(
-  globalFiles: string[] | undefined,
-  positional: string[],
-  defaults: string[],
-): string[] {
-  const merged = [
-    ...(globalFiles ?? []),
-    ...(positional.length ? positional : defaults),
-  ];
-  return merged.length > 0 ? merged : ["-"];
 }
 
 // ---------------------------------------------------------------------------
-// Offsets & slicing
+// Source acquisition
 // ---------------------------------------------------------------------------
 
 export function nodeOffsetsInSource(

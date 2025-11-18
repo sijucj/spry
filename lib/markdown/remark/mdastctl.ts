@@ -22,16 +22,15 @@ import {
   selectNodes,
   type TabularRow,
   type TreeRow,
+  viewableMarkdownASTs,
 } from "./mdast-view.ts";
 
+import { doctor } from "../../universal/doctor.ts";
+import { computeSemVerSync } from "../../universal/version.ts";
 import {
   computeSectionRangesForHeadings,
-  readMarkdownTrees,
-  resolveFiles,
   sliceSourceForNode,
 } from "./mdast-io.ts";
-import { computeSemVerSync } from "../../universal/version.ts";
-import { doctor } from "../../universal/doctor.ts";
 
 // ---------------------------------------------------------------------------
 // CLI wiring
@@ -59,12 +58,7 @@ export class CLI {
       .description(`query and explore Markdown ASTs (mdast)`)
       .command("help", new HelpCommand())
       .command("completions", new CompletionsCommand())
-      .command("ls", this.lsCommand())
-      .command("identifiers", this.identifiersCommand())
-      .command("tree", this.treeCommand())
-      .command("class", this.classCommand())
-      .command("schema", this.schemaCommand())
-      .command("md", this.mdCommand())
+      .command("mdast", this.mdastCommand())
       .command("doctor", this.doctorCommand());
   }
 
@@ -105,6 +99,37 @@ export class CLI {
       );
   }
 
+  async *viewableMarkdownASTs(
+    globalFiles: string[] | undefined,
+    positional: string[],
+    defaults: string[],
+  ) {
+    const merged = [
+      ...(globalFiles ?? []),
+      ...(positional.length ? positional : defaults),
+    ];
+    if (merged.length > 0) {
+      yield* viewableMarkdownASTs(merged, {
+        onError: (src, error) => {
+          console.error({ src, error });
+          return false;
+        },
+      });
+    }
+  }
+
+  mdastCommand() {
+    return new Command()
+      .name("mdast")
+      .description(`query and explore Markdown ASTs (mdast)`)
+      .command("ls", this.lsCommand())
+      .command("identifiers", this.identifiersCommand())
+      .command("tree", this.treeCommand())
+      .command("class", this.classCommand())
+      .command("schema", this.schemaCommand())
+      .command("md", this.mdCommand());
+  }
+
   // -------------------------------------------------------------------------
   // ls command (tabular "physical" view)
   // -------------------------------------------------------------------------
@@ -130,16 +155,15 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(
         async (options, ...paths: string[]) => {
-          const files = resolveFiles(
-            this.conf?.ensureGlobalFiles,
-            paths,
-            this.conf?.defaultFiles ?? [],
-          );
-          const trees = await readMarkdownTrees(files);
           const allRows: TabularRow[] = [];
-
-          for (const pmt of trees) {
-            const rows = buildMdAstTabularRows("physical", pmt, {
+          for await (
+            const viewable of this.viewableMarkdownASTs(
+              this.conf?.ensureGlobalFiles,
+              paths,
+              this.conf?.defaultFiles ?? [],
+            )
+          ) {
+            const rows = buildMdAstTabularRows("physical", viewable, {
               includeDataKeys: !!options.data,
               query: options.select,
             });
@@ -250,16 +274,15 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(
         async (options, ...paths: string[]) => {
-          const files = resolveFiles(
-            this.conf?.ensureGlobalFiles,
-            paths,
-            this.conf?.defaultFiles ?? [],
-          );
-          const trees = await readMarkdownTrees(files);
           const allRows: TabularRow[] = [];
-
-          for (const pmt of trees) {
-            const rows = buildMdAstTabularRows("identifiers", pmt, {
+          for await (
+            const viewable of this.viewableMarkdownASTs(
+              this.conf?.ensureGlobalFiles,
+              paths,
+              this.conf?.defaultFiles ?? [],
+            )
+          ) {
+            const rows = buildMdAstTabularRows("identifiers", viewable, {
               includeDataKeys: !!options.data,
               query: options.select,
             });
@@ -366,20 +389,20 @@ export class CLI {
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
-        const files = resolveFiles(
-          this.conf?.ensureGlobalFiles,
-          paths,
-          this.conf?.defaultFiles ?? [],
-        );
-        const trees = await readMarkdownTrees(files);
         const allRows: TreeRow[] = [];
 
-        for (const pmt of trees) {
+        for await (
+          const viewable of this.viewableMarkdownASTs(
+            this.conf?.ensureGlobalFiles,
+            paths,
+            this.conf?.defaultFiles ?? [],
+          )
+        ) {
           const selectedNodes = options.select
-            ? selectNodes(pmt.root, options.select)
+            ? selectNodes(viewable.root, options.select)
             : undefined;
 
-          const rows = buildMdAstTreeRows("physical", pmt, {
+          const rows = buildMdAstTreeRows("physical", viewable, {
             includeDataKeys: !!options.data,
             selectedNodes,
             pruneToSelection: !!options.select,
@@ -472,16 +495,16 @@ export class CLI {
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
-        const files = resolveFiles(
-          this.conf?.ensureGlobalFiles,
-          paths,
-          this.conf?.defaultFiles ?? [],
-        );
-        const trees = await readMarkdownTrees(files);
         const allRowsRaw: TreeRow[] = [];
 
-        for (const pmt of trees) {
-          const rows = buildMdAstTreeRows("class", pmt, {
+        for await (
+          const viewable of this.viewableMarkdownASTs(
+            this.conf?.ensureGlobalFiles,
+            paths,
+            this.conf?.defaultFiles ?? [],
+          )
+        ) {
+          const rows = buildMdAstTreeRows("class", viewable, {
             includeDataKeys: !!options.data,
           });
           allRowsRaw.push(...rows);
@@ -586,16 +609,16 @@ export class CLI {
       .option("--data", "Include node.data keys as a DATA column.")
       .option("--no-color", "Show output without using ANSI colors")
       .action(async (options, ...paths: string[]) => {
-        const files = resolveFiles(
-          this.conf?.ensureGlobalFiles,
-          paths,
-          this.conf?.defaultFiles ?? [],
-        );
-        const trees = await readMarkdownTrees(files);
         const allRows: TreeRow[] = [];
 
-        for (const pmt of trees) {
-          const baseRows = buildMdAstTreeRows("schema", pmt, {
+        for await (
+          const viewable of this.viewableMarkdownASTs(
+            this.conf?.ensureGlobalFiles,
+            paths,
+            this.conf?.defaultFiles ?? [],
+          )
+        ) {
+          const baseRows = buildMdAstTreeRows("schema", viewable, {
             includeDataKeys: !!options.data,
           });
 
@@ -721,17 +744,16 @@ export class CLI {
           Deno.exit(1);
         }
 
-        const files = resolveFiles(
-          this.conf?.ensureGlobalFiles,
-          paths,
-          this.conf?.defaultFiles ?? [],
-        );
-        const trees = await readMarkdownTrees(files);
         const allChunks: string[] = [];
-
         const sectionMode = !!options.section;
 
-        for (const { root, source } of trees) {
+        for await (
+          const { root, source } of this.viewableMarkdownASTs(
+            this.conf?.ensureGlobalFiles,
+            paths,
+            this.conf?.defaultFiles ?? [],
+          )
+        ) {
           const nodes = selectNodes(root, options.select);
 
           if (!sectionMode) {

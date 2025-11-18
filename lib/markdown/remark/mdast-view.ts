@@ -7,8 +7,10 @@
  * - Unified tabular rows for physical "ls" style views
  */
 
+import { basename } from "jsr:@std/path@^1";
 import type { Heading, Root, RootContent } from "npm:@types/mdast@^4";
 import { collectSectionsFromRoot, hasBelongsToSection } from "./doc-schema.ts";
+import { markdownASTs } from "./mdast-io.ts";
 import { mdastql, type MdastQlOptions } from "./mdastql.ts";
 import { hasNodeClass, type NodeClassMap } from "./node-classify.ts";
 import { hasNodeIdentities } from "./node-identities.ts";
@@ -33,14 +35,38 @@ export type MdAstTabularView = "physical" | "identifiers";
  * Instances are constructed in `mdast-io.ts` and consumed here
  * by the view builders, and by CLI / web front-ends.
  */
-export interface ParsedMarkdownTree {
+export interface ViewableMarkdownAST {
   readonly provenance: string; // what the user supplied
   readonly root: Root;
   readonly source: string;
   readonly fileRef: (node?: RootContent) => string;
   readonly rootId: string;
   readonly label: string;
-  readonly url?: URL;
+}
+
+export async function* viewableMarkdownASTs(
+  src: Parameters<typeof markdownASTs>[0],
+  options?: Parameters<typeof markdownASTs>[1],
+) {
+  for await (const md of markdownASTs(src, options)) {
+    yield {
+      provenance: typeof md.src.provenance === "string"
+        ? md.src.provenance
+        : md.src.provenance.path,
+      root: md.mdastRoot,
+      source: md.text,
+      fileRef: md.src.nature === "remote-url"
+        ? (() => basename(md.src.label))
+        : ((node) => {
+          const file = basename(md.src.label);
+          const line = node?.position?.start?.line;
+          if (typeof line !== "number") return file;
+          return `${file}:${line}`;
+        }),
+      rootId: `${md.src.label}#root`,
+      label: md.src.label,
+    } satisfies ViewableMarkdownAST;
+  }
 }
 
 export interface TreeRow {
@@ -367,7 +393,7 @@ export interface BuildMdAstTreeRowsOptions {
  */
 export function buildMdAstTreeRows(
   view: MdAstTreeView,
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTreeRowsOptions = {},
 ): TreeRow[] {
   switch (view) {
@@ -430,7 +456,7 @@ function shouldEmitNodeForTabular(
  */
 export function buildMdAstTabularRows(
   view: MdAstTabularView,
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTabularRowsOptions = {},
 ): TabularRow[] {
   switch (view) {
@@ -457,7 +483,7 @@ export function buildMdAstTabularRows(
  *   - DATA (CSV of node.data keys if requested)
  */
 function buildPhysicalTabularRows(
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTabularRowsOptions = {},
 ): TabularRow[] {
   const { root, fileRef } = pmt;
@@ -525,7 +551,7 @@ function buildPhysicalTabularRows(
  *   - file, type, depth, headingPath, name, classInfo, dataKeys
  */
 function buildIdentifierTabularRows(
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTabularRowsOptions = {},
 ): TabularRow[] {
   const { root, fileRef } = pmt;
@@ -589,7 +615,7 @@ function buildIdentifierTabularRows(
 // ---------------------------------------------------------------------------
 
 function buildPhysicalTreeRows(
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTreeRowsOptions,
 ): TreeRow[] {
   const { root, fileRef, label, provenance, rootId } = pmt;
@@ -794,7 +820,7 @@ function buildClassIndex(
 }
 
 function buildClassTreeRows(
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTreeRowsOptions,
 ): TreeRow[] {
   const { root, fileRef, label, provenance, rootId } = pmt;
@@ -895,7 +921,7 @@ function buildClassTreeRows(
 // ---------------------------------------------------------------------------
 
 function buildSchemaTreeRows(
-  pmt: ParsedMarkdownTree,
+  pmt: ViewableMarkdownAST,
   opts: BuildMdAstTreeRowsOptions,
 ): TreeRow[] {
   const { root, label, fileRef, provenance, rootId } = pmt;
