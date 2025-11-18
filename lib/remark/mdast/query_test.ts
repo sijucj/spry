@@ -13,7 +13,7 @@ import {
   type MdastQlCompiledSelector,
   type MdastQlRewriteFn,
   parseMdastQl,
-} from "./mdastql.ts";
+} from "./query.ts";
 
 /**
  * Helpers

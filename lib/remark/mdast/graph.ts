@@ -1,7 +1,7 @@
 import type { Root, RootContent } from "types/mdast";
 import { visit } from "unist-util-visit";
-import { queryPosixPI } from "../universal/posix-pi.ts";
-import { isCodeWithFrontmatterNode } from "./code-frontmatter.ts";
+import { queryPosixPI } from "../../universal/posix-pi.ts";
+import { isCodeWithFrontmatterNode } from "../plugin/node/code-frontmatter.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

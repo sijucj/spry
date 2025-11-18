@@ -11,22 +11,27 @@ import remarkDirective from "remark-directive";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
-import type { Heading, Root, RootContent } from "types/mdast";
+import type { Code, Heading, Root, RootContent } from "types/mdast";
 import { unified } from "unified";
 
 import { remark } from "remark";
 
 import { VFile } from "vfile";
-import codeFrontmatterPlugin from "./code-frontmatter.ts";
-import docFrontmatterPlugin from "./doc-frontmatter.ts";
+import docFrontmatterPlugin from "../plugin/doc/doc-frontmatter.ts";
 import documentSchemaPlugin, {
   boldParagraphSectionRule,
   colonParagraphSectionRule,
-} from "./doc-schema.ts";
-import headingFrontmatterPlugin from "./heading-frontmatter.ts";
-import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
-import nodeClassifierPlugin from "./node-classify.ts";
-import nodeIdentitiesPlugin from "./node-identities.ts";
+} from "../plugin/doc/doc-schema.ts";
+import codeFrontmatterPlugin, {
+  isCodeWithFrontmatterNode,
+} from "../plugin/node/code-frontmatter.ts";
+import codePartialPlugin from "../plugin/node/code-partial.ts";
+import headingFrontmatterPlugin, {
+  isCodeConsumedAsHeadingFrontmatterNode,
+} from "../plugin/node/heading-frontmatter.ts";
+import { classifiersFromFrontmatter } from "../plugin/node/node-classify-fm.ts";
+import nodeClassifierPlugin from "../plugin/node/node-classify.ts";
+import nodeIdentitiesPlugin from "../plugin/node/node-identities.ts";
 
 import {
   Source,
@@ -34,7 +39,8 @@ import {
   SourceProvenance,
   sources,
   uniqueSources,
-} from "../universal/resource.ts";
+} from "../../universal/resource.ts";
+import { isCodePartialNode } from "../plugin/node/code-partial.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -55,6 +61,7 @@ export function mardownParserPipeline() {
       coerceNumbers: true, // "9" -> 9
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     })
+    .use(codePartialPlugin) // finds code cells marked as `PARTIAL`
     .use(nodeClassifierPlugin, {
       // classifies nodes using instructions from markdown document and headings frontmatter
       // be sure that all frontmatter plugins are run before this
@@ -62,6 +69,28 @@ export function mardownParserPipeline() {
     })
     .use(nodeIdentitiesPlugin, {
       // establish identities last, after everything else is done for stability
+      identityFromNode: (node) => {
+        if (node.type === "code") {
+          const code = node as Code;
+          if (isCodePartialNode(code)) {
+            return {
+              supplier: "code-partial",
+              identity: code.data.codePartial.identity,
+            };
+          } else if (
+            isCodeWithFrontmatterNode(code) &&
+            !isCodeConsumedAsHeadingFrontmatterNode(code)
+          ) {
+            if (code.data.codeFM.pi.posCount > 0) {
+              return {
+                supplier: "code",
+                identity: code.data.codeFM.pi.pos[0],
+              };
+            }
+          }
+        }
+        return false;
+      },
       identityFromHeadingFM: (fm, node) => {
         if (!fm?.id || node.type !== "heading") return false as const;
         return {

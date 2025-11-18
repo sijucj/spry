@@ -14,7 +14,7 @@ import codePartials, {
   codePartial,
   type CodePartialNode,
   codePartialsCollection,
-  isCodePartial,
+  isCodePartialNode,
 } from "./code-partial.ts";
 
 import type { Root } from "types/mdast";
@@ -65,7 +65,7 @@ Deno.test("codePartials plugin with synthetic PARTIAL cells", async (t) => {
     assertEquals(nodes.length, 1);
 
     const node = nodes[0] as CodePartialNode;
-    assert(isCodePartial(node));
+    assert(isCodePartialNode(node));
 
     const cp = node.data[CODE_PARTIAL_STORE_KEY];
     assertEquals(cp.identity, "plain");
@@ -86,7 +86,7 @@ Deno.test("codePartials plugin with synthetic PARTIAL cells", async (t) => {
     processor.runSync(tree);
 
     const node = codeNodes(tree)[0] as CodePartialNode;
-    assert(isCodePartial(node));
+    assert(isCodePartialNode(node));
 
     const cp = node.data[CODE_PARTIAL_STORE_KEY];
     assertEquals(cp.identity, "header");

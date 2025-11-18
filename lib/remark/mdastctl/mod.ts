@@ -13,8 +13,8 @@ import { bold, cyan, gray, magenta, red, yellow } from "@std/fmt/colors";
 
 import type { Heading, RootContent } from "types/mdast";
 
-import { ListerBuilder } from "../universal/lister-tabular-tui.ts";
-import { TreeLister } from "../universal/lister-tree-tui.ts";
+import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
+import { TreeLister } from "../../universal/lister-tree-tui.ts";
 
 import {
   buildMdAstTabularRows,
@@ -23,10 +23,10 @@ import {
   type TabularRow,
   type TreeRow,
   viewableMarkdownASTs,
-} from "./mdast-view.ts";
+} from "./view.ts";
 
-import { doctor } from "../universal/doctor.ts";
-import { computeSemVerSync } from "../universal/version.ts";
+import { doctor } from "../../universal/doctor.ts";
+import { computeSemVerSync } from "../../universal/version.ts";
 
 // ---------------------------------------------------------------------------
 // CLI wiring

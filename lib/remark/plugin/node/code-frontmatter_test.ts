@@ -2,7 +2,7 @@ import { assert, assertEquals, assertThrows } from "@std/assert";
 import { remark } from "remark";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
-import { ensureLanguageByIdOrAlias } from "../universal/code.ts";
+import { ensureLanguageByIdOrAlias } from "../../../universal/code.ts";
 import codeFrontmatter, {
   type CodeFrontmatterOptions,
   parseFrontmatterFromCode,

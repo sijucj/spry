@@ -13,11 +13,11 @@ import { visit } from "unist-util-visit";
 import {
   AnnotationCatalog,
   extractAnnotationsFromTextSync,
-} from "../universal/code-comments.ts";
+} from "../../../universal/code-comments.ts";
 import {
   getLanguageByIdOrAlias,
   type LanguageSpec,
-} from "../universal/code.ts";
+} from "../../../universal/code.ts";
 import { isCodeWithFrontmatterNode } from "./code-frontmatter.ts";
 
 /** The structured enrichment attached to a code node by this plugin. */

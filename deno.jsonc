@@ -29,6 +29,7 @@
     // typical
     "@zod": "jsr:@zod/zod@4",
     "json5": "npm:json5@^2",
+    "@david/dax": "jsr:@david/dax@0.44.0",
 
     // cliffy
     "@cliffy/command": "jsr:@cliffy/command@1.0.0-rc.8",

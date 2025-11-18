@@ -12,7 +12,7 @@ import codeAnnotationsPlugin, {
 import {
   ensureLanguageByIdOrAlias,
   type LanguageSpec,
-} from "../universal/code.ts";
+} from "../../../universal/code.ts";
 
 /** Helper to parse + run remark with our plugin. */
 function runWithPlugin<Anns extends Record<string, unknown>>(

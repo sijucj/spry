@@ -33,7 +33,7 @@
 import type { Root, RootContent } from "types/mdast";
 import type { Plugin } from "unified";
 
-import { mdastql } from "./mdastql.ts";
+import { mdastql } from "../../mdast/query.ts";
 
 /** mdast node we classify (content nodes only for now). */
 export type RootNode = RootContent;

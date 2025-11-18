@@ -34,7 +34,7 @@
 import { globToRegExp, isGlob, normalize } from "@std/path";
 import { z, ZodType } from "@zod";
 import type { Code, Root, RootContent } from "types/mdast";
-import { jsonToZod } from "../universal/zod-aide.ts";
+import { jsonToZod } from "../../../universal/zod-aide.ts";
 import {
   CodeWithFrontmatterData,
   CodeWithFrontmatterNode,
@@ -87,15 +87,15 @@ export const CODE_PARTIAL_STORE_KEY = "codePartial" as const;
 
 export type CodePartialNode = Code & {
   data:
-    & { [CODE_PARTIAL_STORE_KEY]: CodePartial }
+    & { readonly codePartial: CodePartial }
     & CodeWithFrontmatterData;
 };
 
 /**
  * Type guard: returns true if a `RootContent` node is a `code` node
- * that already carries CodeFrontmatterData at the default store key.
+ * that already carries CodePartialData at the default store key.
  */
-export function isCodePartial(
+export function isCodePartialNode(
   node: RootContent,
 ): node is CodePartialNode {
   if (
@@ -108,11 +108,6 @@ export function isCodePartial(
 }
 
 export interface CodePartialsOptions {
-  /**
-   * Where to store the result on `node.data`. Defaults to `"codePartial"`.
-   * The plugin writes `node.data[storeKey] = CodePartial`.
-   */
-  storeKey?: string;
   /**
    * Decides whether or not a particular CodeFrontmatter node is a partial code node.
    */
@@ -167,17 +162,13 @@ export function typicalIsCodePartialNode(
  * ```
  */
 export default function codePartials(options?: CodePartialsOptions) {
-  const {
-    storeKey = CODE_PARTIAL_STORE_KEY,
-    collect,
-    isPartial = typicalIsCodePartialNode,
-    registerIssue,
-  } = options ?? {};
+  const { collect, isPartial = typicalIsCodePartialNode, registerIssue } =
+    options ?? {};
 
   return function transformer(tree: Root) {
     const walk = (node: Root | RootContent): void => {
       if (node.type === "code") {
-        if (isCodePartial(node)) return;
+        if (isCodePartialNode(node)) return;
         if (isCodeWithFrontmatterNode(node)) {
           const ipn = isPartial(node);
           if (ipn) {
@@ -194,7 +185,7 @@ export default function codePartials(options?: CodePartialsOptions) {
               },
             );
             // deno-lint-ignore no-explicit-any
-            (node.data as any)[storeKey] = cp;
+            (node.data as any)[CODE_PARTIAL_STORE_KEY] = cp;
             collect?.(node as CodePartialNode);
           }
         }

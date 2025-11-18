@@ -215,7 +215,7 @@ import {
   lazyFileBytesReader,
   lazyUrlBytesReader,
   relativeUrlAsFsPath,
-} from "../universal/content-acquisition.ts";
+} from "../../../universal/content-acquisition.ts";
 // Adjust this import to wherever you export it:
 import { parseFrontmatterFromCode } from "./code-frontmatter.ts";
 

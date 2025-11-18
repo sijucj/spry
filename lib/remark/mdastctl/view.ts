@@ -9,11 +9,17 @@
 
 import { basename } from "@std/path";
 import type { Heading, Root, RootContent } from "types/mdast";
-import { collectSectionsFromRoot, hasBelongsToSection } from "./doc-schema.ts";
-import { markdownASTs } from "./mdast-io.ts";
-import { mdastql, type MdastQlOptions } from "./mdastql.ts";
-import { hasNodeClass, type NodeClassMap } from "./node-classify.ts";
-import { hasNodeIdentities } from "./node-identities.ts";
+import { mdastql, type MdastQlOptions } from "../mdast/query.ts";
+import {
+  collectSectionsFromRoot,
+  hasBelongsToSection,
+} from "../plugin/doc/doc-schema.ts";
+import {
+  hasNodeClass,
+  type NodeClassMap,
+} from "../plugin/node/node-classify.ts";
+import { hasNodeIdentities } from "../plugin/node/node-identities.ts";
+import { markdownASTs } from "./io.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

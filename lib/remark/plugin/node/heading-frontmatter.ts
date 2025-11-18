@@ -55,6 +55,31 @@ export function isHeadingWithFrontmatter<
   return true;
 }
 
+export type CodeWithFrontmatterData = {
+  readonly codeConsumedAsHeadingFM: RootContent[];
+  [key: string]: unknown;
+};
+
+export type CodeConsumedAsHeadingFrontmatterNode = Code & {
+  data: CodeWithFrontmatterData;
+};
+
+/**
+ * Type guard: returns true if a `RootContent` node is a `code` node
+ * that already carries CodeWithFrontmatterNode at the default store key.
+ */
+export function isCodeConsumedAsHeadingFrontmatterNode(
+  node: RootContent,
+): node is CodeConsumedAsHeadingFrontmatterNode {
+  if (
+    node.type === "code" && node.data &&
+    "codeConsumedAsHeadingFM" in node.data
+  ) {
+    return true;
+  }
+  return false;
+}
+
 type JsonObject = Record<string, unknown>;
 
 export type FrontmatterConsumeDecision =
@@ -223,6 +248,14 @@ export const headingFrontmatter: Plugin<
         const parsed = parseFm(n as Code);
         if (parsed) {
           localFm = mergeFm(localFm, parsed);
+        }
+
+        if (isCodeConsumedAsHeadingFrontmatterNode(n)) {
+          n.data.codeConsumedAsHeadingFM.push(n);
+        } else {
+          const data = n.data ??= {};
+          // deno-lint-ignore no-explicit-any
+          (data as any)["codeConsumedAsHeadingFM"] = [n];
         }
 
         if (decision === "remove-before-consume") {

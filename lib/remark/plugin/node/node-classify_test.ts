@@ -3,7 +3,6 @@ import { remark } from "remark";
 import remarkFrontmatter from "remark-frontmatter";
 import type { Code, Heading, Paragraph, Root, RootContent } from "types/mdast";
 
-import { documentFrontmatter } from "./doc-frontmatter.ts";
 import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
 import {
   catalogToRootData,
@@ -12,6 +11,7 @@ import {
   nodeClassifier,
   type NodeClassifierRule,
 } from "./node-classify.ts";
+import { documentFrontmatter } from "../doc/doc-frontmatter.ts";
 
 /**
  * Helper: parse markdown into an mdast Root using the full pipeline:

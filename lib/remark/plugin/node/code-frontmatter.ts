@@ -61,8 +61,14 @@
 
 import type { Code, Root, RootContent } from "types/mdast";
 import { visit } from "unist-util-visit";
-import { getLanguageByIdOrAlias, LanguageSpec } from "../universal/code.ts";
-import { instructionsFromText, PosixStylePI } from "../universal/posix-pi.ts";
+import {
+  getLanguageByIdOrAlias,
+  LanguageSpec,
+} from "../../../universal/code.ts";
+import {
+  instructionsFromText,
+  PosixStylePI,
+} from "../../../universal/posix-pi.ts";
 
 /** The structured enrichment attached to a code node by this plugin. */
 export interface CodeFrontmatter {
@@ -196,6 +202,8 @@ export function parseFrontmatterFromCode(
 
   const lang = (node.lang ?? "") as string;
   const meta = (node.meta ?? "") as string;
+
+  if (meta.trim().length == 0) return null;
 
   const { pi, attrs } = instructionsFromText(`${lang} ${meta}`.trim(), options);
 

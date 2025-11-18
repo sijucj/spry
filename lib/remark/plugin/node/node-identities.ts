@@ -174,7 +174,7 @@
 import type { Node, Root, RootContent } from "types/mdast";
 import type { Plugin } from "unified";
 import { visit } from "unist-util-visit";
-import { hasSectionSchema } from "./doc-schema.ts";
+import { hasSectionSchema } from "../doc/doc-schema.ts";
 import { isHeadingWithFrontmatter } from "./heading-frontmatter.ts";
 
 export type TextIdentity = string;

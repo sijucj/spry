@@ -9,7 +9,7 @@ import type { Heading, Root, RootContent } from "types/mdast";
 import { assert } from "@std/assert";
 import { visit } from "unist-util-visit";
 
-import { isRootWithDocumentFrontmatter } from "./doc-frontmatter.ts";
+import { isRootWithDocumentFrontmatter } from "../doc/doc-frontmatter.ts";
 import { isHeadingWithFrontmatter } from "./heading-frontmatter.ts";
 import { ClassificationEntry, NodeClassifierRule } from "./node-classify.ts";
 
