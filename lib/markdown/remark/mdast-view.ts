@@ -29,6 +29,10 @@ export type MdAstTreeView = "physical" | "class" | "schema";
  */
 export type MdAstTabularView = "physical" | "identifiers";
 
+type Yielded<T> = T extends Generator<infer Y> ? Y
+  : T extends AsyncGenerator<infer Y> ? Y
+  : never;
+
 /**
  * Parsed markdown tree with enough metadata for building views.
  *
@@ -42,6 +46,8 @@ export interface ViewableMarkdownAST {
   readonly fileRef: (node?: RootContent) => string;
   readonly rootId: string;
   readonly label: string;
+  readonly origin: Yielded<Awaited<ReturnType<typeof markdownASTs>>>["origin"];
+  readonly mdText: Yielded<Awaited<ReturnType<typeof markdownASTs>>>["mdText"];
 }
 
 export async function* viewableMarkdownASTs(
@@ -50,21 +56,23 @@ export async function* viewableMarkdownASTs(
 ) {
   for await (const md of markdownASTs(src, options)) {
     yield {
-      provenance: typeof md.src.provenance === "string"
-        ? md.src.provenance
-        : md.src.provenance.path,
+      provenance: typeof md.origin.provenance === "string"
+        ? md.origin.provenance
+        : md.origin.provenance.path,
       root: md.mdastRoot,
       source: md.text,
-      fileRef: md.src.nature === "remote-url"
-        ? (() => basename(md.src.label))
+      fileRef: md.origin.nature === "remote-url"
+        ? (() => basename(md.origin.label))
         : ((node) => {
-          const file = basename(md.src.label);
+          const file = basename(md.origin.label);
           const line = node?.position?.start?.line;
           if (typeof line !== "number") return file;
           return `${file}:${line}`;
         }),
-      rootId: `${md.src.label}#root`,
-      label: md.src.label,
+      rootId: `${md.origin.label}#root`,
+      label: md.origin.label,
+      origin: md.origin,
+      mdText: md.mdText,
     } satisfies ViewableMarkdownAST;
   }
 }

@@ -93,7 +93,16 @@ export async function* markdownASTs(
   ) {
     const mdastRoot = mdpp.parse(ts.text);
     await mdpp.run(mdastRoot);
-    yield { ...ts, mdastRoot };
+    yield {
+      ...ts,
+      mdastRoot,
+      mdText: {
+        nodeOffsets: (node: RootContent) => nodeOffsetsInSource(ts.text, node),
+        sliceForNode: (node: RootContent) => sliceSourceForNode(ts.text, node),
+        sectionRangesForHeadings: (headings: Heading[]) =>
+          computeSectionRangesForHeadings(mdastRoot, ts.text, headings),
+      },
+    };
   }
 }
 

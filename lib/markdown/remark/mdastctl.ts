@@ -27,10 +27,6 @@ import {
 
 import { doctor } from "../../universal/doctor.ts";
 import { computeSemVerSync } from "../../universal/version.ts";
-import {
-  computeSectionRangesForHeadings,
-  sliceSourceForNode,
-} from "./mdast-io.ts";
 
 // ---------------------------------------------------------------------------
 // CLI wiring
@@ -748,7 +744,7 @@ export class CLI {
         const sectionMode = !!options.section;
 
         for await (
-          const { root, source } of this.viewableMarkdownASTs(
+          const { root, mdText, source } of this.viewableMarkdownASTs(
             this.conf?.ensureGlobalFiles,
             paths,
             this.conf?.defaultFiles ?? [],
@@ -759,7 +755,7 @@ export class CLI {
           if (!sectionMode) {
             // Simple mode: just slice each selected node from source
             for (const node of nodes) {
-              const snippet = sliceSourceForNode(source, node);
+              const snippet = mdText.sliceForNode(node);
               if (snippet) allChunks.push(snippet);
             }
             continue;
@@ -777,12 +773,7 @@ export class CLI {
             }
           }
 
-          const sectionRanges = computeSectionRangesForHeadings(
-            root,
-            source,
-            headings,
-          );
-
+          const sectionRanges = mdText.sectionRangesForHeadings(headings);
           if (sectionRanges.length > 0) {
             // We have at least one bona fide section in this file: emit only sections.
             for (const r of sectionRanges) {
@@ -791,7 +782,7 @@ export class CLI {
           } else {
             // No usable sections: fall back to per-node snippets for all selected nodes.
             for (const node of nodes) {
-              const snippet = sliceSourceForNode(source, node);
+              const snippet = mdText.sliceForNode(node);
               if (snippet) allChunks.push(snippet);
             }
           }
