@@ -226,21 +226,21 @@ export async function* textSources<
       src: Source<PathKey, SP>,
       error: Error,
     ) =>
-      | { src: Source<PathKey, SP>; text: string }
+      | { origin: Source<PathKey, SP>; text: string }
       | false
-      | Promise<{ src: Source<PathKey, SP>; text: string } | false>;
+      | Promise<{ origin: Source<PathKey, SP>; text: string } | false>;
   },
 ) {
-  for await (const src of srcs) {
-    const text = await src.safeText();
+  for await (const origin of srcs) {
+    const text = await origin.safeText();
 
     if (typeof text === "string") {
-      yield { src, text };
+      yield { origin, text };
       continue;
     }
 
     const error = text instanceof Error ? text : new Error(String(text));
-    const replaced = await options?.onError?.(src, error);
+    const replaced = await options?.onError?.(origin, error);
     if (replaced) {
       yield replaced;
     }
