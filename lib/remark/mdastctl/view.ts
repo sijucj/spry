@@ -19,7 +19,7 @@ import {
   type NodeClassMap,
 } from "../plugin/node/node-classify.ts";
 import { hasNodeIdentities } from "../plugin/node/node-identities.ts";
-import { markdownASTs } from "./io.ts";
+import { markdownASTs, Yielded } from "./io.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -34,10 +34,6 @@ export type MdAstTreeView = "physical" | "class" | "schema";
  *  - "identifiers" = one row per node-identity pair
  */
 export type MdAstTabularView = "physical" | "identifiers";
-
-type Yielded<T> = T extends Generator<infer Y> ? Y
-  : T extends AsyncGenerator<infer Y> ? Y
-  : never;
 
 /**
  * Parsed markdown tree with enough metadata for building views.

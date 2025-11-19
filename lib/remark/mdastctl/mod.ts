@@ -58,7 +58,7 @@ export class CLI {
       .command("doctor", this.doctorCommand());
   }
 
-  protected doctorCommand() {
+  doctorCommand() {
     return new Command().name("doctor").description(
       "Show dependencies and their availability",
     ).action(async () => {
@@ -76,10 +76,6 @@ export class CLI {
           (defaultFiles?.length ?? 0) > 0 ? `(${defaultFiles?.join(", ")})` : ""
         }`,
         `${cmdName} ${examplesCmd}`,
-      )
-      .example(
-        "load md from stdin",
-        `${cmdName} ${examplesCmd} -`,
       )
       .example(
         "load md from local fs",
@@ -139,7 +135,7 @@ export class CLI {
    * - With automatic node classification (via frontmatter + nodeClassifier),
    *   shows a CLASS column with key:value pairs.
    */
-  protected lsCommand(cmdName = "ls") {
+  lsCommand(cmdName = "ls") {
     return this.baseCommand({ examplesCmd: cmdName })
       .description(`list mdast nodes in a tabular, content-hierarchy view`)
       .arguments("[paths...:string]")
@@ -256,7 +252,7 @@ export class CLI {
    * - One row per (node, SUPPLIER, ID) tuple.
    * - Includes the same physical columns as `ls` plus SUPPLIER and ID.
    */
-  protected identifiersCommand(cmdName = "identifiers") {
+  identifiersCommand(cmdName = "identifiers") {
     return this.baseCommand({ examplesCmd: cmdName })
       .description(
         `list mdast node identifiers (one row per SUPPLIER / ID pair)`,
@@ -377,7 +373,7 @@ export class CLI {
   // tree command
   // -------------------------------------------------------------------------
 
-  protected treeCommand(cmdName = "tree") {
+  treeCommand(cmdName = "tree") {
     return this.baseCommand({ examplesCmd: cmdName })
       .description(`heading/content hierarchy (per file)`)
       .arguments("[paths...:string]")
@@ -482,7 +478,7 @@ export class CLI {
   // class command
   // -------------------------------------------------------------------------
 
-  protected classCommand(cmdName = "class") {
+  classCommand(cmdName = "class") {
     return this.baseCommand({ examplesCmd: cmdName })
       .description(
         `show classification hierarchy per file (class key → value → nodes)`,
@@ -596,7 +592,7 @@ export class CLI {
   // schema command
   // -------------------------------------------------------------------------
 
-  protected schemaCommand(cmdName = "schema") {
+  schemaCommand(cmdName = "schema") {
     return this.baseCommand({ examplesCmd: cmdName })
       .description(
         `show section schema hierarchy (per file) using documentSchema plugin`,
@@ -721,7 +717,7 @@ export class CLI {
   // md command
   // -------------------------------------------------------------------------
 
-  protected mdCommand(cmdName = "md") {
+  mdCommand(cmdName = "md") {
     return this.baseCommand({ examplesCmd: cmdName })
       .description(`run mdastql and print the selected nodes as Markdown`)
       .arguments("[paths...:string]")
