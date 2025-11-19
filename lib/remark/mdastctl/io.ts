@@ -11,7 +11,7 @@ import remarkDirective from "remark-directive";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
-import type { Code, Heading, Root, RootContent } from "types/mdast";
+import type { Code, Heading, Node, Root, RootContent } from "types/mdast";
 import { unified } from "unified";
 
 import { remark } from "remark";
@@ -33,6 +33,8 @@ import { classifiersFromFrontmatter } from "../plugin/node/node-classify-fm.ts";
 import nodeClassifierPlugin from "../plugin/node/node-classify.ts";
 import nodeIdentitiesPlugin from "../plugin/node/node-identities.ts";
 
+import { relative } from "@std/path";
+import { basename } from "@std/path/basename";
 import {
   Source,
   SourceLabel,
@@ -44,6 +46,10 @@ import { isCodePartialNode } from "../plugin/node/code-partial.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
+
+export type Yielded<T> = T extends Generator<infer Y> ? Y
+  : T extends AsyncGenerator<infer Y> ? Y
+  : never;
 
 // ---------------------------------------------------------------------------
 // Remark orchestration
@@ -191,6 +197,7 @@ export async function* vfiles<
         origin: Source<PathKey, SP>;
         file: ResourceVFile<PathKey, SP>;
         text: string;
+        fileRef: (node: Node, relTo?: string) => string;
       }
       | false
       | Promise<
@@ -198,6 +205,7 @@ export async function* vfiles<
           origin: Source<PathKey, SP>;
           file: ResourceVFile<PathKey, SP>;
           text: string;
+          fileRef: (node: Node, relTo?: string) => string;
         }
         | false
       >;
@@ -224,7 +232,17 @@ export async function* vfiles<
         provenance: origin.provenance,
       };
 
-      yield { origin, file, text: loaded };
+      const fileRef = (node: Node, relTo?: string) => {
+        const file = relTo
+          ? relative(relTo, origin.label)
+          : basename(origin.label);
+        if (origin.nature === "remote-url") return file;
+        const line = node?.position?.start?.line;
+        if (typeof line !== "number") return file;
+        return `${file}:${line}`;
+      };
+
+      yield { origin, file, text: loaded, fileRef };
       continue;
     }
 
