@@ -53,6 +53,10 @@ import {
 } from "./universal/task.ts";
 import { ensureTrailingNewline } from "./universal/text-utils.ts";
 import { safeJsonStringify } from "./universal/tmpl-literal-aide.ts";
+import {
+  executionPlanVisuals,
+  ExecutionPlanVisualStyle,
+} from "./universal/task-visuals.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -552,7 +556,41 @@ export class CLI {
   runCommand() {
     return new Command()
       .name("run")
-      .description(`execute all code cells in markdown documents as a DAG`);
+      .description(`execute all code cells in markdown documents as a DAG`)
+      .type("verboseStyle", verboseStyle)
+      .type("visualStyle", new EnumType(ExecutionPlanVisualStyle))
+      .arguments("[paths...:string]")
+      .option(...verboseOpt)
+      .option("--summarize", "Emit summary after execution in JSON")
+      .option("--visualize <style:visualStyle>", "Visualize the DAG")
+      .action(
+        async (opts, ...paths: string[]) => {
+          const tasks = await this.markdownTasks(
+            this.markdownASTs(paths, this.conf?.defaultFiles ?? []),
+          );
+          const plan = executionPlan(tasks);
+          if (opts?.visualize) {
+            const epv = executionPlanVisuals(plan);
+            console.log(epv.visualText(opts.visualize));
+          } else {
+            const ieb = informationalEventBuses<
+              typeof tasks[number],
+              TaskExecContext
+            >(opts?.verbose);
+            const runbook = await executeTasks(
+              plan,
+              execTasksState(tasks, {
+                onCapture: gitignorableOnCapture,
+              }),
+              { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
+            );
+            if (ieb.emit) ieb.emit();
+            if (opts.summarize) {
+              console.log(runbook);
+            }
+          }
+        },
+      );
   }
 
   // -------------------------------------------------------------------------
