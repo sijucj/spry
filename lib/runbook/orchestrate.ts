@@ -9,7 +9,6 @@ import {
   CodeSpawnableNode,
   isCodeSpawnableNode,
 } from "../remark/plugin/node/code-spawnable.ts";
-import { hasFlagOfType } from "../universal/cline.ts";
 import { depsResolver } from "../universal/depends.ts";
 import { eventBus } from "../universal/event-bus.ts";
 import { gitignore } from "../universal/gitignore.ts";
@@ -188,11 +187,12 @@ export const gitignorableOnCapture = async (
 ) => {
   if (ci.startsWith("./")) {
     await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
-    const flags = tec.cell.data.codeFM.pi.flags;
-    if (flags && hasFlagOfType(flags, "gitignore")) {
+    const { pi } = tec.cell.data.codeSpawnable;
+    const gitIgnore = pi.getFlag("gitignore");
+    if (gitIgnore) {
       const gi = ci.slice("./".length);
-      if (hasFlagOfType(flags, "gitignore", "string")) {
-        await gitignore(gi, flags.gitignore);
+      if (typeof gitIgnore === "string") {
+        await gitignore(gi, gitIgnore);
       } else {
         await gitignore(gi);
       }
