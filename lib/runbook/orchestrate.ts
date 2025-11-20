@@ -4,6 +4,7 @@ import {
   CodeWithFrontmatterNode,
 } from "../remark/plugin/node/code-frontmatter.ts";
 
+import { z } from "@zod/zod";
 import { codePartialsCollection } from "../remark/plugin/node/code-partial.ts";
 import {
   CodeSpawnableNode,
@@ -28,8 +29,35 @@ import { safeJsonStringify } from "../universal/tmpl-literal-aide.ts";
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-export function spawnableDepsResolver(
-  catalog: Iterable<CodeSpawnableNode>,
+/**
+ * codeSpawnablePiFlags = {
+ *   capture?: string;
+ *   interpolate?: string;
+ *   C?: string;  // shorthand
+ *   I?: string;  // shorthand
+ * }
+ *
+ * The transform ensures:
+ *   - if C is present → capture = C
+ *   - if I is present → interpolate = I
+ */
+export const codeSpawnablePiFlagsSchema = z.object({
+  capture: z.string().optional(),
+  interpolate: z.string().optional(),
+
+  C: z.string().optional(),
+  I: z.string().optional(),
+}).transform((raw) => ({
+  capture: raw.C ?? raw.capture,
+  interpolate: raw.I ?? raw.interpolate,
+}));
+
+export type CodeSpawnablePiFlags = z.infer<typeof codeSpawnablePiFlagsSchema>;
+
+export function spawnableDepsResolver<
+  SpawnablePiFlags extends Record<string, unknown>,
+>(
+  catalog: Iterable<CodeSpawnableNode<SpawnablePiFlags>>,
   init?: {
     onImplicitTasksError?: () => void;
   },
@@ -156,22 +184,29 @@ export function spawnableDepsResolver(
 
 export type TaskExecContext = { runId: string };
 
-export type TaskExecCapture = {
-  cell: CodeSpawnableNode;
-  ctx: TaskExecContext;
-  interpResult: Awaited<
-    ReturnType<ReturnType<typeof execTasksState>["interpolateUnsafely"]>
-  >;
-  execResult?: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
+export type TaskExecCapture<SpawnablePiFlags extends Record<string, unknown>> =
+  {
+    cell: CodeSpawnableNode<SpawnablePiFlags>;
+    ctx: TaskExecContext;
+    interpResult: Awaited<
+      ReturnType<
+        ReturnType<
+          typeof execTasksState<SpawnablePiFlags>
+        >["interpolateUnsafely"]
+      >
+    >;
+    execResult?: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
 
-  text: () => string;
-  json: () => unknown;
-};
+    text: () => string;
+    json: () => unknown;
+  };
 
-export const typicalOnCapture = async (
+export const typicalOnCapture = async <
+  SpawnablePiFlags extends Record<string, unknown>,
+>(
   ci: string,
-  tec: TaskExecCapture,
-  capturedTaskExecs: Record<string, TaskExecCapture>,
+  tec: TaskExecCapture<SpawnablePiFlags>,
+  capturedTaskExecs: Record<string, TaskExecCapture<SpawnablePiFlags>>,
 ) => {
   if (ci.startsWith("./")) {
     await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
@@ -180,10 +215,12 @@ export const typicalOnCapture = async (
   }
 };
 
-export const gitignorableOnCapture = async (
+export const gitignorableOnCapture = async <
+  SpawnablePiFlags extends Record<string, unknown>,
+>(
   ci: string,
-  tec: TaskExecCapture,
-  capturedTaskExecs: Record<string, TaskExecCapture>,
+  tec: TaskExecCapture<SpawnablePiFlags>,
+  capturedTaskExecs: Record<string, TaskExecCapture<SpawnablePiFlags>>,
 ) => {
   if (ci.startsWith("./")) {
     await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
@@ -202,19 +239,24 @@ export const gitignorableOnCapture = async (
   }
 };
 
-export function execTasksState(
+export function execTasksState<
+  SpawnablePiFlags extends Record<string, unknown>,
+>(
   tasks: Iterable<{ code: CodeWithFrontmatterNode }>,
   partialsCollec: ReturnType<typeof codePartialsCollection>,
   opts?: {
     unsafeInterp?: ReturnType<typeof unsafeInterpolator>;
     onCapture?: (
       ci: string,
-      tec: TaskExecCapture,
-      capturedTaskExecs: Record<string, TaskExecCapture>,
+      tec: TaskExecCapture<SpawnablePiFlags>,
+      capturedTaskExecs: Record<string, TaskExecCapture<SpawnablePiFlags>>,
     ) => void | Promise<void>;
   },
 ) {
-  const capturedTaskExecs = {} as Record<string, TaskExecCapture>;
+  const capturedTaskExecs = {} as Record<
+    string,
+    TaskExecCapture<SpawnablePiFlags>
+  >;
   const defaults: Required<typeof opts> = {
     unsafeInterp: unsafeInterpolator({
       directives: tasks,
@@ -235,7 +277,10 @@ export function execTasksState(
     "C" in cell.data.codeFM.pi.flags);
 
   const prepTaskExecCapture = (
-    tec: Pick<TaskExecCapture, "cell" | "ctx" | "interpResult" | "execResult">,
+    tec: Pick<
+      TaskExecCapture<SpawnablePiFlags>,
+      "cell" | "ctx" | "interpResult" | "execResult"
+    >,
   ) => {
     const text = () => {
       if (tec.execResult) {
@@ -249,10 +294,10 @@ export function execTasksState(
       }
     };
     const json = () => JSON.parse(text());
-    return { ...tec, text, json } satisfies TaskExecCapture;
+    return { ...tec, text, json } satisfies TaskExecCapture<SpawnablePiFlags>;
   };
 
-  const captureTaskExec = async (cap: TaskExecCapture) => {
+  const captureTaskExec = async (cap: TaskExecCapture<SpawnablePiFlags>) => {
     const { cell: { data: { codeFM: { pi } } } } = cap;
     const captureFlags = [
       pi.flags.capture,
@@ -270,7 +315,7 @@ export function execTasksState(
 
   // "unsafely" means we're using JavaScript "eval"
   async function interpolateUnsafely(
-    cell: { code: CodeSpawnableNode },
+    cell: { code: CodeSpawnableNode<SpawnablePiFlags> },
     ctx: TaskExecContext,
   ): Promise<
     & { status: false | "unmodified" | "mutated" }
@@ -342,7 +387,8 @@ export function execTasksState(
 export type ExecTasksState = ReturnType<typeof execTasksState>;
 
 export async function executeTasks<
-  T extends Task & { code: CodeSpawnableNode },
+  SpawnablePiFlags extends Record<string, unknown>,
+  T extends Task & { code: CodeSpawnableNode<SpawnablePiFlags> },
   Context extends TaskExecContext = TaskExecContext,
 >(
   plan: TaskExecutionPlan<T>,
@@ -375,18 +421,20 @@ export async function executeTasks<
   }, { eventBus: opts?.tasksBus });
 }
 
-export async function markdownTasks(
+export async function markdownTasks<
+  SpawnablePiFlags extends Record<string, unknown>,
+>(
   mdASTs: ReturnType<typeof markdownASTs>,
 ) {
   const tasksWithOrigin: {
     taskId: () => string; // satisfies Task interface
     taskDeps: () => string[]; // satisfies Task interface
-    code: CodeSpawnableNode;
+    code: CodeSpawnableNode<SpawnablePiFlags>;
     md: Yielded<typeof mdASTs>;
   }[] = [];
   for await (const md of mdASTs) {
     visit(md.mdastRoot, "code", (code) => {
-      if (isCodeSpawnableNode(code)) {
+      if (isCodeSpawnableNode<SpawnablePiFlags>(code)) {
         const { codeSpawnable } = code.data;
         tasksWithOrigin.push({
           taskId: () => codeSpawnable.identity,

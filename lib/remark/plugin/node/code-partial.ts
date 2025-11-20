@@ -32,8 +32,9 @@
  */
 
 import { globToRegExp, isGlob, normalize } from "@std/path";
-import { z, ZodType } from "@zod";
+import { z, ZodType } from "@zod/zod";
 import type { Code, Root, RootContent } from "types/mdast";
+import { Plugin } from "unified";
 import { jsonToZod } from "../../../universal/zod-aide.ts";
 import {
   CodeWithFrontmatterData,
@@ -163,9 +164,11 @@ export function typicalIsCodePartialNode(
  * remark().use(codeFrontmatter).use(codePartials, { collect });
  * ```
  */
-export default function codePartials(options?: CodePartialsOptions) {
+export const codePartials: Plugin<[CodePartialsOptions?], Root> = (
+  options = {},
+) => {
   const { collect, isPartial = typicalIsCodePartialNode, registerIssue } =
-    options ?? {};
+    options;
 
   return function transformer(tree: Root) {
     const walk = (node: Root | RootContent): void => {
@@ -204,7 +207,7 @@ export default function codePartials(options?: CodePartialsOptions) {
 
     walk(tree);
   };
-}
+};
 
 /**
  * Build a (possibly injectable) Partial from the fenced block’s `PI` and `content`.
@@ -468,3 +471,5 @@ export function codePartialsCollection() {
     findInjectableForPath,
   };
 }
+
+export default codePartials;

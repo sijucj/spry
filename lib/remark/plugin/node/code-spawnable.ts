@@ -5,14 +5,15 @@
  * an executable.
  */
 
+import z from "@zod/zod";
 import type { Code, Root, RootContent } from "types/mdast";
 import { visit } from "unist-util-visit";
 import { languageRegistry, LanguageSpec } from "../../../universal/code.ts";
+import { PosixPIQuery } from "../../../universal/posix-pi.ts";
 import {
   CodeWithFrontmatterData,
   isCodeWithFrontmatterNode,
 } from "./code-frontmatter.ts";
-import { PosixPIQuery } from "../../../universal/posix-pi.ts";
 import { isCodePartialNode } from "./code-partial.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -27,28 +28,32 @@ export const spawnableLangSpecs = spawnableLangIds.map((lid) => {
 });
 
 /** The structured enrichment attached to a code node by this plugin. */
-export type CodeSpawnable = {
+export type CodeSpawnable<PiFlagsShape extends Record<string, unknown>> = {
   readonly identity: string;
-  readonly pi: PosixPIQuery;
+  readonly pi: PosixPIQuery<PiFlagsShape>;
 };
 
 export const CODESPAWNABLE_KEY = "codeSpawnable" as const;
-export type CodeSpawnableData = CodeWithFrontmatterData & {
-  readonly codeSpawnable: CodeSpawnable;
-  [key: string]: unknown;
-};
+export type CodeSpawnableData<PiFlagsShape extends Record<string, unknown>> =
+  & CodeWithFrontmatterData
+  & {
+    readonly codeSpawnable: CodeSpawnable<PiFlagsShape>;
+    [key: string]: unknown;
+  };
 
-export type CodeSpawnableNode = Code & {
-  data: CodeSpawnableData;
-};
+export type CodeSpawnableNode<PiFlagsShape extends Record<string, unknown>> =
+  & Code
+  & { data: CodeSpawnableData<PiFlagsShape> };
 
 /**
  * Type guard: returns true if a `RootContent` node is a `code` node
  * that already carries CodeSpawnable data at the default store key.
  */
-export function isCodeSpawnableNode(
+export function isCodeSpawnableNode<
+  PiFlagsShape extends Record<string, unknown> = Record<string, unknown>,
+>(
   node: RootContent,
-): node is CodeSpawnableNode {
+): node is CodeSpawnableNode<PiFlagsShape> {
   if (node.type === "code" && node.data && CODESPAWNABLE_KEY in node.data) {
     return true;
   }
@@ -56,7 +61,9 @@ export function isCodeSpawnableNode(
 }
 
 /** Configuration options for the CodeFrontmatter plugin. */
-export interface CodeSpawnableOptions {
+export interface CodeSpawnableOptions<
+  PiFlagsShape extends Record<string, unknown> = Record<string, unknown>,
+> {
   /**
    * Return true if this code is spawnable.
    */
@@ -64,7 +71,23 @@ export interface CodeSpawnableOptions {
   /**
    * If defined, this callback is called whenever code cells are enriched
    */
-  readonly collect?: (node: CodeSpawnableNode) => void;
+  readonly collect?: (node: CodeSpawnableNode<PiFlagsShape>) => void;
+
+  /**
+   * Optional Zod schema describing the expected shape of `pi.flags`.
+   *
+   * When provided:
+   * - `safeFlags()` uses `schema.safeParse(pi.flags)` and returns the
+   *   usual Zod-safe-parse result, typed as `FlagsShape`.
+   * - `flags()` calls `safeFlags()` and:
+   *    - returns `data` when `success === true`,
+   *    - throws a ZodError with extra context when `success === false`.
+   *
+   * When omitted:
+   * - `safeFlags()` returns `{ success: true, data: pi.flags as FlagsShape }`.
+   * - `flags()` returns `pi.flags as FlagsShape`.
+   */
+  piFlagsZodSchema?: z.ZodType<PiFlagsShape>;
 }
 
 /**
@@ -110,13 +133,13 @@ export default function codeSpawnable(options: CodeSpawnableOptions = {}) {
           const data = (untypedNode.data ??= {});
           if (!data[CODESPAWNABLE_KEY]) {
             const ppiq = node.data.codeFM.queryPI();
-            const cs: CodeSpawnable = {
+            const cs: CodeSpawnable<Record<string, unknown>> = {
               identity: ppiq.getFirstBareWord()!,
               pi: ppiq,
             };
             data[CODESPAWNABLE_KEY] = cs;
           }
-          collect?.(node as CodeSpawnableNode);
+          collect?.(node as CodeSpawnableNode<Record<string, unknown>>);
         }
       }
     });
@@ -128,8 +151,10 @@ export default function codeSpawnable(options: CodeSpawnableOptions = {}) {
  * matching (by glob) and exposes a `compose` helper to apply the best-match
  * wrapper around a rendered content partial’s result.
  */
-export function codeSpawnableCollection() {
-  const catalog = new Map<string, CodeSpawnableNode>();
+export function codeSpawnableCollection<
+  PiFlagsShape extends Record<string, unknown> = Record<string, unknown>,
+>() {
+  const catalog = new Map<string, CodeSpawnableNode<PiFlagsShape>>();
 
   /**
    * Find tasks that should be *implicitly* injected as dependencies of `taskId`
@@ -323,9 +348,9 @@ export function codeSpawnableCollection() {
     catalog,
 
     register: (
-      csn: CodeSpawnableNode,
+      csn: CodeSpawnableNode<PiFlagsShape>,
       onDuplicate?: (
-        csn: CodeSpawnableNode,
+        csn: CodeSpawnableNode<PiFlagsShape>,
       ) => "overwrite" | "throw" | "ignore",
     ) => {
       const identity = csn.data.codeSpawnable.identity;

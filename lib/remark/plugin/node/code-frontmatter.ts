@@ -59,7 +59,9 @@
  * - Does not mutate the code content; only attaches metadata on `node.data`.
  */
 
+import z from "@zod/zod";
 import type { Code, Root, RootContent } from "types/mdast";
+import { Plugin } from "unified";
 import { visit } from "unist-util-visit";
 import {
   getLanguageByIdOrAlias,
@@ -85,7 +87,9 @@ export interface CodeFrontmatter {
   /** Parsed JSON5 object from trailing `{ ... }` (if any). */
   readonly attrs?: Record<string, unknown>;
   /** Parsed Processing Instructions (flags/tokens). */
-  readonly queryPI: () => PosixPIQuery;
+  readonly queryPI: <FlagsShape extends Record<string, unknown>>(
+    zodSchema?: z.ZodType<FlagsShape>,
+  ) => PosixPIQuery<FlagsShape>;
 }
 
 export const CODEFM_KEY = "codeFM" as const;
@@ -162,7 +166,9 @@ export interface CodeFrontmatterOptions {
  * // Walk to a code node and read `node.data.codeFrontmatter`.
  * ```
  */
-export default function codeFrontmatter(options: CodeFrontmatterOptions = {}) {
+export const codeFrontmatter: Plugin<[CodeFrontmatterOptions?], Root> = (
+  options = {},
+) => {
   const { collect } = options;
 
   return function transformer(tree: Root) {
@@ -177,7 +183,7 @@ export default function codeFrontmatter(options: CodeFrontmatterOptions = {}) {
       collect?.(node as CodeWithFrontmatterNode);
     });
   };
-}
+};
 
 /**
  * Parses a single mdast `code` node into {@link CodeFrontmatter}.
@@ -220,10 +226,14 @@ export function parseFrontmatterFromCode(
     meta: meta || undefined,
     pi,
     attrs,
-    queryPI: () => {
-      if (queryPI) return queryPI;
-      queryPI = queryPosixPI(pi);
-      return queryPI;
+    queryPI: <FlagsShape extends Record<string, unknown>>(
+      zodSchema?: z.ZodType<FlagsShape>,
+    ) => {
+      if (queryPI) return queryPI as PosixPIQuery<FlagsShape>;
+      queryPI = queryPosixPI<FlagsShape>(pi, undefined, { zodSchema });
+      return queryPI as PosixPIQuery<FlagsShape>;
     },
   };
 }
+
+export default codeFrontmatter;

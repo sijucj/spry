@@ -13,7 +13,7 @@
  */
 
 import { parse as YAMLparse } from "@std/yaml";
-import { z } from "@zod";
+import { z } from "@zod/zod";
 import type { Root, RootContent } from "types/mdast";
 import type { Plugin } from "unified";
 import type { VFile } from "vfile";

@@ -14,7 +14,8 @@
  *
  * For usage patterns and edge cases, see the tests in `posix-pi_test.ts`.
  */
-import JSON5 from "npm:json5@^2";
+import z from "@zod/zod";
+import JSON5 from "json5";
 
 /**
  * POSIX-style processing instruction (PI) extracted from a `cmd/lang + meta` string.
@@ -419,7 +420,9 @@ export function instructionsFromText(
  * (custom alias maps, type coercion, etc.) see how higher-level
  * helpers are composed in `posix-pi_test.ts`.
  */
-export interface PosixPIQueryOptions {
+export interface PosixPIQueryOptions<
+  FlagsShape extends Record<string, unknown> = Record<string, unknown>,
+> {
   /**
    * Optional normalization for flag names used *at query time*.
    *
@@ -431,6 +434,22 @@ export interface PosixPIQueryOptions {
    * also apply that here so `getFlag("L", "level")` works.
    */
   normalizeFlagKey?: (key: string) => string;
+
+  /**
+   * Optional Zod schema describing the expected shape of `pi.flags`.
+   *
+   * When provided:
+   * - `safeFlags()` uses `schema.safeParse(pi.flags)` and returns the
+   *   usual Zod-safe-parse result, typed as `FlagsShape`.
+   * - `flags()` calls `safeFlags()` and:
+   *    - returns `data` when `success === true`,
+   *    - throws a ZodError with extra context when `success === false`.
+   *
+   * When omitted:
+   * - `safeFlags()` returns `{ success: true, data: pi.flags as FlagsShape }`.
+   * - `flags()` returns `pi.flags as FlagsShape`.
+   */
+  zodSchema?: z.ZodType<FlagsShape>;
 }
 
 /**
@@ -447,7 +466,9 @@ export interface PosixPIQueryOptions {
  * For usage patterns and expectations, see the tests in
  * `posix-pi_test.ts` (look for `queryPosixPI` cases).
  */
-export interface PosixPIQuery {
+export interface PosixPIQuery<
+  FlagsShape extends Record<string, unknown> = Record<string, unknown>,
+> {
   /** The underlying parsed PI (CLI portion only). */
   readonly pi: PosixStylePI;
   /** The JSON5 attrs object that was parsed alongside this PI, if any. */
@@ -547,6 +568,26 @@ export interface PosixPIQuery {
    * (`--verbose=true`) uniformly.
    */
   isEnabled(...names: string[]): boolean;
+
+  /**
+   * Safe Zod-backed validation result for `pi.flags`.
+   *
+   * - With schema: mirrors `schema.safeParse(pi.flags)`, but with `data`
+   *   typed as `FlagsShape`.
+   * - Without schema: returns `{ success: true, data: pi.flags as FlagsShape }`.
+   */
+  safeFlags(): { success: true; data: FlagsShape } | {
+    success: false;
+    error: z.ZodError<unknown>;
+  };
+
+  /**
+   * Strict Zod-backed access to flags.
+   *
+   * - With schema: returns parsed `FlagsShape` or throws `ZodError`.
+   * - Without schema: returns `pi.flags as FlagsShape`.
+   */
+  flags(): FlagsShape;
 }
 
 /**
@@ -567,11 +608,13 @@ export interface PosixPIQuery {
  *
  * For concrete examples and expectations, see `posix-pi_test.ts`.
  */
-export function queryPosixPI(
+export function queryPosixPI<
+  FlagsShape extends Record<string, unknown> = Record<string, unknown>,
+>(
   pi: PosixStylePI,
   attrs?: Record<string, unknown>,
-  options?: PosixPIQueryOptions,
-): PosixPIQuery {
+  options?: PosixPIQueryOptions<FlagsShape>,
+): PosixPIQuery<FlagsShape> {
   const normalizeKey = (name: string): string => {
     const stripped = name.replace(/^(--?)/, "");
     return options?.normalizeFlagKey
@@ -610,8 +653,6 @@ export function queryPosixPI(
     return undefined;
   };
 
-  // UPDATED: dedupe by normalized key so aliases sharing the same
-  // canonical key don't cause duplicate arrays to be appended.
   const collectValues = (...names: string[]): unknown[] => {
     const values: unknown[] = [];
     const seenKeys = new Set<string>();
@@ -630,6 +671,7 @@ export function queryPosixPI(
   };
 
   const cmdLang = pi.args.length ? pi.args[0] : undefined;
+  const schema = options?.zodSchema;
 
   return {
     pi,
@@ -681,6 +723,35 @@ export function queryPosixPI(
       if (v === undefined) return false;
       if (v === false) return false;
       return true;
+    },
+
+    safeFlags() {
+      if (!schema) {
+        return {
+          success: true,
+          data: pi.flags as unknown as FlagsShape,
+        } as const;
+      }
+
+      const res = schema.safeParse(pi.flags);
+      if (res.success) {
+        return { success: true, data: res.data } as const;
+      }
+      return { success: false, error: res.error } as const;
+    },
+
+    flags() {
+      if (!schema) {
+        return pi.flags as unknown as FlagsShape;
+      }
+
+      const res = schema.safeParse(pi.flags);
+      if (res.success) return res.data;
+
+      // Add a bit of context, but keep the original error
+      res.error.message =
+        `posix-pi flags() validation failed: ${res.error.message}`;
+      throw res.error;
     },
   };
 }

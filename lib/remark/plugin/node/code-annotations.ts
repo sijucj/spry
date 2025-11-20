@@ -7,7 +7,7 @@
  *   `node.data[codeAnns] = [{ language, annotations, annsCatalog }]`
  */
 
-import { z } from "@zod";
+import { z } from "@zod/zod";
 import type { Code, Root, RootContent } from "types/mdast";
 import { visit } from "unist-util-visit";
 import {

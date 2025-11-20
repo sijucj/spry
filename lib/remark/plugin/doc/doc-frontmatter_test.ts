@@ -1,7 +1,7 @@
 // lib/markdown/remark/document-frontmatter_test.ts
 
 import { assert, assertEquals } from "@std/assert";
-import { z } from "@zod";
+import { z } from "@zod/zod";
 import { remark } from "remark";
 import remarkFrontmatter from "remark-frontmatter";
 import type { Root, RootContent } from "types/mdast";
