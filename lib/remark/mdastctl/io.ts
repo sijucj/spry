@@ -25,7 +25,9 @@ import documentSchemaPlugin, {
 import codeFrontmatterPlugin, {
   isCodeWithFrontmatterNode,
 } from "../plugin/node/code-frontmatter.ts";
-import codePartialPlugin from "../plugin/node/code-partial.ts";
+import codePartialsPlugin, {
+  codePartialsCollection,
+} from "../plugin/node/code-partial.ts";
 import headingFrontmatterPlugin, {
   isCodeConsumedAsHeadingFrontmatterNode,
 } from "../plugin/node/heading-frontmatter.ts";
@@ -43,6 +45,7 @@ import {
   uniqueSources,
 } from "../../universal/resource.ts";
 import { isCodePartialNode } from "../plugin/node/code-partial.ts";
+import codeSpawnablePlugin from "../plugin/node/code-spawnable.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -55,7 +58,11 @@ export type Yielded<T> = T extends Generator<infer Y> ? Y
 // Remark orchestration
 // ---------------------------------------------------------------------------
 
-export function mardownParserPipeline() {
+export function mardownParserPipeline(init: {
+  readonly codePartialsCollec?: ReturnType<typeof codePartialsCollection>;
+} = {}) {
+  const { codePartialsCollec } = init;
+
   return unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ["yaml"]) // extracts to YAML node but does not parse
@@ -67,7 +74,13 @@ export function mardownParserPipeline() {
       coerceNumbers: true, // "9" -> 9
       onAttrsParseError: "ignore", // ignore invalid JSON5 instead of throwing
     })
-    .use(codePartialPlugin) // finds code cells marked as `PARTIAL`
+    .use(codePartialsPlugin, {
+      // finds code cells marked as `PARTIAL` and store them (should come after codeFrontmatterPlugin)
+      collect: (cp) => {
+        codePartialsCollec?.register(cp);
+      },
+    })
+    .use(codeSpawnablePlugin) // mark sh | bash and other "executables" (should come after codePartialsPlugin)
     .use(nodeClassifierPlugin, {
       // classifies nodes using instructions from markdown document and headings frontmatter
       // be sure that all frontmatter plugins are run before this
@@ -104,7 +117,6 @@ export function mardownParserPipeline() {
           identity: String(fm.id),
         };
       },
-      persistCatalogInRoot: true,
     })
     .use(documentSchemaPlugin, {
       // this plugin maintains node indexes so if you plan on mutating the AST,
@@ -262,9 +274,12 @@ export async function* markdownASTs(
   src: Iterable<SourceProvenance> | AsyncIterable<SourceProvenance>,
   options?: Parameters<typeof vfiles>[1] & {
     readonly mdParsePipeline?: ReturnType<typeof mardownParserPipeline>;
+    readonly codePartialsCollec?: ReturnType<typeof codePartialsCollection>;
   },
 ) {
-  const mdpp = options?.mdParsePipeline ?? mardownParserPipeline();
+  // we maintain a single partials collection across all markdown files
+  const mdpp = options?.mdParsePipeline ??
+    mardownParserPipeline({ codePartialsCollec: options?.codePartialsCollec });
   for await (
     const vf of vfiles(uniqueSources(sources(src)), options)
   ) {

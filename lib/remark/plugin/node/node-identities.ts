@@ -250,34 +250,6 @@ export interface NodeIdentitiesOptions<
   readonly catalog?: (
     catalog: Record<Supplier, Record<TextIdentity, Node>>,
   ) => void;
-
-  /**
-   * Optionally store the identities in the root node and then you can use
-   * it later in the pipeline.
-   */
-  readonly persistCatalogInRoot?: boolean;
-}
-
-/**
- * Top-level type guard.
- *
- * Returns true only if:
- *   - root.data exists
- *   - root.data.nodeIdsCatalog exists
- *   - root.data.nodeIdsCatalog is object
- */
-export function hasNodeIdsCatalog<Supplier extends string = string>(
-  root: Root,
-): root is Root & {
-  data: Root["data"] & {
-    nodeIdsCatalog: Record<Supplier, Record<TextIdentity, Node>>;
-  };
-} {
-  const data = root.data;
-  return Boolean(
-    data && typeof data === "object" &&
-      typeof (data as Any).nodeIdsCatalog === "object",
-  );
 }
 
 // deno-lint-ignore no-explicit-any
@@ -347,11 +319,9 @@ export const nodeIdentities: Plugin<
     identityFromSection,
     identifiedAs,
     catalog,
-    persistCatalogInRoot,
   } = options;
 
   return (tree: Root) => {
-    const isCatalogging = (catalog || persistCatalogInRoot) ?? false;
     const catalogDict: Record<string, Map<TextIdentity, Node>> = {};
 
     //     const data = (root.data ??= {});
@@ -395,7 +365,7 @@ export const nodeIdentities: Plugin<
           identifiedAs(node, finalized);
         }
 
-        if (isCatalogging) {
+        if (catalog) {
           for (const supplier of suppliers) {
             const ids = finalized[supplier] ?? [];
             if (ids.length === 0) continue;
@@ -414,7 +384,7 @@ export const nodeIdentities: Plugin<
       }
     });
 
-    if (isCatalogging) {
+    if (catalog) {
       const out: Record<string, Record<TextIdentity, Node>> = {} as Any;
 
       for (const [supplier, byId] of Object.entries(catalogDict)) {
@@ -426,11 +396,6 @@ export const nodeIdentities: Plugin<
       }
 
       catalog?.(out);
-
-      if (persistCatalogInRoot) {
-        const data = (tree.data ??= {});
-        (data as Any).nodeIdsCatalog = out;
-      }
     }
 
     return tree;

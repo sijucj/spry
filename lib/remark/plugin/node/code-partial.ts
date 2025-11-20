@@ -118,6 +118,7 @@ export interface CodePartialsOptions {
     flags: Record<string, unknown>;
     zodSchemaSpec?: Record<string, unknown>;
   } | false;
+
   /**
    * Callback invoked for each `code` node that:
    * - is an CodeFrontmatter node, and
@@ -128,6 +129,7 @@ export interface CodePartialsOptions {
    * you wired it that way and call this plugin with a custom matcher).
    */
   collect?: (node: CodePartialNode) => void;
+
   /**
    * Callback invoked if there are "registration time" issues with the partial
    */
@@ -321,7 +323,7 @@ type PartialRender = Awaited<ReturnType<InjectContentFn>>;
  * wrapper around a rendered content partial’s result.
  */
 export function codePartialsCollection() {
-  const catalog = new Map<string, CodePartial>();
+  const catalog = new Map<string, CodePartialNode>();
 
   // ---------- Injectable indexing ----------
   type IndexEntry = {
@@ -353,13 +355,14 @@ export function codePartialsCollection() {
 
   const rebuildIndex = () => {
     const entries: IndexEntry[] = [];
-    for (const p of catalog.values()) {
-      const inj = p.injection;
+    for (const cpn of catalog.values()) {
+      const { codePartial } = cpn.data;
+      const inj = codePartial.injection;
       if (!inj) continue;
       for (const g of inj.globs) {
         const gg = normalize(g);
         entries.push({
-          identity: p.identity,
+          identity: codePartial.identity,
           re: toRegex(gg),
           wc: wildcardCount(gg),
           len: gg.length,
@@ -379,7 +382,7 @@ export function codePartialsCollection() {
       .sort((a, b) => (a.wc - b.wc) || (b.len - a.len));
     if (!hits.length) return;
     const chosenId = hits[0].identity;
-    return catalog.get(chosenId);
+    return catalog.get(chosenId)?.data.codePartial;
   };
   // ----------------------------------------
 
@@ -387,21 +390,22 @@ export function codePartialsCollection() {
     catalog,
 
     register: (
-      partial: CodePartial,
+      cpn: CodePartialNode,
       onDuplicate?: (cp: CodePartial) => "overwrite" | "throw" | "ignore",
     ) => {
-      const found = catalog.get(partial.identity);
+      const { codePartial } = cpn.data;
+      const found = catalog.get(codePartial.identity);
       if (found && onDuplicate) {
-        const action = onDuplicate(partial);
+        const action = onDuplicate(codePartial);
         if (action === "throw") {
           throw new Deno.errors.AlreadyExists(
-            `Partial '${partial.identity}' already exists in fbPartialsCollection`,
+            `Partial '${codePartial.identity}' already exists in fbPartialsCollection`,
           );
         }
         if (action === "ignore") return;
-        // overwrite on "overwrite"
+        // default is overwrite
       }
-      catalog.set(partial.identity, partial);
+      catalog.set(codePartial.identity, cpn);
       rebuildIndex();
     },
 

@@ -67,7 +67,9 @@ import {
 } from "../../../universal/code.ts";
 import {
   instructionsFromText,
+  PosixPIQuery,
   PosixStylePI,
+  queryPosixPI,
 } from "../../../universal/posix-pi.ts";
 
 /** The structured enrichment attached to a code node by this plugin. */
@@ -82,6 +84,8 @@ export interface CodeFrontmatter {
   readonly pi: PosixStylePI;
   /** Parsed JSON5 object from trailing `{ ... }` (if any). */
   readonly attrs?: Record<string, unknown>;
+  /** Parsed Processing Instructions (flags/tokens). */
+  readonly queryPI: () => PosixPIQuery;
 }
 
 export const CODEFM_KEY = "codeFM" as const;
@@ -207,6 +211,8 @@ export function parseFrontmatterFromCode(
 
   const { pi, attrs } = instructionsFromText(`${lang} ${meta}`.trim(), options);
 
+  let queryPI: PosixPIQuery | undefined = undefined;
+
   // Attach language for convenience; keep `meta` in case callers want it.
   return {
     lang: lang || undefined,
@@ -214,5 +220,10 @@ export function parseFrontmatterFromCode(
     meta: meta || undefined,
     pi,
     attrs,
+    queryPI: () => {
+      if (queryPI) return queryPI;
+      queryPI = queryPosixPI(pi);
+      return queryPI;
+    },
   };
 }

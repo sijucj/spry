@@ -14,18 +14,15 @@ import {
 } from "@std/fmt/colors";
 import { relative } from "@std/path";
 import { Code } from "types/mdast";
-import { visit } from "unist-util-visit";
 import { MarkdownDoc } from "./markdown/fluent-doc.ts";
 import { markdownASTs, Yielded } from "./remark/mdastctl/io.ts";
 import * as mdastCtl from "./remark/mdastctl/mod.ts";
 import {
   CodeWithFrontmatterNode,
-  isCodeWithFrontmatterNode,
 } from "./remark/plugin/node/code-frontmatter.ts";
 import { markdownShellEventBus } from "./task/mdbus.ts";
 import { languageRegistry, LanguageSpec } from "./universal/code.ts";
 import { ColumnDef, ListerBuilder } from "./universal/lister-tabular-tui.ts";
-import { PosixPIQuery, queryPosixPI } from "./universal/posix-pi.ts";
 import {
   errorOnlyShellEventBus,
   verboseInfoShellEventBus,
@@ -38,11 +35,22 @@ import {
 } from "./universal/task.ts";
 import { computeSemVerSync } from "./universal/version.ts";
 
+import { visit } from "unist-util-visit";
+import { depsResolver } from "./remark/mdast/depends.ts";
+import { codePartialsCollection } from "./remark/plugin/node/code-partial.ts";
+import {
+  CodeSpawnableNode,
+  isCodeSpawnableNode,
+} from "./remark/plugin/node/code-spawnable.ts";
 import { hasFlagOfType } from "./universal/cline.ts";
 import { eventBus } from "./universal/event-bus.ts";
 import { gitignore } from "./universal/gitignore.ts";
 import { unsafeInterpolator } from "./universal/interpolate.ts";
 import { shell, ShellBusEvents } from "./universal/shell.ts";
+import {
+  executionPlanVisuals,
+  ExecutionPlanVisualStyle,
+} from "./universal/task-visuals.ts";
 import {
   executeDAG,
   fail,
@@ -53,10 +61,6 @@ import {
 } from "./universal/task.ts";
 import { ensureTrailingNewline } from "./universal/text-utils.ts";
 import { safeJsonStringify } from "./universal/tmpl-literal-aide.ts";
-import {
-  executionPlanVisuals,
-  ExecutionPlanVisualStyle,
-} from "./universal/task-visuals.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -64,7 +68,7 @@ type Any = any;
 export type TaskExecContext = { runId: string };
 
 export type TaskExecCapture = {
-  cell: CodeWithFrontmatterNode;
+  cell: CodeSpawnableNode;
   ctx: TaskExecContext;
   interpResult: Awaited<
     ReturnType<ReturnType<typeof execTasksState>["interpolateUnsafely"]>
@@ -110,6 +114,7 @@ export const gitignorableOnCapture = async (
 
 export function execTasksState(
   tasks: Iterable<{ code: CodeWithFrontmatterNode }>,
+  partialsCollec: ReturnType<typeof codePartialsCollection>,
   opts?: {
     unsafeInterp?: ReturnType<typeof unsafeInterpolator>;
     onCapture?: (
@@ -166,7 +171,7 @@ export function execTasksState(
 
     const captureInstructions = captureFlags.flatMap((v) =>
       typeof v === "boolean" ? [pi.pos[0]] : Array.isArray(v) ? v : [v]
-    ).filter((v) => v !== undefined).map(String);
+    ).filter((v) => v !== undefined).filter((v) => typeof v === "string");
 
     for (const ci of captureInstructions) {
       await onCapture(ci, cap, capturedTaskExecs);
@@ -175,7 +180,7 @@ export function execTasksState(
 
   // "unsafely" means we're using JavaScript "eval"
   async function interpolateUnsafely(
-    cell: { code: CodeWithFrontmatterNode },
+    cell: { code: CodeSpawnableNode },
     ctx: TaskExecContext,
   ): Promise<
     & { status: false | "unmodified" | "mutated" }
@@ -188,7 +193,7 @@ export function execTasksState(
       error: unknown;
     })
   > {
-    const qppi = queryPosixPI(cell.code.data.codeFM.pi);
+    const qppi = cell.code.data.codeSpawnable.pi;
     const source = cell.code.value;
     if (!qppi.hasFlag("interpolate", "I")) {
       return { status: "unmodified", source };
@@ -199,34 +204,31 @@ export function execTasksState(
       // Assume you're treating code cell blocks as fully trusted source code.
       const mutated = await unsafeInterp.interpolate(source, {
         ...ctx,
-        cell,
+        cell: cell.code,
+        safeJsonStringify,
         captured: capturedTaskExecs,
-        // deno-lint-ignore require-await
         partial: async (
           name: string,
-          _partialLocals?: Record<string, unknown>,
+          partialLocals?: Record<string, unknown>,
         ) => {
-          // const found = tasks.partials.get(name);
-          // if (found) {
-          //   const partialCell = tasks.partialDirectives.find((pd) =>
-          //     pd.partialDirective.partial.identity == found.identity
-          //   );
-          //   const { content: partial, interpolate, locals } = await found
-          //     .content({
-          //       cell,
-          //       captured: capturedTaskExecs,
-          //       ...ctx,
-          //       ...partialLocals,
-          //       partial: partialCell,
-          //     });
-          //   if (!interpolate) return partial;
-          //   return await unsafeInterp.interpolate(partial, locals, [{
-          //     template: partial,
-          //   }]);
-          // } else {
-          //   return `/* partial '${name}' not found */`;
-          // }
-          return `/* TODO: partials '${name}' not implemented */`;
+          const found = partialsCollec.get(name);
+          if (found) {
+            const { content: partial, interpolate, locals } = await found.data
+              .codePartial.content({
+                cell: cell.code,
+                safeJsonStringify,
+                captured: capturedTaskExecs,
+                ...ctx,
+                ...partialLocals,
+                partial: found.data.codePartial,
+              });
+            if (!interpolate) return partial;
+            return await unsafeInterp.interpolate(partial, locals, [{
+              template: partial,
+            }]);
+          } else {
+            return `/* partial '${name}' not found */`;
+          }
         },
       });
       if (mutated !== source) return { status: "mutated", source: mutated };
@@ -250,7 +252,7 @@ export function execTasksState(
 export type ExecTasksState = ReturnType<typeof execTasksState>;
 
 export async function executeTasks<
-  T extends Task & { code: CodeWithFrontmatterNode },
+  T extends Task & { code: CodeSpawnableNode },
   Context extends TaskExecContext = TaskExecContext,
 >(
   plan: TaskExecutionPlan<T>,
@@ -261,7 +263,6 @@ export async function executeTasks<
   },
 ) {
   const { isCapturable, captureTaskExec, prepTaskExecCapture } = tei;
-
   const sh = shell({ bus: opts?.shellBus });
   return await executeDAG(plan, async (task, ctx) => {
     const interpResult = await tei.interpolateUnsafely(task, ctx);
@@ -288,13 +289,11 @@ export async function executeTasks<
 // CLI
 // -----------------------------------------
 
-const MISSING = "??";
-
 export type LsTaskRow = {
   code: Code;
   name: string;
   origin: string;
-  language: string;
+  engine: ReturnType<ReturnType<typeof shell>["strategy"]>;
   descr: string;
   deps?: string;
 };
@@ -328,19 +327,19 @@ function lsTaskIdField<Row extends LsTaskRow>(): Partial<
   };
 }
 
-function lsLanguageField<Row extends LsTaskRow>(): Partial<
-  ColumnDef<Row, Row["language"]>
+function lsCmdEngineField<Row extends LsTaskRow>(): Partial<
+  ColumnDef<Row, Row["engine"]>
 > {
   return {
-    header: "Lang",
-    format: (v) =>
-      v === "head_sql"
-        ? green(v)
-        : v === "tail_sql"
-        ? yellow(v)
-        : v === "sqlpage_file_upsert"
-        ? brightYellow(v)
-        : cyan(v),
+    header: "ENGINE",
+    format: (v) => {
+      switch (v.engine) {
+        case "shebang":
+          return green(v.label);
+        case "deno-task":
+          return cyan(v.label);
+      }
+    },
   };
 }
 
@@ -441,7 +440,11 @@ export class CLI {
       .command("run", this.runCommand());
   }
 
-  async *markdownASTs(positional: string[], defaults: string[]) {
+  async *markdownASTs(
+    positional: string[],
+    defaults: string[],
+    options?: Parameters<typeof markdownASTs>[1],
+  ) {
     const merged = [
       ...(positional.length ? positional : defaults),
     ];
@@ -451,6 +454,7 @@ export class CLI {
           console.error({ src, error });
           return false;
         },
+        ...options,
       });
     }
   }
@@ -459,36 +463,36 @@ export class CLI {
     const tasksWithOrigin: {
       taskId: () => string; // satisfies Task interface
       taskDeps: () => string[]; // satisfies Task interface
-      code: CodeWithFrontmatterNode;
+      code: CodeSpawnableNode;
       md: Yielded<typeof mdASTs>;
-      qppi: PosixPIQuery;
     }[] = [];
     for await (const md of mdASTs) {
-      visit(md.mdastRoot, "code", (node) => {
-        if (this.isSpawnable(node) && isCodeWithFrontmatterNode(node)) {
-          if (node.data.codeFM.pi.posCount) {
-            const qppi = queryPosixPI(node.data.codeFM.pi);
-            tasksWithOrigin.push({
-              taskId: () => qppi.getFirstBareWord()!,
-              taskDeps: () => qppi.getTextFlagValues("dep"),
-              code: node,
-              md,
-              qppi,
-            });
-          } else {
-            console.error(
-              `markdownTasks error: no task ID for cell at ${md.fileRef(node)}`,
-            );
-          }
+      visit(md.mdastRoot, "code", (code) => {
+        if (isCodeSpawnableNode(code)) {
+          const { codeSpawnable } = code.data;
+          tasksWithOrigin.push({
+            taskId: () => codeSpawnable.identity,
+            taskDeps: () => codeSpawnable.pi.getTextFlagValues("dep"),
+            code,
+            md,
+          });
         }
       });
     }
-    const tasks = tasksWithOrigin.map((t) => t.code);
+    // we want to resolve dependencies in tasks across all markdowns loaded
+    const dr = depsResolver(
+      tasksWithOrigin.map((t) => {
+        return {
+          nodeName: t.taskId(),
+          injectableFlags: t.code.data.codeFM.pi.flags,
+        };
+      }),
+    );
     return tasksWithOrigin.map((t) => {
       return {
         ...t,
         // overwrite the final dependencies with "injected" ones, too
-        deps: () => this.taskDeps(tasks, t.taskId(), t.taskDeps()),
+        deps: () => dr.deps(t.taskId(), t.taskDeps()),
       };
     });
   }
@@ -527,8 +531,11 @@ export class CLI {
       .option("--summarize", "Emit summary after execution in JSON")
       .action(
         async (opts, taskId, ...paths: string[]) => {
+          const partialsCollec = codePartialsCollection();
           const tasks = await this.markdownTasks(
-            this.markdownASTs(paths, this.conf?.defaultFiles ?? []),
+            this.markdownASTs(paths, this.conf?.defaultFiles ?? [], {
+              codePartialsCollec: partialsCollec,
+            }),
           );
           if (tasks.find((t) => t.taskId() == taskId)) {
             const ieb = informationalEventBuses<
@@ -537,7 +544,7 @@ export class CLI {
             >(opts?.verbose);
             const runbook = await executeTasks(
               executionSubplan(executionPlan(tasks), [taskId]),
-              execTasksState(tasks, {
+              execTasksState(tasks, partialsCollec, {
                 onCapture: gitignorableOnCapture,
               }),
               { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
@@ -565,8 +572,11 @@ export class CLI {
       .option("--visualize <style:visualStyle>", "Visualize the DAG")
       .action(
         async (opts, ...paths: string[]) => {
+          const partialsCollec = codePartialsCollection();
           const tasks = await this.markdownTasks(
-            this.markdownASTs(paths, this.conf?.defaultFiles ?? []),
+            this.markdownASTs(paths, this.conf?.defaultFiles ?? [], {
+              codePartialsCollec: partialsCollec,
+            }),
           );
           const plan = executionPlan(tasks);
           if (opts?.visualize) {
@@ -579,7 +589,7 @@ export class CLI {
             >(opts?.verbose);
             const runbook = await executeTasks(
               plan,
-              execTasksState(tasks, {
+              execTasksState(tasks, partialsCollec, {
                 onCapture: gitignorableOnCapture,
               }),
               { shellBus: ieb.shellEventBus, tasksBus: ieb.tasksEventBus },
@@ -613,18 +623,19 @@ export class CLI {
       .option("--no-color", "Show output without using ANSI colors")
       .action(
         async (options, ...paths: string[]) => {
+          const sh = shell();
           const tasks = await this.markdownTasks(
             this.markdownASTs(paths, this.conf?.defaultFiles ?? []),
           );
           const lsRows = tasks.map((task) => {
-            const { qppi } = task;
+            const { code: { data: { codeSpawnable: { pi } } } } = task;
             return {
               code: task.code,
               name: task.taskId(),
               deps: task.taskDeps().join(", "),
-              descr: qppi.getTextFlag("descr") ?? "",
+              descr: pi.getTextFlag("descr") ?? "",
               origin: task.md.fileRef(task.code, Deno.cwd()),
-              language: task.code.lang ?? MISSING,
+              engine: sh.strategy(task.code.value),
             } satisfies LsTaskRow;
           });
 
@@ -640,219 +651,27 @@ export class CLI {
           const useColor = options.color;
           const builder = new ListerBuilder<LsTaskRow>()
             .from(lsRows)
-            .declareColumns("name", "language", "deps", "descr", "origin")
+            .declareColumns("name", "engine", "deps", "descr", "origin")
             .requireAtLeastOneColumn(true)
             .color(useColor)
             .header(true)
             .compact(false);
 
           builder.field("name", "name", lsTaskIdField());
-          builder.field("language", "language", lsLanguageField());
+          builder.field("engine", "engine", lsCmdEngineField());
           builder.field("deps", "deps", {
             header: "DEPS",
-            defaultColor: brightYellow,
+            defaultColor: yellow,
           });
           builder.field("descr", "descr", { header: "DESCR" });
           builder.field("origin", "origin", lsColorPathField("ORIGIN"));
 
-          builder.select("name", "language", "deps", "descr", "origin");
+          builder.select("name", "deps", "descr", "origin", "engine");
 
           const lister = builder.build();
           await lister.ls(true);
         },
       );
-  }
-
-  /**
-   * Find tasks that should be *implicitly* injected as dependencies of `taskId`
-   * based on other tasks' `--injected-dep` flags, and report invalid regexes.
-   *
-   * Behavior:
-   *
-   * - Any task may declare `--injected-dep`. The value can be:
-   *   - boolean true  → means ["*"] (match all taskIds)
-   *   - string        → treated as [that string]
-   *   - string[]      → used as-is
-   *
-   * - Each string is treated as a regular expression source. We compile all of them
-   *   once and cache them in `t.parsedPI.flags[".injected-dep-cache"]` as `RegExp[]`.
-   *
-   * - Special case: "*" means "match everything", implemented as `/.*\/`.
-   *
-   * - If ANY compiled regex for task `t` matches the given `taskId`, then that task’s
-   *   `parsedPI.firstToken` (the task's own name/id) will be considered an injected
-   *   dependency. It will be added to the returned `injected` list unless it is already
-   *   present in `taskDeps` or already added.
-   *
-   * Reliability:
-   *
-   * - The only error we surface is regex compilation failure. If a pattern cannot be
-   *   compiled, it is skipped and recorded in `errors` as `{ taskId, regEx }`.
-   *
-   * - No exceptions propagate. Bad inputs are ignored safely.
-   *
-   * Assumptions:
-   *
-   * - `this.tasks` exists and is an array of task-like code cells.
-   * - Each task that participates has `parsedPI.firstToken` (string task name) and
-   *   `parsedPI.flags` (an object).
-   *
-   * @param taskId The task identifier we are resolving deps for.
-   *
-   * @param taskDeps Existing, explicit dependencies for this task. Used only for de-duping.
-   *
-   * @example
-   * ```ts
-   * const { injected, errors } = this.injectedDeps("build", ["clean"]);
-   * // injected could be ["lint","compile"]
-   * // errors could be [{ taskId: "weirdTask", regEx: "(" }]
-   * ```
-   */
-  injectedDeps(
-    tasks: Iterable<Code>,
-    taskId: string,
-    taskDeps: string[] = [],
-  ) {
-    const injected: string[] = [];
-    const errors: { taskId: string; regEx: string }[] = [];
-
-    // normalize taskDeps just in case caller passed something weird
-    const safeTaskDeps = Array.isArray(taskDeps) ? taskDeps : [];
-
-    for (const t of tasks) {
-      if (!isCodeWithFrontmatterNode(t)) continue;
-
-      const { codeFM: { pi } } = t.data;
-      if (!pi.posCount) continue; // no cell identifier
-      const cellName = pi.pos[0];
-
-      const flags = pi.flags;
-      if (!flags || typeof flags !== "object") continue;
-
-      if (!("injected-dep" in flags)) continue;
-
-      // Normalize `--injected-dep` forms into an array of string patterns
-      const diFlag = flags["injected-dep"];
-      let di: string[] = [];
-
-      if (typeof diFlag === "boolean") {
-        if (diFlag === true) {
-          di = ["*"];
-        }
-      } else if (typeof diFlag === "string") {
-        di = [diFlag];
-      } else if (Array.isArray(diFlag)) {
-        di = diFlag.filter((x) => typeof x === "string");
-      }
-
-      if (di.length === 0) continue;
-
-      // Compile/cache regexes if not already done
-      if (!Array.isArray(flags[".injected-dep-cache"])) {
-        const compiledList: RegExp[] = [];
-
-        for (const expr of di) {
-          const source = expr === "*" ? ".*" : expr;
-
-          try {
-            compiledList.push(new RegExp(source));
-          } catch {
-            // Record invalid regex source
-            errors.push({
-              taskId: typeof cellName === "string" && cellName
-                ? cellName
-                : "(unknown-task)",
-              regEx: expr,
-            });
-            // skip adding invalid one
-          }
-        }
-
-        // deno-lint-ignore no-explicit-any
-        (flags as any)[".injected-dep-cache"] = compiledList;
-      }
-
-      // deno-lint-ignore no-explicit-any
-      const cached = (flags as any)[".injected-dep-cache"] as RegExp[];
-
-      if (!Array.isArray(cached) || cached.length === 0) {
-        // nothing valid compiled, move on
-        continue;
-      }
-
-      // Check whether ANY of the compiled regexes matches the requested taskId
-      let matches = false;
-      for (const re of cached) {
-        if (re instanceof RegExp && re.test(taskId)) {
-          matches = true;
-          break;
-        }
-      }
-
-      if (!matches) continue;
-
-      // Inject this task's firstToken (the task name)
-      const depName = cellName;
-      if (
-        typeof depName === "string" &&
-        depName.length > 0 &&
-        !safeTaskDeps.includes(depName) &&
-        !injected.includes(depName)
-      ) {
-        injected.push(depName);
-      }
-    }
-
-    return { injected, errors };
-  }
-
-  /**
-   * Returns a merged list of explicit and injected dependencies for a given task.
-   *
-   * This is a lightweight wrapper around {@link injectedDeps} that merges
-   * the explicitly declared `taskDeps` (if any) with automatically injected
-   * dependencies discovered via `--injected-dep` flags on other tasks.
-   *
-   * Results are cached per `taskId` in the provided `cellDepsCache` map.
-   *
-   * @param taskId The task identifier to resolve dependencies for.
-   *
-   * @param taskDeps Optional list of explicitly declared dependencies for this task.
-   *
-   * @param cellDepsCache Cache map used to store and retrieve previously resolved dependency lists.
-   *
-   * @returns A unique, ordered list of merged dependencies for the given `taskId`.
-   *
-   * @example
-   * ```ts
-   * const cache = new Map<string, string[]>();
-   * const deps = this.cellDeps("build", ["clean"], cache);
-   * // => ["clean", "compile", "lint"]
-   * ```
-   */
-  taskDeps(
-    tasks: Iterable<Code>,
-    taskId: string,
-    taskDeps: string[] | undefined,
-    cellDepsCache?: Map<string, string[]>,
-  ) {
-    // Return cached value if available
-    if (cellDepsCache) {
-      const cached = cellDepsCache.get(taskId);
-      if (cached) return cached;
-    }
-
-    // Compute injected dependencies
-    const { injected } = this.injectedDeps(tasks, taskId, taskDeps ?? []);
-
-    // Merge explicit + injected dependencies, ensuring uniqueness and order
-    const merged = Array.from(
-      new Set([...injected, ...(taskDeps ?? [])]),
-    );
-
-    // Cache and return result
-    cellDepsCache?.set(taskId, merged);
-    return merged;
   }
 }
 
