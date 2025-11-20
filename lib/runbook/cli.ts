@@ -14,280 +14,41 @@ import {
 } from "@std/fmt/colors";
 import { relative } from "@std/path";
 import { Code } from "types/mdast";
-import { MarkdownDoc } from "./markdown/fluent-doc.ts";
-import { markdownASTs, Yielded } from "./remark/mdastctl/io.ts";
-import * as mdastCtl from "./remark/mdastctl/mod.ts";
-import {
-  CodeWithFrontmatterNode,
-} from "./remark/plugin/node/code-frontmatter.ts";
-import { markdownShellEventBus } from "./task/mdbus.ts";
-import { languageRegistry, LanguageSpec } from "./universal/code.ts";
-import { ColumnDef, ListerBuilder } from "./universal/lister-tabular-tui.ts";
+import { MarkdownDoc } from "../markdown/fluent-doc.ts";
+import { markdownASTs } from "../remark/mdastctl/io.ts";
+import * as mdastCtl from "../remark/mdastctl/mod.ts";
+import { markdownShellEventBus } from "../task/mdbus.ts";
+import { languageRegistry, LanguageSpec } from "../universal/code.ts";
+import { ColumnDef, ListerBuilder } from "../universal/lister-tabular-tui.ts";
 import {
   errorOnlyShellEventBus,
   verboseInfoShellEventBus,
-} from "./universal/shell.ts";
+} from "../universal/shell.ts";
 import {
   errorOnlyTaskEventBus,
   executionPlan,
   executionSubplan,
   verboseInfoTaskEventBus,
-} from "./universal/task.ts";
-import { computeSemVerSync } from "./universal/version.ts";
+} from "../universal/task.ts";
+import { computeSemVerSync } from "../universal/version.ts";
 
-import { visit } from "unist-util-visit";
-import { depsResolver } from "./remark/mdast/depends.ts";
-import { codePartialsCollection } from "./remark/plugin/node/code-partial.ts";
-import {
-  CodeSpawnableNode,
-  isCodeSpawnableNode,
-} from "./remark/plugin/node/code-spawnable.ts";
-import { hasFlagOfType } from "./universal/cline.ts";
-import { eventBus } from "./universal/event-bus.ts";
-import { gitignore } from "./universal/gitignore.ts";
-import { unsafeInterpolator } from "./universal/interpolate.ts";
-import { shell, ShellBusEvents } from "./universal/shell.ts";
+import { codePartialsCollection } from "../remark/plugin/node/code-partial.ts";
+import { shell } from "../universal/shell.ts";
 import {
   executionPlanVisuals,
   ExecutionPlanVisualStyle,
-} from "./universal/task-visuals.ts";
+} from "../universal/task-visuals.ts";
+import { Task } from "../universal/task.ts";
 import {
-  executeDAG,
-  fail,
-  ok,
-  Task,
-  TaskExecEventMap,
-  TaskExecutionPlan,
-} from "./universal/task.ts";
-import { ensureTrailingNewline } from "./universal/text-utils.ts";
-import { safeJsonStringify } from "./universal/tmpl-literal-aide.ts";
+  execTasksState,
+  executeTasks,
+  gitignorableOnCapture,
+  markdownTasks,
+  TaskExecContext,
+} from "./orchestrate.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
-
-export type TaskExecContext = { runId: string };
-
-export type TaskExecCapture = {
-  cell: CodeSpawnableNode;
-  ctx: TaskExecContext;
-  interpResult: Awaited<
-    ReturnType<ReturnType<typeof execTasksState>["interpolateUnsafely"]>
-  >;
-  execResult?: Awaited<ReturnType<ReturnType<typeof shell>["auto"]>>;
-
-  text: () => string;
-  json: () => unknown;
-};
-
-export const typicalOnCapture = async (
-  ci: string,
-  tec: TaskExecCapture,
-  capturedTaskExecs: Record<string, TaskExecCapture>,
-) => {
-  if (ci.startsWith("./")) {
-    await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
-  } else {
-    capturedTaskExecs[ci] = tec;
-  }
-};
-
-export const gitignorableOnCapture = async (
-  ci: string,
-  tec: TaskExecCapture,
-  capturedTaskExecs: Record<string, TaskExecCapture>,
-) => {
-  if (ci.startsWith("./")) {
-    await Deno.writeTextFile(ci, ensureTrailingNewline(tec.text()));
-    const flags = tec.cell.data.codeFM.pi.flags;
-    if (flags && hasFlagOfType(flags, "gitignore")) {
-      const gi = ci.slice("./".length);
-      if (hasFlagOfType(flags, "gitignore", "string")) {
-        await gitignore(gi, flags.gitignore);
-      } else {
-        await gitignore(gi);
-      }
-    }
-  } else {
-    capturedTaskExecs[ci] = tec;
-  }
-};
-
-export function execTasksState(
-  tasks: Iterable<{ code: CodeWithFrontmatterNode }>,
-  partialsCollec: ReturnType<typeof codePartialsCollection>,
-  opts?: {
-    unsafeInterp?: ReturnType<typeof unsafeInterpolator>;
-    onCapture?: (
-      ci: string,
-      tec: TaskExecCapture,
-      capturedTaskExecs: Record<string, TaskExecCapture>,
-    ) => void | Promise<void>;
-  },
-) {
-  const capturedTaskExecs = {} as Record<string, TaskExecCapture>;
-  const defaults: Required<typeof opts> = {
-    unsafeInterp: unsafeInterpolator({
-      directives: tasks,
-      safeJsonStringify,
-      capturedTaskExecs,
-    }),
-    onCapture: typicalOnCapture,
-  };
-  const {
-    unsafeInterp = defaults.unsafeInterp,
-    onCapture = defaults.onCapture,
-  } = opts ?? {};
-  const td = new TextDecoder();
-
-  const isCapturable = (
-    cell: CodeWithFrontmatterNode,
-  ) => ("capture" in cell.data.codeFM.pi.flags ||
-    "C" in cell.data.codeFM.pi.flags);
-
-  const prepTaskExecCapture = (
-    tec: Pick<TaskExecCapture, "cell" | "ctx" | "interpResult" | "execResult">,
-  ) => {
-    const text = () => {
-      if (tec.execResult) {
-        if (Array.isArray(tec.execResult)) {
-          return tec.execResult.map((er) => td.decode(er.stdout)).join("\n");
-        } else {
-          return td.decode(tec.execResult.stdout);
-        }
-      } else {
-        return tec.interpResult.source;
-      }
-    };
-    const json = () => JSON.parse(text());
-    return { ...tec, text, json } satisfies TaskExecCapture;
-  };
-
-  const captureTaskExec = async (cap: TaskExecCapture) => {
-    const { cell: { data: { codeFM: { pi } } } } = cap;
-    const captureFlags = [
-      pi.flags.capture,
-      pi.flags.C,
-    ].filter((v) => v !== undefined);
-
-    const captureInstructions = captureFlags.flatMap((v) =>
-      typeof v === "boolean" ? [pi.pos[0]] : Array.isArray(v) ? v : [v]
-    ).filter((v) => v !== undefined).filter((v) => typeof v === "string");
-
-    for (const ci of captureInstructions) {
-      await onCapture(ci, cap, capturedTaskExecs);
-    }
-  };
-
-  // "unsafely" means we're using JavaScript "eval"
-  async function interpolateUnsafely(
-    cell: { code: CodeSpawnableNode },
-    ctx: TaskExecContext,
-  ): Promise<
-    & { status: false | "unmodified" | "mutated" }
-    & ({ status: "mutated"; source: string } | {
-      status: "unmodified";
-      source: string;
-    } | {
-      status: false;
-      source: string;
-      error: unknown;
-    })
-  > {
-    const qppi = cell.code.data.codeSpawnable.pi;
-    const source = cell.code.value;
-    if (!qppi.hasFlag("interpolate", "I")) {
-      return { status: "unmodified", source };
-    }
-
-    try {
-      // NOTE: This is intentionally unsafe. Do not feed untrusted content.
-      // Assume you're treating code cell blocks as fully trusted source code.
-      const mutated = await unsafeInterp.interpolate(source, {
-        ...ctx,
-        cell: cell.code,
-        safeJsonStringify,
-        captured: capturedTaskExecs,
-        partial: async (
-          name: string,
-          partialLocals?: Record<string, unknown>,
-        ) => {
-          const found = partialsCollec.get(name);
-          if (found) {
-            const { content: partial, interpolate, locals } = await found.data
-              .codePartial.content({
-                cell: cell.code,
-                safeJsonStringify,
-                captured: capturedTaskExecs,
-                ...ctx,
-                ...partialLocals,
-                partial: found.data.codePartial,
-              });
-            if (!interpolate) return partial;
-            return await unsafeInterp.interpolate(partial, locals, [{
-              template: partial,
-            }]);
-          } else {
-            return `/* partial '${name}' not found */`;
-          }
-        },
-      });
-      if (mutated !== source) return { status: "mutated", source: mutated };
-      return { status: "unmodified", source };
-    } catch (error) {
-      return { status: false, error, source };
-    }
-  }
-
-  return {
-    isCapturable,
-    onCapture,
-    unsafeInterp,
-    interpolateUnsafely,
-    capturedTaskExecs,
-    captureTaskExec,
-    prepTaskExecCapture,
-  };
-}
-
-export type ExecTasksState = ReturnType<typeof execTasksState>;
-
-export async function executeTasks<
-  T extends Task & { code: CodeSpawnableNode },
-  Context extends TaskExecContext = TaskExecContext,
->(
-  plan: TaskExecutionPlan<T>,
-  tei: ExecTasksState,
-  opts?: {
-    shellBus?: ReturnType<typeof eventBus<ShellBusEvents>>;
-    tasksBus?: ReturnType<typeof eventBus<TaskExecEventMap<T, Context>>>;
-  },
-) {
-  const { isCapturable, captureTaskExec, prepTaskExecCapture } = tei;
-  const sh = shell({ bus: opts?.shellBus });
-  return await executeDAG(plan, async (task, ctx) => {
-    const interpResult = await tei.interpolateUnsafely(task, ctx);
-    if (interpResult.status) {
-      const execResult = await sh.auto(interpResult.source);
-      if (isCapturable(task.code)) {
-        await captureTaskExec(
-          prepTaskExecCapture({
-            cell: task.code,
-            ctx,
-            interpResult,
-            execResult,
-          }),
-        );
-      }
-      return ok(ctx);
-    } else {
-      return fail(ctx, interpResult.error);
-    }
-  }, { eventBus: opts?.tasksBus });
-}
-
-// -----------------------------------------
-// CLI
-// -----------------------------------------
 
 export type LsTaskRow = {
   code: Code;
@@ -440,61 +201,20 @@ export class CLI {
       .command("run", this.runCommand());
   }
 
-  async *markdownASTs(
+  async markdownTasks(
     positional: string[],
     defaults: string[],
     options?: Parameters<typeof markdownASTs>[1],
   ) {
-    const merged = [
-      ...(positional.length ? positional : defaults),
-    ];
-    if (merged.length > 0) {
-      yield* markdownASTs(merged, {
+    return await markdownTasks(
+      markdownASTs(positional.length ? positional : defaults, {
         onError: (src, error) => {
           console.error({ src, error });
           return false;
         },
         ...options,
-      });
-    }
-  }
-
-  async markdownTasks(mdASTs: ReturnType<CLI["markdownASTs"]>) {
-    const tasksWithOrigin: {
-      taskId: () => string; // satisfies Task interface
-      taskDeps: () => string[]; // satisfies Task interface
-      code: CodeSpawnableNode;
-      md: Yielded<typeof mdASTs>;
-    }[] = [];
-    for await (const md of mdASTs) {
-      visit(md.mdastRoot, "code", (code) => {
-        if (isCodeSpawnableNode(code)) {
-          const { codeSpawnable } = code.data;
-          tasksWithOrigin.push({
-            taskId: () => codeSpawnable.identity,
-            taskDeps: () => codeSpawnable.pi.getTextFlagValues("dep"),
-            code,
-            md,
-          });
-        }
-      });
-    }
-    // we want to resolve dependencies in tasks across all markdowns loaded
-    const dr = depsResolver(
-      tasksWithOrigin.map((t) => {
-        return {
-          nodeName: t.taskId(),
-          injectableFlags: t.code.data.codeFM.pi.flags,
-        };
       }),
     );
-    return tasksWithOrigin.map((t) => {
-      return {
-        ...t,
-        // overwrite the final dependencies with "injected" ones, too
-        deps: () => dr.deps(t.taskId(), t.taskDeps()),
-      };
-    });
   }
 
   protected baseCommand({ examplesCmd }: { examplesCmd: string }) {
@@ -533,9 +253,9 @@ export class CLI {
         async (opts, taskId, ...paths: string[]) => {
           const partialsCollec = codePartialsCollection();
           const tasks = await this.markdownTasks(
-            this.markdownASTs(paths, this.conf?.defaultFiles ?? [], {
-              codePartialsCollec: partialsCollec,
-            }),
+            paths,
+            this.conf?.defaultFiles ?? [],
+            { codePartialsCollec: partialsCollec },
           );
           if (tasks.find((t) => t.taskId() == taskId)) {
             const ieb = informationalEventBuses<
@@ -574,9 +294,9 @@ export class CLI {
         async (opts, ...paths: string[]) => {
           const partialsCollec = codePartialsCollection();
           const tasks = await this.markdownTasks(
-            this.markdownASTs(paths, this.conf?.defaultFiles ?? [], {
-              codePartialsCollec: partialsCollec,
-            }),
+            paths,
+            this.conf?.defaultFiles ?? [],
+            { codePartialsCollec: partialsCollec },
           );
           const plan = executionPlan(tasks);
           if (opts?.visualize) {
@@ -625,7 +345,8 @@ export class CLI {
         async (options, ...paths: string[]) => {
           const sh = shell();
           const tasks = await this.markdownTasks(
-            this.markdownASTs(paths, this.conf?.defaultFiles ?? []),
+            paths,
+            this.conf?.defaultFiles ?? [],
           );
           const lsRows = tasks.map((task) => {
             const { code: { data: { codeSpawnable: { pi } } } } = task;
