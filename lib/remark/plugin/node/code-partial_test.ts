@@ -30,6 +30,22 @@ async function render(
   return await Promise.resolve(p.content(locals));
 }
 
+/**
+ * Helper: wrap a CodePartial into a minimal synthetic CodePartialNode
+ * so it can be registered into codePartialsCollection().
+ */
+function nodeFromPartial(p: ReturnType<typeof codePartial>): CodePartialNode {
+  return {
+    type: "code",
+    lang: "ts",
+    meta: null,
+    value: p.source,
+    data: {
+      [CODE_PARTIAL_STORE_KEY]: p,
+    } as Any,
+  } as CodePartialNode;
+}
+
 function pipeline() {
   return remark()
     .use(remarkGfm)
@@ -261,36 +277,45 @@ Deno.test("codePartialsCollection() core behaviors", async (t) => {
 
   await t.step("registers and retrieves plain partials", async () => {
     const p = codePartial("plain", {}, "content");
-    col.register(p);
-    const got = col.get("plain");
-    assert(got);
-    const r = await render(got, {});
+    const node = nodeFromPartial(p);
+    col.register(node);
+
+    const gotNode = col.get("plain");
+    assert(gotNode);
+
+    const gotPartial = gotNode.data[CODE_PARTIAL_STORE_KEY];
+    const r = await render(gotPartial, {});
     assertEquals(r.content, "content");
   });
 
   await t.step("handles duplicates according to policy", async () => {
     const p1 = codePartial("dupe", {}, "a");
     const p2 = codePartial("dupe", {}, "b");
+    const n1 = nodeFromPartial(p1);
+    const n2 = nodeFromPartial(p2);
 
     // overwrite
-    col.register(p1);
-    col.register(p2, () => "overwrite");
+    col.register(n1);
+    col.register(n2, () => "overwrite");
     {
-      const r = await render(col.get("dupe")!, {});
+      const got = col.get("dupe")!;
+      const r = await render(got.data[CODE_PARTIAL_STORE_KEY], {});
       assertEquals(r.content, "b");
     }
 
     // ignore
-    col.register(p1);
-    col.register(p2, () => "ignore");
+    col.register(nodeFromPartial(codePartial("dupe", {}, "a")));
+    col.register(nodeFromPartial(codePartial("dupe", {}, "b")), () => "ignore");
     {
-      const r = await render(col.get("dupe")!, {});
+      const got = col.get("dupe")!;
+      const r = await render(got.data[CODE_PARTIAL_STORE_KEY], {});
       assertEquals(r.content, "a");
     }
 
     // throw (sync) -> assertThrows
+    const nThrow = nodeFromPartial(codePartial("dupe", {}, "x"));
     assertThrows(() => {
-      col.register(p2, () => "throw");
+      col.register(nThrow, () => "throw");
     });
   });
 
@@ -305,8 +330,8 @@ Deno.test("codePartialsCollection() core behaviors", async (t) => {
       { inject: "reports/*.sql", append: true },
       "-- F",
     );
-    col.register(inj1);
-    col.register(inj2);
+    col.register(nodeFromPartial(inj1));
+    col.register(nodeFromPartial(inj2));
 
     const found1 = col.findInjectableForPath("x/foo.sql");
     const found2 = col.findInjectableForPath("reports/summary.sql");
@@ -322,7 +347,7 @@ Deno.test("codePartialsCollection() core behaviors", async (t) => {
       { inject: "**/*.txt" },
       "HEADER",
     );
-    localCol.register(inj);
+    localCol.register(nodeFromPartial(inj));
 
     const result = await localCol.compose({
       content: "body",
@@ -340,7 +365,7 @@ Deno.test("codePartialsCollection() core behaviors", async (t) => {
       { inject: "**/*.sql", prepend: true, append: true },
       "WRAP",
     );
-    localCol.register(inj);
+    localCol.register(nodeFromPartial(inj));
 
     const result = await localCol.compose({
       content: "core",
@@ -362,7 +387,7 @@ Deno.test("codePartialsCollection() core behaviors", async (t) => {
         "BAD",
         { name: { type: "string" } }, // schema expects string
       );
-      localCol.register(bad);
+      localCol.register(nodeFromPartial(bad));
 
       const res = await localCol.compose({
         content: "BODY",
@@ -402,7 +427,7 @@ Deno.test("codePartialsCollection() core behaviors", async (t) => {
       };
       (throwingPartial as { content: typeof newContent }).content = newContent;
 
-      localCol.register(throwingPartial);
+      localCol.register(nodeFromPartial(throwingPartial));
 
       const res = await localCol.compose({
         content: "main",
@@ -434,8 +459,8 @@ Deno.test(
           { inject: "reports/*.sql" },
           "SPECIFIC",
         );
-        col.register(generic);
-        col.register(specific);
+        col.register(nodeFromPartial(generic));
+        col.register(nodeFromPartial(specific));
 
         const r = await col.compose({
           content: "BODY",
