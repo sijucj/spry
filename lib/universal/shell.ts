@@ -46,7 +46,7 @@ export type ShellBusEvents = {
     durationMs: number;
   };
 
-  "shebang:tempfile": { path: string };
+  "shebang:tempfile": { path: string; script: string };
   "shebang:cleanup": { path: string; ok: boolean; error?: unknown };
 
   "auto:mode": { mode: "shebang" | "eval" };
@@ -256,7 +256,7 @@ export function shell(init?: {
       dir: tmpDir,
       prefix: "shell-",
     });
-    emit("shebang:tempfile", { path: file });
+    emit("shebang:tempfile", { path: file, script });
     try {
       await Deno.writeTextFile(file, script);
       await Deno.chmod(file, 0o755);
@@ -283,6 +283,22 @@ export function shell(init?: {
     }
   };
 
+  const strategy = (source: string) => {
+    const linesOfCode = source.split(/\r?\n/, 1);
+    const first = linesOfCode[0] ?? "";
+    if (first.startsWith("#!")) {
+      return { engine: "shebang" as const, label: first, linesOfCode };
+    } else {
+      return {
+        engine: "deno-task" as const,
+        label: `${linesOfCode.length} Deno task${
+          linesOfCode.length > 1 ? "s" : ""
+        }`,
+        linesOfCode,
+      };
+    }
+  };
+
   return {
     spawnText,
     spawnArgv,
@@ -290,6 +306,7 @@ export function shell(init?: {
     denoTaskEval,
     auto,
     splitArgvLine,
+    strategy,
   };
 }
 
@@ -398,18 +415,15 @@ export function verboseInfoShellEventBus(init: { style: "plain" | "rich" }) {
 
   bus.on(
     "task:line:done",
-    ({ index, line, code, success, durationMs, stdout, stderr }) => {
-      const msg = `${c.tag("[task]")} ${em.done(`L${index}`, success)} ` +
-        (success ? c.ok(`code=${code}`) : c.err(`code=${code}`)) +
-        ` ${c.gray(line)}` +
-        em.timer(durationMs);
-      console.info(msg);
-      if (stdout.length > 0) {
-        console.info(dim(indent(te.decode(stdout))));
-      }
-      if (stderr.length > 0) {
-        console.info(red(indent(te.decode(stderr))));
-      }
+    ({ index, line, code, success, durationMs }) => {
+      console.info(
+        `${c.tag("[task]")} ${em.done(`L${index}`, success)} ` +
+          (success ? c.ok(`code=${code}`) : c.err(`code=${code}`)) +
+          ` ${c.gray(line)}` +
+          em.timer(durationMs),
+      );
+      // we don't emit stdout and stderr because spawn:done will already
+      // have been called for deno tasks
     },
   );
 
@@ -452,7 +466,9 @@ export function verboseInfoShellEventBus(init: { style: "plain" | "rich" }) {
  * await sh.spawnText("deno run missing.ts");
  * ```
  */
-export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
+export function errorOnlyShellEventBus(
+  init: { style: "plain" | "rich"; "shebang:tempfile"?: boolean },
+) {
   const fancy = init.style === "rich";
   const bus = eventBus<ShellBusEvents>();
 
@@ -485,6 +501,13 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
   }
 
   // ---- listeners ----
+
+  if (init["shebang:tempfile"]) {
+    bus.on("shebang:tempfile", ({ path, script }) => {
+      console.log({ where: "shebang:tempfile", path, script });
+    });
+  }
+
   bus.on("spawn:error", ({ cmd, args, error }) => {
     console.error(
       `${c.tag("[spawn]")} ${em.boom(c.cmd(cmd))} ${args.join(" ")} → ${
@@ -494,9 +517,7 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
   });
 
   bus.on("spawn:done", ({ cmd, args, code, success, stderr, stdout }) => {
-    if (stdout.length > 0) {
-      console.info(decode(stdout));
-    }
+    console.info(decode(stdout));
     if (!success) {
       console.error(
         `${c.tag("[spawn]")} ${em.fail(c.cmd(cmd))} ${args.join(" ")} ${
@@ -508,18 +529,15 @@ export function errorOnlyShellEventBus(init: { style: "plain" | "rich" }) {
     }
   });
 
-  bus.on("task:line:done", ({ index, line, code, success, stdout, stderr }) => {
-    if (stdout.length > 0) {
-      console.info(decode(stdout));
-    }
+  bus.on("task:line:done", ({ index, line, code, success }) => {
+    // we don't emit stdout and stderr because spawn:done will already
+    // have been called for deno tasks
     if (!success) {
       console.error(
         `${c.tag("[task]")} ${em.fail(`L${index}`)} ${
           c.err(`(code=${code})`)
         } ${c.faint(line)}`,
       );
-      const msg = decode(stderr);
-      if (msg) console.error(c.err(msg));
     }
   });
 
