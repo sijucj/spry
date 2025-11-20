@@ -7,7 +7,6 @@
   "dataNodesTotal": 161,
   "dataKeyCounts": {
     "documentFrontmatter": 1,
-    "nodeIdsCatalog": 1,
     "parsedFM": 1,
     "headingFM": 34,
     "inheritedHeadingFM": 35,
@@ -29,8 +28,7 @@
       "maxEndLine": 703,
       "dataNodes": 1,
       "dataKeyCounts": {
-        "documentFrontmatter": 1,
-        "nodeIdsCatalog": 1
+        "documentFrontmatter": 1
       },
       "textNodes": 0,
       "totalTextLength": 0,
