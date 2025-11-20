@@ -4,6 +4,7 @@ import { Command, EnumType } from "@cliffy/command";
 import { CompletionsCommand } from "@cliffy/completions";
 import { HelpCommand } from "@cliffy/help";
 import {
+  blue,
   bold,
   brightYellow,
   cyan,
@@ -40,12 +41,14 @@ import {
 } from "../universal/task-visuals.ts";
 import { Task } from "../universal/task.ts";
 import {
+  codeSpawnablePiFlagsSchema,
   execTasksState,
   executeTasks,
   gitignorableOnCapture,
   markdownTasks,
   TaskExecContext,
 } from "./orchestrate.ts";
+import z from "@zod/zod";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -57,7 +60,23 @@ export type LsTaskRow = {
   engine: ReturnType<ReturnType<typeof shell>["strategy"]>;
   descr: string;
   deps?: string;
+  flags: {
+    isInterpolated: boolean;
+    isCaptured: boolean;
+  };
 };
+
+function lsFlagsField<Row extends LsTaskRow>():
+  | Partial<ColumnDef<Row, Row["flags"]>>
+  | undefined {
+  return {
+    header: "Args",
+    defaultColor: gray,
+    // deno-fmt-ignore
+    format: (v) =>
+        `${brightYellow(v.isInterpolated ? "I" : " ")} ${blue(v.isCaptured ? "C" : " ")}`,
+  };
+}
 
 function lsColorPathField<Row extends LsTaskRow>(
   header: string,
@@ -350,6 +369,10 @@ export class CLI {
           );
           const lsRows = tasks.map((task) => {
             const { code: { data: { codeSpawnable: { pi } } } } = task;
+            const safePIF = z.safeParse(
+              codeSpawnablePiFlagsSchema,
+              task.code.data.codeFM.pi.flags,
+            );
             return {
               code: task.code,
               name: task.taskId(),
@@ -357,6 +380,10 @@ export class CLI {
               descr: pi.getTextFlag("descr") ?? "",
               origin: task.md.fileRef(task.code, Deno.cwd()),
               engine: sh.strategy(task.code.value),
+              flags: {
+                isInterpolated: safePIF.data?.interpolate ? true : false,
+                isCaptured: safePIF.data?.capture ? true : false,
+              },
             } satisfies LsTaskRow;
           });
 
@@ -372,7 +399,14 @@ export class CLI {
           const useColor = options.color;
           const builder = new ListerBuilder<LsTaskRow>()
             .from(lsRows)
-            .declareColumns("name", "engine", "deps", "descr", "origin")
+            .declareColumns(
+              "name",
+              "engine",
+              "deps",
+              "descr",
+              "origin",
+              "flags",
+            )
             .requireAtLeastOneColumn(true)
             .color(useColor)
             .header(true)
@@ -386,8 +420,8 @@ export class CLI {
           });
           builder.field("descr", "descr", { header: "DESCR" });
           builder.field("origin", "origin", lsColorPathField("ORIGIN"));
-
-          builder.select("name", "deps", "descr", "origin", "engine");
+          builder.field("flags", "flags", lsFlagsField());
+          builder.select("name", "deps", "flags", "descr", "origin", "engine");
 
           const lister = builder.build();
           await lister.ls(true);

@@ -43,10 +43,10 @@ type Any = any;
  */
 export const codeSpawnablePiFlagsSchema = z.object({
   capture: z.string().optional(),
-  interpolate: z.string().optional(),
+  interpolate: z.boolean().optional(),
 
   C: z.string().optional(),
-  I: z.string().optional(),
+  I: z.boolean().optional(),
 }).transform((raw) => ({
   capture: raw.C ?? raw.capture,
   interpolate: raw.I ?? raw.interpolate,
