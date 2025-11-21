@@ -11,7 +11,7 @@ import { HelpCommand } from "@cliffy/command/help";
 
 import { bold, cyan, gray, magenta, red, yellow } from "@std/fmt/colors";
 
-import type { Heading, RootContent } from "types/mdast";
+import type { Heading, Node } from "types/mdast";
 
 import { ListerBuilder } from "../../universal/lister-tabular-tui.ts";
 import { TreeLister } from "../../universal/lister-tree-tui.ts";
@@ -723,7 +723,7 @@ export class CLI {
       .arguments("[paths...:string]")
       .option(
         "--select <query:string>",
-        "mdastql selection (required – which nodes to emit as Markdown).",
+        "mdastql selection (required - which nodes to emit as Markdown).",
       )
       .option(
         "--section",
@@ -759,7 +759,7 @@ export class CLI {
 
           // SECTION mode: expand selected headings into sections.
           const headings: Heading[] = [];
-          const nonHeadingNodes: RootContent[] = [];
+          const nonHeadingNodes: Node[] = [];
 
           for (const node of nodes) {
             if (node.type === "heading") {

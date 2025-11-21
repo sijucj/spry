@@ -289,8 +289,8 @@ export async function* markdownASTs(
       ...vf,
       mdastRoot,
       mdText: {
-        nodeOffsets: (node: RootContent) => nodeOffsetsInSource(vf.text, node),
-        sliceForNode: (node: RootContent) => sliceSourceForNode(vf.text, node),
+        nodeOffsets: (node: Node) => nodeOffsetsInSource(vf.text, node),
+        sliceForNode: (node: Node) => sliceSourceForNode(vf.text, node),
         sectionRangesForHeadings: (headings: Heading[]) =>
           computeSectionRangesForHeadings(mdastRoot, vf.text, headings),
       },
@@ -304,7 +304,7 @@ export async function* markdownASTs(
 
 export function nodeOffsetsInSource(
   source: string,
-  node: RootContent,
+  node: Node,
 ): [number, number] | undefined {
   const pos = node.position as Any;
   if (!pos || !pos.start || !pos.end) return undefined;
@@ -354,7 +354,7 @@ export function nodeOffsetsInSource(
  */
 export function sliceSourceForNode(
   source: string,
-  node: RootContent,
+  node: Node,
 ): string {
   const offsets = nodeOffsetsInSource(source, node);
   if (offsets) {
@@ -363,7 +363,7 @@ export function sliceSourceForNode(
   }
 
   // Fallback: as a last resort, re-stringify this node
-  const root: Root = { type: "root", children: [node] };
+  const root: Root = { type: "root", children: [node as RootContent] };
   return remark().stringify(root);
 }
 

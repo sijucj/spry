@@ -8,7 +8,7 @@
  */
 
 import { basename } from "@std/path";
-import type { Heading, Root, RootContent } from "types/mdast";
+import type { Heading, Node, Root, RootContent } from "types/mdast";
 import {
   collectSectionsFromRoot,
   hasBelongsToSection,
@@ -206,7 +206,7 @@ export function selectNodes(
 
 function markNodesContainingSelected(
   root: Root,
-  selected: Set<RootContent>,
+  selected: Set<Node>,
 ): WeakMap<RootContent, boolean> {
   const map = new WeakMap<RootContent, boolean>();
 
@@ -381,7 +381,7 @@ export interface BuildMdAstTreeRowsOptions {
    * For "physical" view:
    *   - if provided, we compute which tree nodes contain any of these.
    */
-  readonly selectedNodes?: RootContent[];
+  readonly selectedNodes?: Node[];
 
   /**
    * For "physical" view:
