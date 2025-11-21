@@ -54,6 +54,7 @@
     "types/mdast": "npm:@types/mdast@^4",
     "types/unist": "npm:@types/unist",
     "unist-util-visit": "npm:unist-util-visit@^5",
+    "unist-util-select": "https://esm.sh/unist-util-select@5",
     "github-slugger": "npm:github-slugger"
   }
 }

@@ -30,10 +30,10 @@
  * - Code generation / orchestration based on annotated headings or blocks.
  */
 
-import type { Root, RootContent } from "types/mdast";
+import type { Node, Root, RootContent } from "types/mdast";
 import type { Plugin } from "unified";
 
-import { mdastql } from "../../mdast/query.ts";
+import { selectAll } from "unist-util-select";
 
 /** mdast node we classify (content nodes only for now). */
 export type RootNode = RootContent;
@@ -69,7 +69,7 @@ export type ClassedNode<
 
 export type ClassifierCatalog = Record<
   ClassificationNamespace,
-  Record<ClassificationPath, RootContent[]>
+  Record<ClassificationPath, Node[]>
 >;
 
 /**
@@ -89,9 +89,9 @@ export interface ClassificationEntry<
  * Single classifier rule.
  */
 export interface NodeClassifierRule {
-  readonly nodes: readonly string[] | ((root: Root) => Iterable<RootContent>);
+  readonly nodes: readonly string[] | ((root: Root) => Iterable<Node>);
   readonly classify: (
-    found: readonly RootContent[],
+    found: readonly Node[],
   ) =>
     | false
     | ClassificationEntry
@@ -276,7 +276,7 @@ export function classifyNode<
 
 /**
  * remark plugin: classify nodes based on either:
- *   - mdastql selector strings (NodeClassifierRule.nodes as string[]), or
+ *   - unist-util-select selector strings (NodeClassifierRule.nodes as string[]), or
  *   - a function that directly returns nodes to classify.
  *
  * It delegates the per-node mutation semantics to `classifyNode` so that
@@ -318,7 +318,7 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
     const updateCatalog = (
       catalog: ClassifierCatalog,
       entries: readonly ClassificationEntry[],
-      nodes: readonly RootContent[],
+      nodes: readonly Node[],
     ) => {
       for (const entry of entries) {
         const { namespace, path } = entry;
@@ -337,7 +337,7 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
     };
 
     const runRuleOnNodes = (
-      foundNodes: readonly RootContent[],
+      foundNodes: readonly Node[],
       classify: NodeClassifierRule["classify"],
     ) => {
       if (!foundNodes.length) return;
@@ -385,7 +385,7 @@ export const nodeClassifier: Plugin<[NodeClassifierOptions], Root> = (
         if (nodes.length === 0) continue;
 
         for (const selectorText of nodes) {
-          const { nodes: selectorNodes } = mdastql(root, selectorText);
+          const selectorNodes = selectAll(selectorText, root);
           if (!selectorNodes.length) continue;
 
           runRuleOnNodes(selectorNodes, classify);

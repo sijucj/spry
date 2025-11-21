@@ -9,7 +9,6 @@
 
 import { basename } from "@std/path";
 import type { Heading, Root, RootContent } from "types/mdast";
-import { mdastql, type MdastQlOptions } from "../mdast/query.ts";
 import {
   collectSectionsFromRoot,
   hasBelongsToSection,
@@ -20,6 +19,8 @@ import {
 } from "../plugin/node/node-classify.ts";
 import { hasNodeIdentities } from "../plugin/node/node-identities.ts";
 import { markdownASTs, Yielded } from "./io.ts";
+
+import { selectAll } from "unist-util-select";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -130,7 +131,6 @@ export interface TabularRow {
 export interface BuildMdAstTabularRowsOptions {
   readonly includeDataKeys?: boolean;
   readonly query?: string;
-  readonly mdastqlOptions?: MdastQlOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,23 +187,21 @@ export function walkTree(
 }
 
 /**
- * mdastql-backed selection helper.
+ * unist-util-select-backed selection helper.
  *
  * - If query is undefined → returns every node in depth-first order.
- * - If query is provided  → returns mdastql matches.
+ * - If query is provided  → returns unist-util-select matches.
  */
 export function selectNodes(
   root: Root,
   query: string | undefined,
-  options?: MdastQlOptions,
-): RootContent[] {
+) {
   if (!query) {
     const out: RootContent[] = [];
     walkTree(root, (node) => out.push(node));
     return out;
   }
-  const { nodes } = mdastql(root, query, options);
-  return [...nodes];
+  return selectAll(query, root);
 }
 
 function markNodesContainingSelected(
@@ -497,8 +495,8 @@ function buildPhysicalTabularRows(
   opts: BuildMdAstTabularRowsOptions = {},
 ): TabularRow[] {
   const { root, fileRef } = pmt;
-  const { includeDataKeys, query, mdastqlOptions } = opts;
-  const selected = selectNodes(root, query, mdastqlOptions);
+  const { includeDataKeys, query } = opts;
+  const selected = selectNodes(root, query);
   const selectedSet = new Set(selected);
 
   const rows: TabularRow[] = [];
@@ -565,8 +563,8 @@ function buildIdentifierTabularRows(
   opts: BuildMdAstTabularRowsOptions = {},
 ): TabularRow[] {
   const { root, fileRef } = pmt;
-  const { includeDataKeys, query, mdastqlOptions } = opts;
-  const selected = selectNodes(root, query, mdastqlOptions);
+  const { includeDataKeys, query } = opts;
+  const selected = selectNodes(root, query);
   const selectedSet = new Set(selected);
 
   const rows: TabularRow[] = [];

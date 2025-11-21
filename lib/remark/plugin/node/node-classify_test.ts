@@ -3,6 +3,7 @@ import { remark } from "remark";
 import remarkFrontmatter from "remark-frontmatter";
 import type { Code, Heading, Paragraph, Root, RootContent } from "types/mdast";
 
+import { documentFrontmatter } from "../doc/doc-frontmatter.ts";
 import { classifiersFromFrontmatter } from "./node-classify-fm.ts";
 import {
   catalogToRootData,
@@ -11,7 +12,6 @@ import {
   nodeClassifier,
   type NodeClassifierRule,
 } from "./node-classify.ts";
-import { documentFrontmatter } from "../doc/doc-frontmatter.ts";
 
 /**
  * Helper: parse markdown into an mdast Root using the full pipeline:
@@ -58,13 +58,13 @@ Paragraph B1.1
 const FRONTMATTER_MD = `
 ---
 doc-classify:
-  - select: h1
+  - select: heading[depth="1"]
     role: project
-  - select: h2
+  - select: heading[depth="2"]
     role: test-strategy
-  - select: h3
+  - select: heading[depth="3"]
     role: test-plan
-  - select: h4
+  - select: heading[depth="4"]
     role: test-case
 ---
 # Project Title
@@ -76,7 +76,7 @@ doc-classify:
 const FRONTMATTER_BAGGAGE_MD = `
 ---
 doc-classify:
-  - select: h1
+  - select: heading[depth="1"]
     role:
       path: project
       baggage:
@@ -96,7 +96,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
         classifiers: (_root: Root) => [
           // Mark the main title
           {
-            nodes: ["h1"],
+            nodes: [`heading[depth="1"]`],
             classify: (nodes) => {
               assertEquals(nodes.length, 1);
               return { namespace: "role", path: "title" };
@@ -104,7 +104,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
           },
           // Mark all h2 headings as sections
           {
-            nodes: ["h2"],
+            nodes: [`heading[depth="2"]`],
             classify: () => ({ namespace: "role", path: "section" }),
           },
           // Mark all paragraphs as "body"
@@ -240,7 +240,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            nodes: ["h1"],
+            nodes: [`heading[depth="1"]`],
             classify: () => ({ namespace: "role", path: "title" }),
           },
         ],
@@ -330,7 +330,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            nodes: ["h1"],
+            nodes: [`heading[depth="1"]`],
             classify: () => ({ namespace: "role", path: "title" }),
           },
         ],
@@ -358,7 +358,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       ): IterableIterator<NodeClassifierRule> {
         // yield one simple rule for h1
         yield {
-          nodes: ["h1"],
+          nodes: [`heading[depth="1"]`],
           classify: (nodes) => ({
             namespace: "role",
             path: nodes.length === 1 ? "title" : "heading",
@@ -404,7 +404,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown(SAMPLE_MD, {
         classifiers: (_root: Root) => [
           {
-            nodes: ["h1"],
+            nodes: [`heading[depth="1"]`],
             classify: (_nodes) => {
               // Multiple class entries for the same selection
               function* entries() {
@@ -519,7 +519,7 @@ Deno.test("nodeClassifier remark plugin", async (t) => {
       const root = await parseMarkdown("# Title\n", {
         classifiers: (_root: Root) => [
           {
-            nodes: ["h1"],
+            nodes: [`heading[depth="1"]`],
             classify: () => ({
               namespace: "role",
               path: "project",

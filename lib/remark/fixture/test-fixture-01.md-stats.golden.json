@@ -47,9 +47,9 @@
         "parsedFM": 1
       },
       "textNodes": 1,
-      "totalTextLength": 205,
-      "maxTextLength": 205,
-      "avgTextLength": 205
+      "totalTextLength": 301,
+      "maxTextLength": 301,
+      "avgTextLength": 301
     },
     "heading": {
       "type": "heading",
@@ -7070,8 +7070,8 @@
       "doc-classify"
     ],
     "headingWithFrontmatter": 34,
+    "nodesWithIds": 38,
     "codeCellsWithFrontmatter": 16,
-    "codeCellsWithPartials": 2,
-    "nodesWithIds": 38
+    "codeCellsWithPartials": 2
   }
 }
