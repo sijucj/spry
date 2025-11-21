@@ -31,17 +31,24 @@ cat prepare.duckdb.sql | duckdb ":memory:"  # DuckDB processes in memory but cre
 
 ## Environment variables and .envrc
 
-This project reads configuration from environment variables. Two variables you will commonly set in development are:
+This project reads configuration from environment variables. Two variables you
+will commonly set in development are:
 
-- `SPRY_DB` — the database connection URL used by SQLPage and Spry. Example value used here:
-  `sqlite://scf-2025.3.sqlite.db?mode=rwc`
-  - Scheme: `sqlite://` followed by a path (relative or absolute) to the SQLite file.
-  - Query `mode=rwc` tells SQLite/DuckDB to open the file for read/write and create it if missing.
-  - If you prefer a path under a `data/` directory, set e.g. `sqlite://./data/scf-2025.3.sqlite.db?mode=rwc`.
+- `SPRY_DB` — the database connection URL used by SQLPage and Spry. Example
+  value used here: `sqlite://scf-2025.3.sqlite.db?mode=rwc`
+  - Scheme: `sqlite://` followed by a path (relative or absolute) to the SQLite
+    file.
+  - Query `mode=rwc` tells SQLite/DuckDB to open the file for read/write and
+    create it if missing.
+  - If you prefer a path under a `data/` directory, set e.g.
+    `sqlite://./data/scf-2025.3.sqlite.db?mode=rwc`.
 
-- `PORT` — the TCP port the local SQLPage server or other local web component should listen on (example: `9227`).
+- `PORT` — the TCP port the local SQLPage server or other local web component
+  should listen on (example: `9227`).
 
-Recommended practice is to keep these values in a local, directory-scoped environment file. If you use direnv (recommended), create a file named `.envrc` in this directory.
+Recommended practice is to keep these values in a local, directory-scoped
+environment file. If you use direnv (recommended), create a file named `.envrc`
+in this directory.
 
 POSIX-style example (bash/zsh):
 
@@ -50,24 +57,37 @@ export SPRY_DB="sqlite://scf-2025.3.sqlite.db?mode=rwc"
 export PORT=9227
 ```
 
-Then run `direnv allow` in this project directory to load the `.envrc` into your shell environment. direnv will evaluate `.envrc` only after you explicitly allow it.
+Then run `direnv allow` in this project directory to load the `.envrc` into your
+shell environment. direnv will evaluate `.envrc` only after you explicitly allow
+it.
 
 ## Security and repository hygiene
 
-- Never commit secrets or production credentials into `.envrc`. Treat `.envrc` like a local-only file.
-- Add `.envrc` to your local `.gitignore` if you keep secrets there. Alternatively commit a `.envrc.example` or `.envrc.sample` with safe, non-secret defaults to document expected variables.
-- The SQLite file (e.g. `scf-2025.3.sqlite.db`) is a binary database file — you will usually not check this into version control. Add that filename or the `data/` directory to `.gitignore` as well.
+- Never commit secrets or production credentials into `.envrc`. Treat `.envrc`
+  like a local-only file.
+- Add `.envrc` to your local `.gitignore` if you keep secrets there.
+  Alternatively commit a `.envrc.example` or `.envrc.sample` with safe,
+  non-secret defaults to document expected variables.
+- The SQLite file (e.g. `scf-2025.3.sqlite.db`) is a binary database file — you
+  will usually not check this into version control. Add that filename or the
+  `data/` directory to `.gitignore` as well.
 
 Why these variables matter here
 
-- The YAML header at the top of this `Spryfile.md` reads `database_url: ${env.SPRY_DB}` and `port: ${env.PORT}` — Spry and the SQLPage tooling will substitute those environment values when building or serving the site.
-- If `SPRY_DB` is not set, the tooling may fail to find the database or fall back to defaults; explicitly setting it ensures predictable, repeatable dev runs.
+- The YAML header at the top of this `Spryfile.md` reads
+  `database_url: ${env.SPRY_DB}` and `port: ${env.PORT}` — Spry and the SQLPage
+  tooling will substitute those environment values when building or serving the
+  site.
+- If `SPRY_DB` is not set, the tooling may fail to find the database or fall
+  back to defaults; explicitly setting it ensures predictable, repeatable dev
+  runs.
 
 Quick troubleshooting
 
-- If the server does not start on the expected port, verify `echo $PORT` (or `echo $SPRY_DB`) in your shell to confirm values are loaded.
-- If direnv appears not to load `.envrc`, re-run `direnv allow` and ensure your shell config contains the direnv hook.
-
+- If the server does not start on the expected port, verify `echo $PORT` (or
+  `echo $SPRY_DB`) in your shell to confirm values are loaded.
+- If direnv appears not to load `.envrc`, re-run `direnv allow` and ensure your
+  shell config contains the direnv hook.
 
 ## SQLPage Dev / Watch mode
 
@@ -405,7 +425,6 @@ ${pagination.navigation}
 ## Controls per regime (totals) details page
 
 ```sql scf/details/regime.sql { route: { caption: "Controls per regime (totals) details" } }
-
 SELECT
   'text' AS component,
  $page_title||' for '||$regime AS title;

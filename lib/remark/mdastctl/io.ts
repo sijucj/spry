@@ -35,8 +35,8 @@ import { classifiersFromFrontmatter } from "../plugin/node/node-classify-fm.ts";
 import nodeClassifierPlugin from "../plugin/node/node-classify.ts";
 import nodeIdentitiesPlugin from "../plugin/node/node-identities.ts";
 
-import { relative } from "@std/path";
-import { basename } from "@std/path/basename";
+import { basename, relative } from "@std/path";
+
 import {
   Source,
   SourceLabel,
