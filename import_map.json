@@ -10,6 +10,7 @@
     "@std/fmt/colors": "jsr:@std/fmt@1/colors",
     "@std/fmt@1/colors": "jsr:@std/fmt@1/colors",
     "@std/fmt@^1/colors": "jsr:@std/fmt@^1/colors",
+    "@zod": "jsr:@zod/zod@4",
     "@zod/zod": "jsr:@zod/zod@4",
     "json5": "npm:json5@^2",
     "@david/dax": "jsr:@david/dax@0.44.0",
