@@ -1,10 +1,10 @@
 ---
 doc-classify:
-  - select: h1
+  - select: heading[depth="1"]
     role: project
-  - select: h2
+  - select: heading[depth="2"]
     role: case
-  - select: h3
+  - select: heading[depth="3"]
     role: evidence
 ---
 
